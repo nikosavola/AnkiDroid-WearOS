@@ -28,6 +28,7 @@ class WearSyncService : WearableListenerService() {
     const val ACTION_BATCH_UPDATED = "com.ichi2.anki.wearos.ACTION_BATCH_UPDATED"
     const val ACTION_ANSWERS_CLEARED = "com.ichi2.anki.wearos.ACTION_ANSWERS_CLEARED"
     const val ACTION_DECKS_UPDATED = "com.ichi2.anki.wearos.ACTION_DECKS_UPDATED"
+    const val EXTRA_DECK_ID = "deck_id"
   }
 
   private val job = SupervisorJob()
@@ -59,7 +60,7 @@ class WearSyncService : WearableListenerService() {
         val path = uri.path
         Log.d(TAG, "Data changed on path: $path")
 
-        if (path == PATH_DUE_BATCH) {
+        if (path != null && path.startsWith(PATH_DUE_BATCH)) {
           val dataMapItem = DataMapItem.fromDataItem(event.dataItem)
           val bytes = dataMapItem.dataMap.getByteArray(KEY_BATCH_BYTES)
 
@@ -113,15 +114,18 @@ class WearSyncService : WearableListenerService() {
         "Successfully validated batch: '${batch.deckName}' with ${batch.cards.size} cards.",
       )
 
-      // 2. Persist locally to cache file
-      val cacheFile = File(filesDir, "due_batch.json")
-      cacheFile.writeBytes(bytes)
-      Log.i(TAG, "Saved due batch cache locally to: ${cacheFile.absolutePath}")
+      // 2. Persist per-deck so multiple decks can be cached and switched offline
+      DeckCache.saveBatch(this, batch.deckId, bytes)
+      Log.i(TAG, "Saved deck ${batch.deckId} ('${batch.deckName}') to local cache.")
 
-      // 3. Broadcast to the MainActivity UI that new cards are ready
-      val intent = Intent(ACTION_BATCH_UPDATED).apply { setPackage(packageName) }
+      // 3. Broadcast to the MainActivity UI that new cards are ready, tagged with the deck id
+      val intent =
+        Intent(ACTION_BATCH_UPDATED).apply {
+          setPackage(packageName)
+          putExtra(EXTRA_DECK_ID, batch.deckId)
+        }
       sendBroadcast(intent)
-      Log.d(TAG, "Broadcast sent: ACTION_BATCH_UPDATED")
+      Log.d(TAG, "Broadcast sent: ACTION_BATCH_UPDATED for deck ${batch.deckId}")
     } catch (e: Exception) {
       Log.e(TAG, "Failed to cache received batch: ${e.message}", e)
     }

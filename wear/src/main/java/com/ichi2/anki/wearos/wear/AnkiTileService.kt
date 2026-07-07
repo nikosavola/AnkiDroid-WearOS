@@ -13,10 +13,8 @@ import androidx.wear.tiles.RequestBuilders.TileRequest
 import androidx.wear.tiles.TileBuilders.Tile
 import androidx.wear.tiles.TileService
 import com.google.common.util.concurrent.ListenableFuture
-import java.io.File
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
-import uniffi.wearos_core.deserializeDueBatch
 
 class AnkiTileService : TileService() {
   override fun onTileRequest(requestParams: TileRequest): ListenableFuture<Tile> {
@@ -76,14 +74,7 @@ class AnkiTileService : TileService() {
 
   private fun getDueCount(context: Context): Int {
     return try {
-      val cacheFile = File(context.filesDir, "due_batch.json")
-      if (cacheFile.exists()) {
-        val bytes = cacheFile.readBytes()
-        val batch = deserializeDueBatch(bytes)
-        batch.cards.size
-      } else {
-        0
-      }
+      DeckCache.totalDue(context)
     } catch (e: Exception) {
       0
     }

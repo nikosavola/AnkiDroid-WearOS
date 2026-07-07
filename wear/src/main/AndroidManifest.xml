@@ -28,6 +28,7 @@
                 <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
                 <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/due_batch" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/decks" />
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/clear_answers" />
             </intent-filter>
         </service>

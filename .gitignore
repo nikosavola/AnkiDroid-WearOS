@@ -18,3 +18,6 @@ captures/
 
 # Generated bindings
 /bindings/
+
+# Local-only scratch notes
+/TODO.md

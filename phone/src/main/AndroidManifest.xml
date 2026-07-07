@@ -20,14 +20,17 @@
             </intent-filter>
         </activity>
 
-        <!-- Passively runs in background to receive reviews from the watch -->
+        <!-- Passively runs in background to receive reviews and deck requests from the watch -->
         <service
             android:name=".WearSyncService"
             android:exported="true">
             <intent-filter>
                 <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
-                <!-- Filter specifically for answers path -->
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <!-- Answers arrive as data items; deck requests arrive as messages -->
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/answers" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/request_deck" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/request_decks" />
             </intent-filter>
         </service>
         

@@ -7,18 +7,19 @@ import android.content.IntentFilter
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.util.Log
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.viewinterop.AndroidView
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
@@ -33,6 +34,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import uniffi.wearos_core.*
 
+/** A deck shown in the picker; [cardCount] is null when the deck has not been downloaded yet. */
+data class DeckEntry(val id: Long, val name: String, val cardCount: Int?)
+
 class MainActivity : ComponentActivity() {
   companion object {
     private const val TAG = "WatchMainActivity"
@@ -45,7 +49,12 @@ class MainActivity : ComponentActivity() {
   private var outstandingAnswersCount by mutableStateOf(0)
   private var isReviewing by mutableStateOf(false)
   private var ttsEnabled by mutableStateOf(false)
-  private var decksList by mutableStateOf<List<Pair<Long, String>>>(emptyList())
+
+  // Decks downloaded to the watch (switchable offline) and the full list known from the phone.
+  private var cachedDecks by mutableStateOf<List<DeckCache.CachedDeck>>(emptyList())
+  private var knownDecks by mutableStateOf<List<Pair<Long, String>>>(emptyList())
+  // Deck the user tapped to download; loaded automatically once its batch arrives from the phone.
+  private var pendingDeckId: Long? = null
 
   private var tts: TextToSpeech? = null
   private val scope = CoroutineScope(Dispatchers.Main)
@@ -56,13 +65,22 @@ class MainActivity : ComponentActivity() {
         Log.d(TAG, "Sync broadcast received: ${intent?.action}")
         when (intent?.action) {
           WearSyncService.ACTION_BATCH_UPDATED -> {
-            loadBatchCache()
+            loadDecks()
+            val arrived = intent.getLongExtra(WearSyncService.EXTRA_DECK_ID, -1L)
+            val pending = pendingDeckId
+            if (
+              pending != null &&
+                (arrived == pending || DeckCache.deckFile(this@MainActivity, pending).exists())
+            ) {
+              pendingDeckId = null
+              loadDeckSession(pending)
+            }
           }
           WearSyncService.ACTION_ANSWERS_CLEARED -> {
             updateOutstandingCount()
           }
           WearSyncService.ACTION_DECKS_UPDATED -> {
-            loadDecksCache()
+            loadDecks()
           }
         }
       }
@@ -91,9 +109,8 @@ class MainActivity : ComponentActivity() {
         }
       }
 
-    // 3. Load cached batch and decks if any
-    loadBatchCache()
-    loadDecksCache()
+    // 3. Load the list of decks (cached locally + known from the phone). Start on the picker.
+    loadDecks()
     updateOutstandingCount()
 
     // 4. Register Receiver
@@ -115,51 +132,73 @@ class MainActivity : ComponentActivity() {
     tts?.shutdown()
   }
 
-  private fun loadBatchCache() {
-    try {
-      val cacheFile = File(filesDir, "due_batch.json")
-      if (cacheFile.exists()) {
-        val bytes = cacheFile.readBytes()
-        val batch = deserializeDueBatch(bytes)
-        reviewSession = ReviewSession(batch)
-        Log.i(
-          TAG,
-          "Successfully loaded cached due batch: '${batch.deckName}' with ${batch.cards.size} cards.",
-        )
-      } else {
-        reviewSession = null
-        isReviewing = false
-        Log.d(TAG, "No cached due batch found.")
-      }
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to load cached batch: ${e.message}", e)
-      reviewSession = null
-      isReviewing = false
-    }
-  }
-
-  private fun loadDecksCache() {
+  /** Refresh both the locally-downloaded decks and the full deck list synced from the phone. */
+  private fun loadDecks() {
+    cachedDecks = DeckCache.listCached(this)
     try {
       val cacheFile = File(filesDir, "decks_cache.txt")
-      if (cacheFile.exists()) {
-        val content = cacheFile.readText(Charsets.UTF_8)
-        val parsed =
-          content
+      knownDecks =
+        if (cacheFile.exists()) {
+          cacheFile
+            .readText(Charsets.UTF_8)
             .split("\n")
             .filter { it.isNotEmpty() }
             .map {
               val parts = it.split(":", limit = 2)
-              Pair(parts[0].toLong(), parts[1])
+              Pair(parts[0].toLong(), parts.getOrElse(1) { "Deck ${parts[0]}" })
             }
-        decksList = parsed
-        Log.d(TAG, "Loaded ${decksList.size} decks from cache.")
-      }
+        } else {
+          emptyList()
+        }
+      Log.d(TAG, "Loaded ${cachedDecks.size} cached decks, ${knownDecks.size} known decks.")
     } catch (e: Exception) {
-      Log.e(TAG, "Failed to load decks cache: ${e.message}", e)
+      Log.e(TAG, "Failed to load decks list: ${e.message}", e)
+      knownDecks = emptyList()
+    }
+  }
+
+  /**
+   * The picker list: every known deck plus any cached deck, annotated with its downloaded state.
+   */
+  private fun deckEntries(): List<DeckEntry> {
+    val cachedById = cachedDecks.associateBy { it.id }
+    val byId = LinkedHashMap<Long, DeckEntry>()
+    for ((id, name) in knownDecks) {
+      byId[id] = DeckEntry(id, name, cachedById[id]?.cardCount)
+    }
+    for (deck in cachedDecks) {
+      if (!byId.containsKey(deck.id)) {
+        byId[deck.id] = DeckEntry(deck.id, deck.name, deck.cardCount)
+      }
+    }
+    return byId.values.toList()
+  }
+
+  /** Load an already-downloaded deck into a review session entirely offline. */
+  private fun loadDeckSession(deckId: Long) {
+    try {
+      val bytes = DeckCache.deckFile(this, deckId).readBytes()
+      val batch = deserializeDueBatch(bytes)
+      reviewSession = ReviewSession(batch)
+      isReviewing = false
+      Log.i(TAG, "Loaded deck '${batch.deckName}' with ${batch.cards.size} cards from cache.")
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to load cached deck $deckId: ${e.message}", e)
+      Toast.makeText(this, "Could not open deck.", Toast.LENGTH_SHORT).show()
+    }
+  }
+
+  /** Pick a deck: open it offline if cached, otherwise download it from the phone. */
+  private fun selectDeck(deckId: Long) {
+    if (cachedDecks.any { it.id == deckId }) {
+      loadDeckSession(deckId)
+    } else {
+      requestDeckFromPhone(deckId)
     }
   }
 
   private fun requestDeckFromPhone(deckId: Long) {
+    pendingDeckId = deckId
     scope.launch(Dispatchers.IO) {
       try {
         val messageClient = Wearable.getMessageClient(this@MainActivity)
@@ -346,7 +385,7 @@ class MainActivity : ComponentActivity() {
 
   @Composable
   fun WelcomeScreen(listState: androidx.wear.compose.foundation.lazy.ScalingLazyListState) {
-    val decks = decksList
+    val entries = deckEntries()
     ScalingLazyColumn(
       state = listState,
       modifier = Modifier.fillMaxSize(),
@@ -361,26 +400,14 @@ class MainActivity : ComponentActivity() {
         )
       }
 
-      if (decks.isEmpty()) {
+      if (entries.isEmpty()) {
         item {
           Text(
-            text = "Open companion phone app and click 'Sync' to download your decks.",
+            text = "Tap Refresh to load your decks, or open the phone app and press Sync.",
             style = MaterialTheme.typography.body2,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+            textAlign = TextAlign.Center,
           )
-        }
-        item {
-          Button(
-            onClick = {
-              requestDecksFromPhone()
-              loadBatchCache()
-              loadDecksCache()
-            },
-            modifier = Modifier.padding(top = 8.dp),
-          ) {
-            Text("Refresh")
-          }
         }
       } else {
         item {
@@ -391,27 +418,37 @@ class MainActivity : ComponentActivity() {
             modifier = Modifier.padding(bottom = 4.dp),
           )
         }
-        items(decks) { (id, name) ->
-          Card(onClick = { requestDeckFromPhone(id) }, modifier = Modifier.fillMaxWidth(0.95f)) {
-            Text(
-              text = name,
-              style = MaterialTheme.typography.body2,
-              maxLines = 2,
-              overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-            )
+        items(entries) { entry ->
+          Card(onClick = { selectDeck(entry.id) }, modifier = Modifier.fillMaxWidth(0.95f)) {
+            Column {
+              Text(
+                text = entry.name,
+                style = MaterialTheme.typography.body2,
+                maxLines = 2,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+              )
+              Text(
+                text =
+                  if (entry.cardCount != null) "${entry.cardCount} cards ready"
+                  else "Tap to download",
+                style = MaterialTheme.typography.caption3,
+                color =
+                  if (entry.cardCount != null) Color(0xFF66BB6A) else MaterialTheme.colors.secondary,
+              )
+            }
           }
         }
-        item { Spacer(modifier = Modifier.height(8.dp)) }
-        item {
-          Button(
-            onClick = {
-              requestDecksFromPhone()
-              loadBatchCache()
-              loadDecksCache()
-            }
-          ) {
-            Text("Refresh")
+      }
+
+      item { Spacer(modifier = Modifier.height(8.dp)) }
+      item {
+        Button(
+          onClick = {
+            requestDecksFromPhone()
+            loadDecks()
           }
+        ) {
+          Text("Refresh")
         }
       }
     }
@@ -518,7 +555,20 @@ class MainActivity : ComponentActivity() {
     var isAnswering by remember(card.id, card.ord) { mutableStateOf(false) }
 
     val cleanFront = remember(card.front) { cleanHtml(card.front) }
-    val cleanBack = remember(card.back) { cleanHtml(card.back) }
+    // Anki answers usually embed the question followed by <hr id=answer>; show only the part after
+    // it so the answer view doesn't duplicate the front. Falls back to the whole back if no marker.
+    val cleanBack =
+      remember(card.back) {
+        val marker = card.back.indexOf("id=answer")
+        val answerHtml =
+          if (marker >= 0) {
+            val end = card.back.indexOf('>', marker)
+            if (end >= 0) card.back.substring(end + 1) else card.back
+          } else {
+            card.back
+          }
+        cleanHtml(answerHtml)
+      }
 
     // TTS voice effects triggered dynamically via state change
     LaunchedEffect(card.id, card.ord) { speak(cleanFront) }
@@ -527,13 +577,6 @@ class MainActivity : ComponentActivity() {
         speak(cleanBack)
       }
     }
-
-    val fullCardHtml =
-      if (!isRevealed) {
-        card.front
-      } else {
-        "${card.front}<hr id=\"answer\">${card.back}"
-      }
 
     Column(
       modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
@@ -547,14 +590,39 @@ class MainActivity : ComponentActivity() {
         modifier = Modifier.padding(top = 4.dp),
       )
 
-      // Render the compiled Anki card HTML in our native WebView with built-in scrolling and zero
-      // crashes!
-      CardHtmlRenderer(
-        html = fullCardHtml,
+      // Wear OS has no WebView provider, so render the sanitized card text natively. Takes all
+      // remaining vertical space and scrolls internally.
+      Column(
         modifier =
-          Modifier.weight(1f) // Takes all remaining vertical space safely
-            .fillMaxWidth(),
-      )
+          Modifier.weight(1f)
+            .fillMaxWidth()
+            .verticalScroll(rememberScrollState())
+            .padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+      ) {
+        Text(
+          text = cleanFront,
+          style = MaterialTheme.typography.body1,
+          color = Color.White,
+          textAlign = TextAlign.Center,
+        )
+        if (isRevealed) {
+          Spacer(
+            modifier =
+              Modifier.padding(vertical = 8.dp)
+                .fillMaxWidth(0.55f)
+                .height(1.dp)
+                .background(Color.DarkGray)
+          )
+          Text(
+            text = cleanBack,
+            style = MaterialTheme.typography.body1,
+            color = Color.White,
+            textAlign = TextAlign.Center,
+          )
+        }
+      }
 
       // Render the actions and grading buttons at the bottom of the screen
       Box(
@@ -741,63 +809,5 @@ class MainActivity : ComponentActivity() {
         }
       }
     }
-  }
-
-  @Composable
-  fun CardHtmlRenderer(html: String, modifier: Modifier = Modifier) {
-    val styledHtml =
-      """
-            <html>
-            <head>
-                <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-                <style>
-                    body, .card {
-                        background-color: black !important;
-                        color: white;
-                        font-family: system-ui, -apple-system, sans-serif;
-                        text-align: center;
-                        margin: 0;
-                        padding: 4px;
-                        font-size: 18px;
-                        word-wrap: break-word;
-                    }
-                    ruby {
-                        ruby-position: over;
-                    }
-                    rt {
-                        font-size: 0.55em;
-                        color: #90CAF9;
-                    }
-                    img {
-                        max-width: 100%;
-                        height: auto;
-                        border-radius: 4px;
-                    }
-                    p {
-                        margin: 4px 0;
-                    }
-                </style>
-            </head>
-            <body>
-                $html
-            </body>
-            </html>
-            """
-        .trimIndent()
-
-    AndroidView(
-      factory = { context ->
-        WebView(context).apply {
-          webViewClient = WebViewClient()
-          settings.javaScriptEnabled = false
-          settings.domStorageEnabled = false
-          setBackgroundColor(0)
-        }
-      },
-      update = { webView ->
-        webView.loadDataWithBaseURL(null, styledHtml, "text/html", "UTF-8", null)
-      },
-      modifier = modifier.fillMaxWidth(0.95f).heightIn(min = 48.dp, max = 180.dp),
-    )
   }
 }

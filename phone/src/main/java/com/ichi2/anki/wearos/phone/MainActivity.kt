@@ -38,6 +38,7 @@ class MainActivity : Activity() {
   private lateinit var progressBar: ProgressBar
   private lateinit var mockModeSwitch: Switch
   private lateinit var deckListLayout: LinearLayout
+  private var allDecks: List<Pair<Long, String>> = emptyList()
   private val scope = CoroutineScope(Dispatchers.Main)
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -150,29 +151,66 @@ class MainActivity : Activity() {
   }
 
   private fun populateDeckSelector() {
+    allDecks = bridge.fetchAllDecks()
+    renderDeckTree()
+  }
+
+  /** (Re)draw the deck selector as a folder tree built from the Anki `::` deck-name hierarchy. */
+  private fun renderDeckTree() {
     deckListLayout.removeAllViews()
     val title =
       TextView(this).apply {
-        text = "Select Decks to Sync with Watch:"
+        text = "Select Decks / Folders to Sync with Watch:"
         textSize = 16f
         setTypeface(null, android.graphics.Typeface.BOLD)
         setPadding(0, 16, 0, 16)
       }
     deckListLayout.addView(title)
 
-    val decks = bridge.fetchAllDecks()
-    val sharedPrefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
+    val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
+    val root = buildDeckTree(allDecks)
+    for (child in root.children.values) {
+      addDeckNodeViews(child, 0, prefs)
+    }
+  }
 
-    for ((id, name) in decks) {
+  private fun addDeckNodeViews(
+    node: DeckNode,
+    depth: Int,
+    prefs: android.content.SharedPreferences,
+  ) {
+    val indent = 32 + depth * 56
+    if (node.children.isNotEmpty()) {
+      // Folder row: one checkbox toggles every deck nested under this path (itself included).
+      val deckIds = mutableListOf<Long>().also { collectDeckIds(node, it) }
+      val allChecked = deckIds.isNotEmpty() && deckIds.all { prefs.getBoolean("deck_$it", true) }
+      val folder =
+        CheckBox(this).apply {
+          text = "📁 ${node.name}"
+          setTypeface(null, android.graphics.Typeface.BOLD)
+          isChecked = allChecked
+          setPadding(indent, 12, 0, 12)
+          setOnCheckedChangeListener { _, checked ->
+            val editor = prefs.edit()
+            for (id in deckIds) editor.putBoolean("deck_$id", checked)
+            editor.apply()
+            renderDeckTree()
+          }
+        }
+      deckListLayout.addView(folder)
+      for (child in node.children.values) {
+        addDeckNodeViews(child, depth + 1, prefs)
+      }
+    } else {
+      val id = node.deckId ?: return
       val cb =
         CheckBox(this).apply {
-          text = name
-          // Default to true if not explicitly configured yet
-          isChecked = sharedPrefs.getBoolean("deck_$id", true)
+          text = node.name
+          isChecked = prefs.getBoolean("deck_$id", true)
+          setPadding(indent, 8, 0, 8)
           setOnCheckedChangeListener { _, checked ->
-            sharedPrefs.edit().putBoolean("deck_$id", checked).apply()
+            prefs.edit().putBoolean("deck_$id", checked).apply()
           }
-          setPadding(0, 12, 0, 12)
         }
       deckListLayout.addView(cb)
     }
@@ -252,4 +290,29 @@ class MainActivity : Activity() {
       }
     }
   }
+}
+
+/** A node in the deck hierarchy parsed from Anki `::`-separated deck names. */
+class DeckNode(val name: String) {
+  var deckId: Long? = null
+  val children = sortedMapOf<String, DeckNode>()
+}
+
+/** Build a folder tree from flat `parent::child` deck names. */
+private fun buildDeckTree(decks: List<Pair<Long, String>>): DeckNode {
+  val root = DeckNode("")
+  for ((id, fullName) in decks) {
+    var node = root
+    for (segment in fullName.split("::")) {
+      node = node.children.getOrPut(segment) { DeckNode(segment) }
+    }
+    node.deckId = id
+  }
+  return root
+}
+
+/** Collect every real deck id at or below [node]. */
+private fun collectDeckIds(node: DeckNode, out: MutableList<Long>) {
+  node.deckId?.let { out.add(it) }
+  for (child in node.children.values) collectDeckIds(child, out)
 }
