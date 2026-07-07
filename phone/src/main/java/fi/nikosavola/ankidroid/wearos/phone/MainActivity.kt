@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import uniffi.wearos_core.serializeDueBatch
 
 class MainActivity : Activity() {
@@ -30,6 +31,10 @@ class MainActivity : Activity() {
     private const val PERMISSION_REQUEST_CODE = 420
     private const val PATH_DUE_BATCH = "/due_batch"
     private const val KEY_BATCH_BYTES = "batch_bytes"
+    // Pre-push at most this many non-empty decks on a manual sync; scan at most this many looking
+    // for them so a large collection doesn't make Sync crawl. The rest download on demand.
+    private const val MAX_PREPUSH_DECKS = 15
+    private const val MAX_SCAN_DECKS = 60
   }
 
   private lateinit var bridge: AnkiDroidBridge
@@ -243,38 +248,49 @@ class MainActivity : Activity() {
         dataClient.putDataItem(putDecksReq).await()
 
         progressBar.progress = 30
-        statusText.text = "Connecting to database..."
+        statusText.text = "Fetching due cards..."
         delay(200)
 
-        // 2. Fetch from bridge (deckId = 1 as default/mock)
+        // 2. Pre-push the due batches for selected decks so switching to them is instant and works
+        //    offline. Only decks that actually have due cards are pushed; the rest download on
+        //    demand when tapped on the watch. Capped so a large collection keeps sync responsive.
         val isForced = mockModeSwitch.isChecked
-        val batch = bridge.fetchDueBatch(deckId = 1L, limit = 20, forceMock = isForced)
-        progressBar.progress = 50
-        statusText.text = "Fetched ${batch.cards.size} cards from '${batch.deckName}'."
-        Log.d(TAG, "Fetched ${batch.cards.size} due cards.")
-        delay(200)
-
-        statusText.text = "Serializing batch via Rust core..."
-        // 3. Serialize using our Rust core FFI (returns ByteArray directly)
-        val bytes = serializeDueBatch(batch)
-        progressBar.progress = 80
-        Log.d(TAG, "Serialized batch into ${bytes.size} bytes.")
-        delay(200)
-
-        statusText.text = "Broadcasting data to Wear OS Data Layer..."
-        // 4. Sync over DataClient
-        val putDataReq =
-          PutDataMapRequest.create(PATH_DUE_BATCH)
-            .apply {
-              dataMap.putByteArray(KEY_BATCH_BYTES, bytes)
-              setUrgent()
+        var pushed = 0
+        var totalCards = 0
+        var scanned = 0
+        for ((deckId, deckName) in filteredDecks) {
+          if (pushed >= MAX_PREPUSH_DECKS || scanned >= MAX_SCAN_DECKS) break
+          scanned++
+          val batch =
+            withContext(Dispatchers.IO) {
+              bridge.fetchDueBatch(deckId = deckId, limit = 20, forceMock = isForced)
             }
-            .asPutDataRequest()
+          if (batch.cards.isEmpty()) continue
 
-        dataClient.putDataItem(putDataReq).await()
+          val bytes = serializeDueBatch(batch)
+          val putDataReq =
+            PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId")
+              .apply {
+                dataMap.putByteArray(KEY_BATCH_BYTES, bytes)
+                // Vary the item so the watch always re-receives it on a manual sync.
+                dataMap.putLong("synced_at", System.currentTimeMillis())
+                setUrgent()
+              }
+              .asPutDataRequest()
+          dataClient.putDataItem(putDataReq).await()
+
+          pushed++
+          totalCards += batch.cards.size
+          progressBar.progress = 30 + 65 * pushed / MAX_PREPUSH_DECKS
+          statusText.text = "Pushed $pushed decks ($totalCards cards)..."
+          Log.d(TAG, "Pushed deck $deckId ('$deckName') with ${batch.cards.size} cards.")
+        }
+
         progressBar.progress = 100
-        statusText.text = "Sync Complete! Successfully sent ${batch.cards.size} cards to Watch."
-        Log.i(TAG, "Successfully synced batch containing ${batch.cards.size} cards to watch!")
+        val remaining = filteredDecks.size - scanned
+        val extra = if (remaining > 0) " Others download on demand." else ""
+        statusText.text = "Sync Complete! Pushed $pushed decks ($totalCards cards).$extra"
+        Log.i(TAG, "Synced $pushed decks / $totalCards cards to watch.$extra")
 
         // Maintain success visual before hiding
         delay(1500)
