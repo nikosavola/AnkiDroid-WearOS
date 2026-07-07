@@ -1,9 +1,11 @@
 package fi.nikosavola.ankidroid.wearos.phone
 
 import android.content.ContentResolver
+import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import org.json.JSONArray
 import uniffi.wearos_core.WearosAnswer
 import uniffi.wearos_core.WearosCard
 import uniffi.wearos_core.WearosDueBatch
@@ -19,6 +21,13 @@ class AnkiDroidBridge(private val context: Context) {
     private const val COL_CARD_ORD = "CARD_ORD"
     private const val COL_BUTTON_COUNT = "BUTTON_COUNT"
     private const val COL_NEXT_REVIEW_TIMES = "NEXT_REVIEW_TIMES"
+
+    // ReviewInfo write-back columns (FlashCardsContract). Answering a card is an update on
+    // SCHEDULE_URI with these keys in ContentValues and a null selection.
+    private const val COL_REVIEW_NOTE_ID = "note_id"
+    private const val COL_REVIEW_ORD = "ord"
+    private const val COL_REVIEW_EASE = "answer_ease"
+    private const val COL_REVIEW_TIME_TAKEN = "time_taken"
 
     // Deck selection columns and URIs
     private val DECK_SELECTED_URI = Uri.parse("content://$AUTHORITY/selected_deck")
@@ -144,7 +153,7 @@ class AnkiDroidBridge(private val context: Context) {
               "1m, 10m, 4d, 7d"
             }
 
-          val nextReviewTimes = reviewTimesRaw.split(",").map { it.trim() }
+          val nextReviewTimes = parseReviewTimes(reviewTimesRaw)
 
           // 2. Fetch Card Front/Back dynamically by path-appended card URI
           var front = "No Front Text"
@@ -188,49 +197,84 @@ class AnkiDroidBridge(private val context: Context) {
     }
   }
 
-  /** Write answers back to AnkiDroid's schedule table. */
-  fun writeAnswersBack(answers: List<WearosAnswer>): Int {
+  /**
+   * Write answers back to AnkiDroid's schedule table. Returns the ids of the answers that were
+   * actually applied, so only those get cleared from the watch buffer (failed ones stay for retry).
+   */
+  fun writeAnswersBack(answers: List<WearosAnswer>): List<String> {
     if (!isAnkiDroidAvailable()) {
       Log.i(
         TAG,
         "Mock Writeback: Successfully simulated writing ${answers.size} answers to AnkiDroid.",
       )
-      return answers.size
+      return answers.map { it.id }
     }
 
-    var successCount = 0
+    // IDs to clear from the watch buffer = terminal outcomes: either applied (rows > 0) or the card
+    // no longer matches (rows == 0: already answered / removed / not due). Only a thrown exception
+    // is
+    // treated as transient and kept buffered for a later retry, so orphaned answers can't pile up.
+    val settledIds = mutableListOf<String>()
+    var applied = 0
+    var orphaned = 0
     val contentResolver: ContentResolver = context.contentResolver
 
     for (answer in answers) {
       try {
-        // ContentProvider write matches the update schema specified in PLANNING.md
-        // Update on ReviewInfo.CONTENT_URI with noteId, ord, ease, timeTakenMs
-        // No ContentValues needed as parameters are passed in selection args
-        val rowsUpdated =
-          contentResolver.update(
-            SCHEDULE_URI,
-            null,
-            "note_id = ? AND ord = ? AND ease = ? AND time_taken_ms = ?",
-            arrayOf(
-              answer.noteId.toString(),
-              answer.ord.toString(),
-              answer.ease.toString(),
-              answer.timeTakenMs.toString(),
-            ),
-          )
+        // Answer a card via FlashCardsContract.ReviewInfo: the fields go in ContentValues with a
+        // null selection. The provider calls the real scheduler (col.sched.answerCard).
+        val values =
+          ContentValues().apply {
+            put(COL_REVIEW_NOTE_ID, answer.noteId)
+            put(COL_REVIEW_ORD, answer.ord)
+            put(COL_REVIEW_EASE, answer.ease)
+            put(COL_REVIEW_TIME_TAKEN, answer.timeTakenMs)
+          }
+        val rowsUpdated = contentResolver.update(SCHEDULE_URI, values, null, null)
+        settledIds.add(answer.id)
         if (rowsUpdated > 0) {
-          successCount++
+          applied++
+        } else {
+          orphaned++
+          Log.w(TAG, "Answer for note ${answer.noteId} matched no card; dropping it.")
         }
       } catch (e: Exception) {
         Log.e(
           TAG,
-          "Failed to write answer back to AnkiDroid for note ${answer.noteId}: ${e.message}",
+          "Transient failure writing note ${answer.noteId}; keeping for retry: ${e.message}",
           e,
         )
       }
     }
 
-    return successCount
+    Log.i(
+      TAG,
+      "Write-back: $applied applied, $orphaned dropped (no match), " +
+        "${answers.size - settledIds.size} kept for retry.",
+    )
+    return settledIds
+  }
+
+  /**
+   * NEXT_REVIEW_TIMES comes back as a JSON array string with bidi isolate chars around numbers
+   * (e.g. ["⁨10⁩m",...]). Parse it into clean values like "10m" so the watch buttons don't show
+   * fragments like ["10m".
+   */
+  private fun parseReviewTimes(raw: String): List<String> {
+    // Strip Unicode bidi isolates (LRI/RLI/FSI/PDI) Anki wraps around numbers.
+    val cleaned = raw.replace(Regex("[⁦⁧⁨⁩]"), "")
+    return try {
+      val arr = JSONArray(cleaned.trim())
+      (0 until arr.length()).map { arr.getString(it).trim() }
+    } catch (e: Exception) {
+      cleaned
+        .trim()
+        .removePrefix("[")
+        .removeSuffix("]")
+        .split(",")
+        .map { it.trim().trim('"') }
+        .filter { it.isNotEmpty() }
+    }
   }
 
   private fun getMockDueBatch(deckId: Long): WearosDueBatch {
