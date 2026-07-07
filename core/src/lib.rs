@@ -309,35 +309,150 @@ impl ReviewSession {
 
 #[uniffi::export]
 pub fn clean_html(raw_html: String) -> String {
-    // 1. Convert structural HTML blocks to newlines first
-    let result = raw_html
+    // 1. Drop HTML comments (Anki templates hide fields like {{Pitch Accent}} in them) and
+    //    [sound:...] media refs before anything else, so their contents never leak as text.
+    let without_comments = strip_delimited(&raw_html, "<!--", "-->");
+    let without_sound = strip_delimited(&without_comments, "[sound:", "]");
+
+    // 2. Convert structural HTML blocks to newlines.
+    let result = without_sound
         .replace("<br>", "\n")
         .replace("<br/>", "\n")
         .replace("<br />", "\n")
+        .replace("<BR>", "\n")
         .replace("<p>", "")
         .replace("</p>", "\n");
 
-    // 2. State machine to strip out any remaining HTML tags (like <b>, <div>, etc)
+    // 3. Strip tags, keeping text. Render furigana <ruby>base<rt>reading</rt></ruby> as
+    //    "base(reading)" and discard <rp> fallback parentheses.
     let mut clean = String::new();
-    let mut in_tag = false;
-    for c in result.chars() {
+    let mut chars = result.chars().peekable();
+    let mut in_rp = false;
+    while let Some(c) = chars.next() {
         if c == '<' {
-            in_tag = true;
-        } else if c == '>' {
-            in_tag = false;
-        } else if !in_tag {
+            let mut tag = String::new();
+            while let Some(&nc) = chars.peek() {
+                chars.next();
+                if nc == '>' {
+                    break;
+                }
+                tag.push(nc);
+            }
+            let closing = tag.starts_with('/');
+            let name = tag
+                .trim_start_matches('/')
+                .split(|ch: char| ch.is_whitespace())
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            match name.as_str() {
+                "rt" => clean.push(if closing { ')' } else { '(' }),
+                "rp" => in_rp = !closing,
+                _ => {}
+            }
+        } else if !in_rp {
             clean.push(c);
         }
     }
 
-    // 3. Convert HTML entities after all tags have been removed
+    // 4. Convert HTML entities after all tags have been removed.
     let decoded = clean
         .replace("&nbsp;", " ")
         .replace("&amp;", "&")
         .replace("&lt;", "<")
         .replace("&gt;", ">");
 
-    decoded.trim().to_string()
+    collapse_blank_lines(&decoded).trim().to_string()
+}
+
+/// Sanitize card HTML for on-device rendering (e.g. HtmlCompat), keeping formatting tags like
+/// <b>/<div>/<font> but removing what a watch can't render: HTML comments (which hide fields like
+/// {{Pitch Accent}}), [sound:...] refs, and <img> (media isn't shipped to the watch). Furigana
+/// <ruby>base<rt>reading</rt></ruby> becomes base(reading).
+#[uniffi::export]
+pub fn html_for_display(raw_html: String) -> String {
+    let without_comments = strip_delimited(&raw_html, "<!--", "-->");
+    let without_sound = strip_delimited(&without_comments, "[sound:", "]");
+    normalize_ruby(&without_sound).trim().to_string()
+}
+
+/// Drop ruby wrapper tags and <img>, render <rt> as parenthesized readings, and discard <rp>
+/// fallbacks, while passing every other tag through unchanged.
+fn normalize_ruby(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    let mut in_rp = false;
+    while let Some(c) = chars.next() {
+        if c == '<' {
+            let mut tag = String::new();
+            while let Some(&nc) = chars.peek() {
+                chars.next();
+                if nc == '>' {
+                    break;
+                }
+                tag.push(nc);
+            }
+            let closing = tag.starts_with('/');
+            let name = tag
+                .trim_start_matches('/')
+                .split(|ch: char| ch.is_whitespace())
+                .next()
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            match name.as_str() {
+                "rt" => out.push_str(if closing { ")" } else { "(" }),
+                "rp" => in_rp = !closing,
+                "ruby" | "rb" | "img" => {}
+                _ => {
+                    if !in_rp {
+                        out.push('<');
+                        out.push_str(&tag);
+                        out.push('>');
+                    }
+                }
+            }
+        } else if !in_rp {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// Remove every `open`..`close` span (inclusive) from `s`, including its contents.
+fn strip_delimited(s: &str, open: &str, close: &str) -> String {
+    let mut out = String::new();
+    let mut rest = s;
+    while let Some(start) = rest.find(open) {
+        out.push_str(&rest[..start]);
+        match rest[start + open.len()..].find(close) {
+            Some(end) => rest = &rest[start + open.len() + end + close.len()..],
+            None => {
+                rest = "";
+                break;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
+}
+
+/// Collapse runs of blank lines (left behind by stripped comments/media) into a single blank.
+fn collapse_blank_lines(s: &str) -> String {
+    let mut result = String::new();
+    let mut blanks = 0;
+    for line in s.lines() {
+        if line.trim().is_empty() {
+            blanks += 1;
+            if blanks == 1 {
+                result.push('\n');
+            }
+        } else {
+            blanks = 0;
+            result.push_str(line.trim_end());
+            result.push('\n');
+        }
+    }
+    result
 }
 
 // ==========================================
@@ -354,6 +469,42 @@ mod tests {
             "<p>Hello <b>World</b>!</p><br/>Welcome &nbsp; back &amp; enjoy &lt;3.".to_string();
         let clean = clean_html(html);
         assert_eq!(clean, "Hello World!\n\nWelcome   back & enjoy <3.");
+    }
+
+    #[test]
+    fn test_clean_html_ruby() {
+        // Furigana becomes base(reading); <rb> is unwrapped and <rp> fallbacks are dropped.
+        let html = "<ruby><rb>答</rb><rt>こた</rt></ruby>える".to_string();
+        assert_eq!(clean_html(html), "答(こた)える");
+
+        let with_rp = "<ruby>漢<rp>(</rp><rt>かん</rt><rp>)</rp></ruby>".to_string();
+        assert_eq!(clean_html(with_rp), "漢(かん)");
+    }
+
+    #[test]
+    fn test_html_for_display_keeps_formatting() {
+        let html = "<div style='font-size:25px'><b><ruby><rb>答</rb><rt>こた</rt></ruby>え</b></div>\
+                    <!-- {{Pitch Accent}} -->[sound:x.mp3]<img src=\"a.webp\">"
+            .to_string();
+        let out = html_for_display(html);
+        assert!(out.contains("<b>"), "formatting dropped: {out}");
+        assert!(out.contains("答(こた)え"), "ruby not normalized: {out}");
+        assert!(!out.contains("Pitch Accent"));
+        assert!(!out.contains("sound:"));
+        assert!(!out.contains("<img"));
+    }
+
+    #[test]
+    fn test_clean_html_strips_comments_and_sound() {
+        // HTML comments (even when they contain tags/fields) and [sound:] refs must not leak.
+        let html = "答える\n<!-- {{#Pitch Accent}}<div>{{Pitch Accent}}</div>{{/Pitch Accent}} -->\n\
+                    <div>to answer</div>\n[sound:answer_コタエ.mp3]\n<img src=\"x.webp\">"
+            .to_string();
+        let clean = clean_html(html);
+        assert!(!clean.contains("Pitch Accent"), "comment leaked: {clean}");
+        assert!(!clean.contains("sound:"), "sound tag leaked: {clean}");
+        assert!(clean.contains("答える"));
+        assert!(clean.contains("to answer"));
     }
 
     #[test]
