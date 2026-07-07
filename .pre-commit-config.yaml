@@ -1,0 +1,40 @@
+# .pre-commit-config.yaml
+# Optimized pre-commit configuration utilizing prek parallel priority pipelines.
+# Ref: https://prek.j178.dev/proposals/concurrency/?h=parallel
+
+repos:
+  - repo: local
+    hooks:
+      # Priority 10: Auto-formatting stage. Runs concurrently.
+      - id: rust-format
+        name: Rust Core Auto-Format (cargo fmt)
+        entry: ./gradlew rustFmt --no-daemon
+        language: system
+        files: \.rs$
+        pass_filenames: false
+        priority: 10
+
+      - id: kotlin-format
+        name: Kotlin Codebases Auto-Format (ktfmt & ktlint)
+        entry: ./gradlew :phone:ktfmtFormat :wear:ktfmtFormat :phone:ktlintMainSourceSetFormat :wear:ktlintMainSourceSetFormat --no-daemon
+        language: system
+        files: \.kt$
+        pass_filenames: false
+        priority: 10
+
+      # Priority 20: Strict validation stage. Runs concurrently after Priority 10 completes.
+      - id: rust-clippy
+        name: Rust Core Linter (cargo clippy)
+        entry: ./gradlew rustLint --no-daemon
+        language: system
+        files: \.rs$
+        pass_filenames: false
+        priority: 20
+
+      - id: kotlin-lint
+        name: Kotlin Codebases Linter (ktfmtCheck & ktlint)
+        entry: ./gradlew :phone:ktfmtCheck :wear:ktfmtCheck :phone:ktlintMainSourceSetCheck :wear:ktlintMainSourceSetCheck --no-daemon
+        language: system
+        files: \.kt$
+        pass_filenames: false
+        priority: 20
