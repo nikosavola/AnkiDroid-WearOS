@@ -9,14 +9,43 @@
         android:label="AnkiDroid WearOS"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault">
+        
         <activity
             android:name=".MainActivity"
-            android:exported="true">
+            android:exported="true"
+            android:theme="@android:style/Theme.DeviceDefault">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Passively runs in background to receive due batches and clear answers -->
+        <service
+            android:name=".WearSyncService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <action android:name="com.google.android.gms.wearable.MESSAGE_RECEIVED" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/due_batch" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/clear_answers" />
+            </intent-filter>
+        </service>
+
+        <!-- Native Wear OS System Tile showing cards due at a glance -->
+        <service
+            android:name=".AnkiTileService"
+            android:exported="true"
+            android:label="AnkiDroid Due"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@android:drawable/sym_def_app_icon" />
+        </service>
+
     </application>
 
 </manifest>
