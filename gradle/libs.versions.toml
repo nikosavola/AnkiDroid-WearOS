@@ -11,6 +11,7 @@ coroutines = "1.8.1"
 kotlin-stdlib = { group = "org.jetbrains.kotlin", name = "kotlin-stdlib", version.ref = "kotlin" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-play-services", version.ref = "coroutines" }
 
 # UniFFI / JNA support
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
@@ -27,6 +28,8 @@ play-services-wearable = { group = "com.google.android.gms", name = "play-servic
 wear-compose-material = { group = "androidx.wear.compose", name = "compose-material", version.ref = "wear-compose" }
 wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wear-compose" }
 wear-compose-navigation = { group = "androidx.wear.compose", name = "compose-navigation", version.ref = "wear-compose" }
+wear-tiles = { group = "androidx.wear.tiles", name = "tiles", version = "1.2.0" }
+wear-protolayout = { group = "androidx.wear.protolayout", name = "protolayout-material", version = "1.1.0" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
