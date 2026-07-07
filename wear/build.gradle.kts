@@ -57,8 +57,11 @@ dependencies {
     implementation(libs.wear.compose.material)
     implementation(libs.wear.compose.foundation)
     implementation(libs.wear.compose.navigation)
+    implementation(libs.wear.tiles)
+    implementation(libs.wear.protolayout)
 
     implementation(libs.play.services.wearable)
     implementation(libs.jna)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.coroutines.play.services)
 }
