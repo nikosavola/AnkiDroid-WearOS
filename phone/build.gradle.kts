@@ -51,4 +51,5 @@ dependencies {
     implementation(libs.play.services.wearable)
     implementation(libs.jna)
     implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.coroutines.play.services)
 }

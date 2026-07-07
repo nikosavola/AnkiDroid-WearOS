@@ -1,12 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Permission required to access AnkiDroid ContentProvider -->
+    <uses-permission android:name="com.ichi2.anki.permission.READ_WRITE_DATABASE" />
+
     <application
         android:allowBackup="true"
         android:icon="@android:drawable/sym_def_app_icon"
         android:label="AnkiDroid WearOS Phone"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light">
+        
         <activity
             android:name=".MainActivity"
             android:exported="true">
@@ -15,6 +19,18 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Passively runs in background to receive reviews from the watch -->
+        <service
+            android:name=".WearSyncService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.google.android.gms.wearable.DATA_CHANGED" />
+                <!-- Filter specifically for answers path -->
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/answers" />
+            </intent-filter>
+        </service>
+        
     </application>
 
 </manifest>
