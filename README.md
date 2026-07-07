@@ -7,15 +7,22 @@ An offline-first Wear OS smartwatch companion for [AnkiDroid](https://github.com
 ## 1. Architecture Overview
 This project uses a unified **Kotlin + Rust (via UniFFI)** hybrid architecture:
 
-```
-AnkiDroid (phone)                Phone companion (Kotlin)               Watch (Kotlin + Rust core)
-  collection.anki2                                                              
-  + rslib scheduler                                                             
-        |  FlashCardsContract IPC                                               
-        v                                                                       
-   [ContentResolver] <----> [Mock / AnkiDroid Bridge] --DataClient--> [Rust Core: session, cache, SQLite]
-                                                                                   |
-                                                                             grade captured (Rotary / Buttons)
+```mermaid
+flowchart LR
+    subgraph Phone["📱 Phone (Kotlin)"]
+        AD["AnkiDroid<br/>collection.anki2 + rslib scheduler"]
+        CR["ContentResolver"]
+        Bridge["Mock / AnkiDroid Bridge<br/>+ WearSyncService"]
+        AD <-->|FlashCardsContract IPC| CR
+        CR <--> Bridge
+    end
+    subgraph Watch["⌚ Watch (Kotlin + Rust core)"]
+        Core["Rust Core<br/>session · cache · SQLite"]
+        UI["Compose review UI<br/>grade via rotary / buttons"]
+        Core --> UI
+        UI -->|buffered answers| Core
+    end
+    Bridge <-->|"DataClient (Bluetooth)"| Core
 ```
 
 - **Core Logic in Rust (`core/`):** All platform-agnostic layers—the review session state machine, the SQLite offline answer buffer, JSON serialization, and the high-performance HTML tag-stripping/sanitizing parser—are built in Rust. It is compiled to native libraries (`.so`) using `cargo-ndk` and exported to Kotlin via **UniFFI** and **JNA**.
