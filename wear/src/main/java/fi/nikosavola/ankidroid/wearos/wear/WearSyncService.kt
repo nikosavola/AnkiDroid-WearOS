@@ -1,6 +1,5 @@
 package fi.nikosavola.ankidroid.wearos.wear
 
-import android.content.Context
 import android.content.Intent
 import android.util.Log
 import com.google.android.gms.wearable.DataEvent
@@ -8,6 +7,7 @@ import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.WearableListenerService
+import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -15,109 +15,134 @@ import kotlinx.coroutines.launch
 import uniffi.wearos_core.deserializeDueBatch
 import uniffi.wearos_core.initDatabase
 import uniffi.wearos_core.removeBufferedAnswers
-import java.io.File
 
 class WearSyncService : WearableListenerService() {
+  companion object {
+    private const val TAG = "WatchWearSyncService"
+    private const val PATH_DUE_BATCH = "/due_batch"
+    private const val KEY_BATCH_BYTES = "batch_bytes"
+    private const val PATH_CLEAR_ANSWERS = "/clear_answers"
+    private const val PATH_DECKS = "/decks"
+    private const val KEY_DECKS_BYTES = "decks_bytes"
 
-    companion object {
-        private const val TAG = "WatchWearSyncService"
-        private const val PATH_DUE_BATCH = "/due_batch"
-        private const val KEY_BATCH_BYTES = "batch_bytes"
-        private const val PATH_CLEAR_ANSWERS = "/clear_answers"
-        const val ACTION_BATCH_UPDATED = "fi.nikosavola.ankidroid.wearos.ACTION_BATCH_UPDATED"
-        const val ACTION_ANSWERS_CLEARED = "fi.nikosavola.ankidroid.wearos.ACTION_ANSWERS_CLEARED"
+    const val ACTION_BATCH_UPDATED = "fi.nikosavola.ankidroid.wearos.ACTION_BATCH_UPDATED"
+    const val ACTION_ANSWERS_CLEARED = "fi.nikosavola.ankidroid.wearos.ACTION_ANSWERS_CLEARED"
+    const val ACTION_DECKS_UPDATED = "fi.nikosavola.ankidroid.wearos.ACTION_DECKS_UPDATED"
+    const val EXTRA_DECK_ID = "deck_id"
+  }
+
+  private val job = SupervisorJob()
+  private val scope = CoroutineScope(Dispatchers.IO + job)
+
+  override fun onCreate() {
+    super.onCreate()
+    Log.d(TAG, "WearSyncService created on Wear OS Watch.")
+    try {
+      val dbPath = File(filesDir, "wearos_buffer.db").absolutePath
+      initDatabase(dbPath)
+      Log.d(TAG, "Rust Core SQLite database initialized at: $dbPath")
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to initialize Rust database: ${e.message}", e)
     }
+  }
 
-    private val job = SupervisorJob()
-    private val scope = CoroutineScope(Dispatchers.IO + job)
+  override fun onDestroy() {
+    super.onDestroy()
+    job.cancel()
+  }
 
-    override fun onCreate() {
-        super.onCreate()
-        Log.d(TAG, "WearSyncService created on Wear OS Watch.")
-        try {
-            val dbPath = File(filesDir, "wearos_buffer.db").absolutePath
-            initDatabase(dbPath)
-            Log.d(TAG, "Rust Core SQLite database initialized at: $dbPath")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to initialize Rust database: ${e.message}", e)
+  override fun onDataChanged(dataEvents: DataEventBuffer) {
+    Log.d(TAG, "onDataChanged received on watch: ${dataEvents.count} events.")
+
+    for (event in dataEvents) {
+      if (event.type == DataEvent.TYPE_CHANGED) {
+        val uri = event.dataItem.uri
+        val path = uri.path
+        Log.d(TAG, "Data changed on path: $path")
+
+        if (path != null && path.startsWith(PATH_DUE_BATCH)) {
+          val dataMapItem = DataMapItem.fromDataItem(event.dataItem)
+          val bytes = dataMapItem.dataMap.getByteArray(KEY_BATCH_BYTES)
+
+          if (bytes != null) {
+            scope.launch { saveBatchCache(bytes) }
+          }
+        } else if (path == PATH_DECKS) {
+          val dataMapItem = DataMapItem.fromDataItem(event.dataItem)
+          val bytes = dataMapItem.dataMap.getByteArray(KEY_DECKS_BYTES)
+
+          if (bytes != null) {
+            scope.launch { saveDecksCache(bytes) }
+          }
         }
+      }
     }
+  }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        job.cancel()
-    }
+  override fun onMessageReceived(messageEvent: MessageEvent) {
+    Log.d(TAG, "onMessageReceived on watch: ${messageEvent.path}")
 
-    override fun onDataChanged(dataEvents: DataEventBuffer) {
-        Log.d(TAG, "onDataChanged received on watch: ${dataEvents.count} events.")
-        
-        for (event in dataEvents) {
-            if (event.type == DataEvent.TYPE_CHANGED) {
-                val uri = event.dataItem.uri
-                val path = uri.path
-                Log.d(TAG, "Data changed on path: $path")
+    if (messageEvent.path == PATH_CLEAR_ANSWERS) {
+      val idsString = String(messageEvent.data)
+      val ids = idsString.split(",").filter { it.isNotEmpty() }
+      Log.d(TAG, "Received request to clear ${ids.size} answers from SQLite buffer.")
 
-                if (path == PATH_DUE_BATCH) {
-                    val dataMapItem = DataMapItem.fromDataItem(event.dataItem)
-                    val bytes = dataMapItem.dataMap.getByteArray(KEY_BATCH_BYTES)
+      if (ids.isNotEmpty()) {
+        scope.launch {
+          try {
+            removeBufferedAnswers(ids)
+            Log.i(TAG, "Successfully removed ${ids.size} synced answers from local cache.")
 
-                    if (bytes != null) {
-                        scope.launch {
-                            saveBatchCache(bytes)
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    override fun onMessageReceived(messageEvent: MessageEvent) {
-        Log.d(TAG, "onMessageReceived on watch: ${messageEvent.path}")
-        
-        if (messageEvent.path == PATH_CLEAR_ANSWERS) {
-            val idsString = String(messageEvent.data)
-            val ids = idsString.split(",").filter { it.isNotEmpty() }
-            Log.d(TAG, "Received request to clear ${ids.size} answers from SQLite buffer.")
-
-            if (ids.isNotEmpty()) {
-                scope.launch {
-                    try {
-                        removeBufferedAnswers(ids)
-                        Log.i(TAG, "Successfully removed ${ids.size} synced answers from local cache.")
-                        
-                        // Notify the UI that outstanding answers have changed
-                        val intent = Intent(ACTION_ANSWERS_CLEARED).apply {
-                            setPackage(packageName)
-                        }
-                        sendBroadcast(intent)
-                    } catch (e: Exception) {
-                        Log.e(TAG, "Failed to clear answers from database: ${e.message}", e)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun saveBatchCache(bytes: ByteArray) {
-        try {
-            Log.d(TAG, "Validating received batch bytes via Rust FFI...")
-            // 1. Validate the byte array by deserializing it (takes ByteArray directly)
-            val batch = deserializeDueBatch(bytes)
-            Log.i(TAG, "Successfully validated batch: '${batch.deckName}' with ${batch.cards.size} cards.")
-
-            // 2. Persist locally to cache file
-            val cacheFile = File(filesDir, "due_batch.json")
-            cacheFile.writeBytes(bytes)
-            Log.i(TAG, "Saved due batch cache locally to: ${cacheFile.absolutePath}")
-
-            // 3. Broadcast to the MainActivity UI that new cards are ready
-            val intent = Intent(ACTION_BATCH_UPDATED).apply {
-                setPackage(packageName)
-            }
+            // Notify the UI that outstanding answers have changed
+            val intent = Intent(ACTION_ANSWERS_CLEARED).apply { setPackage(packageName) }
             sendBroadcast(intent)
-            Log.d(TAG, "Broadcast sent: ACTION_BATCH_UPDATED")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to cache received batch: ${e.message}", e)
+          } catch (e: Exception) {
+            Log.e(TAG, "Failed to clear answers from database: ${e.message}", e)
+          }
         }
+      }
     }
+  }
+
+  private fun saveBatchCache(bytes: ByteArray) {
+    try {
+      Log.d(TAG, "Validating received batch bytes via Rust FFI...")
+      // 1. Validate the byte array by deserializing it (takes ByteArray directly)
+      val batch = deserializeDueBatch(bytes)
+      Log.i(
+        TAG,
+        "Successfully validated batch: '${batch.deckName}' with ${batch.cards.size} cards.",
+      )
+
+      // 2. Persist per-deck so multiple decks can be cached and switched offline
+      DeckCache.saveBatch(this, batch.deckId, bytes)
+      Log.i(TAG, "Saved deck ${batch.deckId} ('${batch.deckName}') to local cache.")
+
+      // 3. Broadcast to the MainActivity UI that new cards are ready, tagged with the deck id
+      val intent =
+        Intent(ACTION_BATCH_UPDATED).apply {
+          setPackage(packageName)
+          putExtra(EXTRA_DECK_ID, batch.deckId)
+        }
+      sendBroadcast(intent)
+      Log.d(TAG, "Broadcast sent: ACTION_BATCH_UPDATED for deck ${batch.deckId}")
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to cache received batch: ${e.message}", e)
+    }
+  }
+
+  private fun saveDecksCache(bytes: ByteArray) {
+    try {
+      val cacheFile = File(filesDir, "decks_cache.txt")
+      cacheFile.writeBytes(bytes)
+      Log.i(TAG, "Saved decks list cache locally.")
+
+      // Broadcast to MainActivity that new decks list is ready
+      val intent = Intent(ACTION_DECKS_UPDATED).apply { setPackage(packageName) }
+      sendBroadcast(intent)
+      Log.d(TAG, "Broadcast sent: ACTION_DECKS_UPDATED")
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to save decks list: ${e.message}", e)
+    }
+  }
 }
