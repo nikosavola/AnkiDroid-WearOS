@@ -48,3 +48,25 @@ To run self-contained, offline unit tests for our SQLite cache, state-machine tr
 ```bash
 cargo test --manifest-path core/Cargo.toml
 ```
+
+---
+
+## 5. HTML WebView Rendering (Kanji Furigana support)
+AnkiDroid's `CardContentProvider` compiles flashcard templates and outputs compiled HTML. Displaying this via text views strips essential formatting metadata.
+- **CardHtmlRenderer:** The watch app implements `CardHtmlRenderer`, wrapping an Android `WebView` inside a Compose `AndroidView`. This provides native `<ruby>`/`<rt>` furigana rendering, center-alignment, and automatic image scaling.
+- **Crash Prevention in Scrollable Layouts:** Scrollable Compose containers (like `ScalingLazyColumn`) pass infinite constraints, causing nested `WebView` widgets to crash on layout measurement. Moving to a single, weighted `Column` layout with native WebView scrolling solves this completely and guarantees 100% crash-free rendering on Wear OS.
+
+---
+
+## 6. Stand-Alone Refresh Handshake & Selective Sync
+- **Refresh Handshake (`/request_decks`):** To support independent Wear OS operation, the watch can broadcast a `/request_decks` refresh message over Bluetooth. The phone background service intercepts this, queries the available decks, applies user-selected filters, and pushes back a filtered `/decks` dataset asynchronously.
+- **Selective Sync Configuration:** The phone companion app displays a dynamic, scrollable checkbox list of all available AnkiDroid decks. Checkbox preferences are persisted in `SharedPreferences`, and both background syncs and manual syncs filter out unchecked decks, keeping the watch's deck list clean and uncluttered.
+
+---
+
+## 7. Unified Code Formatting and Linting
+- **Modern Kotlin Tooling Suite:** The project standardizes on `ktfmt` (Facebook/Google style) as the sole formatter, and `ktlint` as the code-quality linter. Style conflicts (such as `function-signature` and `parameter-list-wrapping` rules) are resolved via custom `.editorconfig` rules, with `ktfmt` operating as the absolute formatting authority.
+- **Parallel Pre-commit Runner (`prek`):** A `.pre-commit-config.yaml` file configures local format and lint tasks on concurrent pipelines using priority keys (formatting at `priority: 10` and linting at `priority: 20`), executed via:
+```bash
+uv run prek run --all-files
+```
