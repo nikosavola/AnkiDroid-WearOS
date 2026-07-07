@@ -140,15 +140,12 @@ class WearSyncService : WearableListenerService() {
       Log.i(TAG, "Received ${answers.size} answers from Wear OS watch.")
 
       if (answers.isNotEmpty()) {
-        val successCount = bridge.writeAnswersBack(answers)
-        Log.i(
-          TAG,
-          "Successfully wrote back $successCount / ${answers.size} answers to AnkiDroid database.",
-        )
+        // Returns the ids that reached a terminal state (applied or no-matching-card); transient
+        // failures are omitted so they stay buffered for a later retry. See writeAnswersBack.
+        val settledIds = bridge.writeAnswersBack(answers)
 
-        if (successCount > 0) {
-          // Send confirmation message to clear these IDs on the watch SQLite cache
-          val idsString = answers.map { it.id }.joinToString(",")
+        if (settledIds.isNotEmpty()) {
+          val idsString = settledIds.joinToString(",")
           val nodeClient = Wearable.getNodeClient(this@WearSyncService)
           val messageClient = Wearable.getMessageClient(this@WearSyncService)
 
