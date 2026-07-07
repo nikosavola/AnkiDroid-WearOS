@@ -51,10 +51,18 @@ cargo test --manifest-path core/Cargo.toml
 
 ---
 
-## 5. HTML WebView Rendering (Kanji Furigana support)
-AnkiDroid's `CardContentProvider` compiles flashcard templates and outputs compiled HTML. Displaying this via text views strips essential formatting metadata.
-- **CardHtmlRenderer:** The watch app implements `CardHtmlRenderer`, wrapping an Android `WebView` inside a Compose `AndroidView`. This provides native `<ruby>`/`<rt>` furigana rendering, center-alignment, and automatic image scaling.
-- **Crash Prevention in Scrollable Layouts:** Scrollable Compose containers (like `ScalingLazyColumn`) pass infinite constraints, causing nested `WebView` widgets to crash on layout measurement. Moving to a single, weighted `Column` layout with native WebView scrolling solves this completely and guarantees 100% crash-free rendering on Wear OS.
+## 5. Card Rendering (native, no WebView)
+AnkiDroid's `CardContentProvider` compiles flashcard templates and outputs HTML. Wear OS devices
+frequently ship **no WebView provider** (e.g. Galaxy Watch), so constructing a `WebView` throws
+`UnsupportedOperationException` and crashes the app. We therefore render cards natively.
+- **Rust `clean_html`:** sanitizes the card HTML for display and TTS: strips tags, removes HTML
+  comments (Anki hides fields like `{{Pitch Accent}}` inside them) and `[sound:...]` refs, and
+  converts furigana `<ruby>base<rt>reading</rt></ruby>` to `base(reading)`.
+- **Compose rendering:** the watch shows the cleaned text in a weighted, vertically-scrolling
+  `Column` (never a nested scrollable that passes infinite constraints). Grade buttons are a
+  centered 2x2 grid so all of Again/Hard/Good/Easy stay inside the round display.
+- **Not yet supported natively:** CSS-styled pitch-accent overlines and images. True fidelity for
+  those would require rendering on the phone (which has a WebView) into a bitmap sent to the watch.
 
 ---
 
