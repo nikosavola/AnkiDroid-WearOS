@@ -7,6 +7,8 @@ plugins {
 android {
   namespace = "fi.nikosavola.ankidroid.wearos.wear"
   compileSdk = 35
+  // Match the NDK that cargo-ndk uses (ndk.dir) so AGP can strip the bundled .so and doesn't warn.
+  ndkVersion = "27.0.12077973"
 
   defaultConfig {
     applicationId = "fi.nikosavola.ankidroid.wearos"
