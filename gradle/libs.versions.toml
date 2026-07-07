@@ -1,0 +1,34 @@
+[versions]
+agp = "8.5.1"
+kotlin = "2.0.0"
+compose-compiler = "2.0.0"
+wear-compose = "1.3.1"
+jna = "5.14.0"
+coroutines = "1.8.1"
+
+[libraries]
+# Kotlin and Coroutines
+kotlin-stdlib = { group = "org.jetbrains.kotlin", name = "kotlin-stdlib", version.ref = "kotlin" }
+kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
+kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
+
+# UniFFI / JNA support
+jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
+
+# Android Core and Lifecycle
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version = "1.13.1" }
+androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version = "2.8.2" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version = "1.9.0" }
+
+# Play Services Wearable
+play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version = "18.2.0" }
+
+# Wear OS Compose
+wear-compose-material = { group = "androidx.wear.compose", name = "compose-material", version.ref = "wear-compose" }
+wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wear-compose" }
+wear-compose-navigation = { group = "androidx.wear.compose", name = "compose-navigation", version.ref = "wear-compose" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
+compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
