@@ -7,6 +7,8 @@ import android.content.IntentFilter
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.util.Log
+import android.view.Gravity
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -18,8 +20,11 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.text.HtmlCompat
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
@@ -53,6 +58,7 @@ class MainActivity : ComponentActivity() {
   // Decks downloaded to the watch (switchable offline) and the full list known from the phone.
   private var cachedDecks by mutableStateOf<List<DeckCache.CachedDeck>>(emptyList())
   private var knownDecks by mutableStateOf<List<Pair<Long, String>>>(emptyList())
+
   // Deck the user tapped to download; loaded automatically once its batch arrives from the phone.
   private var pendingDeckId: Long? = null
 
@@ -315,6 +321,9 @@ class MainActivity : ComponentActivity() {
           PutDataMapRequest.create(PATH_ANSWERS)
             .apply {
               dataMap.putByteArray(KEY_ANSWERS_BYTES, bytes)
+              // Vary the item every send so re-sending the same buffered answers (e.g. after a
+              // failed write-back) isn't dropped by DataClient's dedup and can be retried.
+              dataMap.putLong("synced_at", System.currentTimeMillis())
               setUrgent()
             }
             .asPutDataRequest()
@@ -429,8 +438,11 @@ class MainActivity : ComponentActivity() {
               )
               Text(
                 text =
-                  if (entry.cardCount != null) "${entry.cardCount} cards ready"
-                  else "Tap to download",
+                  if (entry.cardCount != null) {
+                    "${entry.cardCount} cards ready"
+                  } else {
+                    "Tap to download"
+                  },
                 style = MaterialTheme.typography.caption3,
                 color =
                   if (entry.cardCount != null) Color(0xFF66BB6A) else MaterialTheme.colors.secondary,
@@ -448,7 +460,10 @@ class MainActivity : ComponentActivity() {
             loadDecks()
           }
         ) {
-          Text("Refresh")
+          Icon(
+            painter = painterResource(id = R.drawable.ic_refresh),
+            contentDescription = "Refresh decks",
+          )
         }
       }
     }
@@ -554,21 +569,24 @@ class MainActivity : ComponentActivity() {
     var isRevealed by remember(card.id, card.ord) { mutableStateOf(session.isRevealed()) }
     var isAnswering by remember(card.id, card.ord) { mutableStateOf(false) }
 
-    val cleanFront = remember(card.front) { cleanHtml(card.front) }
     // Anki answers usually embed the question followed by <hr id=answer>; show only the part after
     // it so the answer view doesn't duplicate the front. Falls back to the whole back if no marker.
-    val cleanBack =
+    val answerHtml =
       remember(card.back) {
         val marker = card.back.indexOf("id=answer")
-        val answerHtml =
-          if (marker >= 0) {
-            val end = card.back.indexOf('>', marker)
-            if (end >= 0) card.back.substring(end + 1) else card.back
-          } else {
-            card.back
-          }
-        cleanHtml(answerHtml)
+        if (marker >= 0) {
+          val end = card.back.indexOf('>', marker)
+          if (end >= 0) card.back.substring(end + 1) else card.back
+        } else {
+          card.back
+        }
       }
+
+    // Rich HTML for display; plain text for TTS.
+    val displayFront = remember(card.front) { htmlForDisplay(card.front) }
+    val displayBack = remember(answerHtml) { htmlForDisplay(answerHtml) }
+    val cleanFront = remember(card.front) { cleanHtml(card.front) }
+    val cleanBack = remember(answerHtml) { cleanHtml(answerHtml) }
 
     // TTS voice effects triggered dynamically via state change
     LaunchedEffect(card.id, card.ord) { speak(cleanFront) }
@@ -601,12 +619,7 @@ class MainActivity : ComponentActivity() {
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
       ) {
-        Text(
-          text = cleanFront,
-          style = MaterialTheme.typography.body1,
-          color = Color.White,
-          textAlign = TextAlign.Center,
-        )
+        HtmlText(html = displayFront, modifier = Modifier.fillMaxWidth())
         if (isRevealed) {
           Spacer(
             modifier =
@@ -615,12 +628,7 @@ class MainActivity : ComponentActivity() {
                 .height(1.dp)
                 .background(Color.DarkGray)
           )
-          Text(
-            text = cleanBack,
-            style = MaterialTheme.typography.body1,
-            color = Color.White,
-            textAlign = TextAlign.Center,
-          )
+          HtmlText(html = displayBack, modifier = Modifier.fillMaxWidth())
         }
       }
 
@@ -640,101 +648,13 @@ class MainActivity : ComponentActivity() {
             modifier = Modifier.fillMaxWidth(0.9f),
           )
         } else {
-          // Grading buttons
           val duration = System.currentTimeMillis() - cardStartTime
-          Column(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalAlignment = Alignment.CenterHorizontally,
-          ) {
-            if (card.buttonCount == 3) {
-              // 3-button ease grading (Again, Good, Easy)
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-              ) {
-                CompactGradeButton(
-                  text = "Again",
-                  timeStr = card.nextReviewTimes.getOrNull(0) ?: "1m",
-                  color = Color(0xFFEF5350),
-                ) {
-                  if (!isAnswering) {
-                    isAnswering = true
-                    answerCardSafely(session, 1, duration) { isAnswering = false }
-                  }
-                }
-                CompactGradeButton(
-                  text = "Good",
-                  timeStr = card.nextReviewTimes.getOrNull(1) ?: "4d",
-                  color = Color(0xFF66BB6A),
-                ) {
-                  if (!isAnswering) {
-                    isAnswering = true
-                    answerCardSafely(session, 3, duration) { isAnswering = false }
-                  }
-                }
-                CompactGradeButton(
-                  text = "Easy",
-                  timeStr = card.nextReviewTimes.getOrNull(2) ?: "7d",
-                  color = Color(0xFF42A5F5),
-                ) {
-                  if (!isAnswering) {
-                    isAnswering = true
-                    answerCardSafely(session, 4, duration) {
-                      triggerAnswersSync() // auto sync on completion
-                      isAnswering = false
-                    }
-                  }
-                }
-              }
-            } else {
-              // 4-button ease grading (Again, Hard, Good, Easy)
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-              ) {
-                CompactGradeButton(
-                  text = "Again",
-                  timeStr = card.nextReviewTimes.getOrNull(0) ?: "1m",
-                  color = Color(0xFFEF5350),
-                ) {
-                  if (!isAnswering) {
-                    isAnswering = true
-                    answerCardSafely(session, 1, duration) { isAnswering = false }
-                  }
-                }
-                CompactGradeButton(
-                  text = "Hard",
-                  timeStr = card.nextReviewTimes.getOrNull(1) ?: "10m",
-                  color = Color(0xFFFFA726),
-                ) {
-                  if (!isAnswering) {
-                    isAnswering = true
-                    answerCardSafely(session, 2, duration) { isAnswering = false }
-                  }
-                }
-                CompactGradeButton(
-                  text = "Good",
-                  timeStr = card.nextReviewTimes.getOrNull(2) ?: "4d",
-                  color = Color(0xFF66BB6A),
-                ) {
-                  if (!isAnswering) {
-                    isAnswering = true
-                    answerCardSafely(session, 3, duration) { isAnswering = false }
-                  }
-                }
-                CompactGradeButton(
-                  text = "Easy",
-                  timeStr = card.nextReviewTimes.getOrNull(3) ?: "7d",
-                  color = Color(0xFF42A5F5),
-                ) {
-                  if (!isAnswering) {
-                    isAnswering = true
-                    answerCardSafely(session, 4, duration) {
-                      triggerAnswersSync() // auto sync on completion
-                      isAnswering = false
-                    }
-                  }
-                }
+          GradeGrid(card = card, enabled = !isAnswering) { ease, autoSync ->
+            if (!isAnswering) {
+              isAnswering = true
+              answerCardSafely(session, ease, duration) {
+                if (autoSync) triggerAnswersSync() // auto sync when finishing with Easy
+                isAnswering = false
               }
             }
           }
@@ -743,26 +663,80 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  private data class GradeSpec(
+    val text: String,
+    val time: String,
+    val color: Color,
+    val ease: Int,
+    val autoSync: Boolean,
+  )
+
+  /**
+   * Grading buttons laid out as a centered 2x2 grid so all of Again/Hard/Good/Easy stay inside the
+   * round display instead of overflowing off the edges in a single row.
+   */
   @Composable
-  fun GradeButton(text: String, timeStr: String, color: Color, onClick: () -> Unit) {
-    Chip(
-      label = { Text(text) },
-      secondaryLabel = { Text(timeStr) },
-      onClick = onClick,
-      colors =
-        ChipDefaults.chipColors(backgroundColor = color.copy(alpha = 0.25f), contentColor = color),
-      modifier = Modifier.fillMaxWidth(0.9f),
-    )
+  fun GradeGrid(
+    card: WearosCard,
+    enabled: Boolean,
+    onGrade: (ease: Int, autoSync: Boolean) -> Unit,
+  ) {
+    fun t(i: Int, default: String) = card.nextReviewTimes.getOrNull(i) ?: default
+    val grades =
+      if (card.buttonCount == 3) {
+        listOf(
+          GradeSpec("Again", t(0, "1m"), Color(0xFFEF5350), 1, false),
+          GradeSpec("Good", t(1, "4d"), Color(0xFF66BB6A), 3, false),
+          GradeSpec("Easy", t(2, "7d"), Color(0xFF42A5F5), 4, true),
+        )
+      } else {
+        listOf(
+          GradeSpec("Again", t(0, "1m"), Color(0xFFEF5350), 1, false),
+          GradeSpec("Hard", t(1, "10m"), Color(0xFFFFA726), 2, false),
+          GradeSpec("Good", t(2, "4d"), Color(0xFF66BB6A), 3, false),
+          GradeSpec("Easy", t(3, "7d"), Color(0xFF42A5F5), 4, true),
+        )
+      }
+    Column(
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      grades.chunked(2).forEach { row ->
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          row.forEach { g ->
+            Chip(
+              onClick = { if (enabled) onGrade(g.ease, g.autoSync) },
+              label = { Text(g.text, maxLines = 1) },
+              secondaryLabel = { Text(g.time, maxLines = 1) },
+              colors =
+                ChipDefaults.chipColors(
+                  backgroundColor = g.color.copy(alpha = 0.30f),
+                  contentColor = g.color,
+                ),
+              modifier = Modifier.width(90.dp),
+            )
+          }
+        }
+      }
+    }
   }
 
+  /**
+   * Renders sanitized card HTML (bold, colors, line breaks, etc.) via HtmlCompat in a TextView.
+   * Wear OS has no WebView, so this is the richest safe renderer available.
+   */
   @Composable
-  fun CompactGradeButton(text: String, timeStr: String, color: Color, onClick: () -> Unit) {
-    CompactChip(
-      label = { Text("$text\n$timeStr") },
-      onClick = onClick,
-      colors =
-        ChipDefaults.chipColors(backgroundColor = color.copy(alpha = 0.25f), contentColor = color),
-      modifier = Modifier.width(72.dp),
+  fun HtmlText(html: String, modifier: Modifier = Modifier) {
+    AndroidView(
+      modifier = modifier,
+      factory = { ctx ->
+        TextView(ctx).apply {
+          setTextColor(android.graphics.Color.WHITE)
+          textSize = 16f
+          gravity = Gravity.CENTER
+        }
+      },
+      update = { it.text = HtmlCompat.fromHtml(html, HtmlCompat.FROM_HTML_MODE_COMPACT) },
     )
   }
 
