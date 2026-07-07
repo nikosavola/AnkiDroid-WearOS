@@ -19,12 +19,26 @@ import java.util.concurrent.TimeUnit
 class AnkiTileService : TileService() {
   override fun onTileRequest(requestParams: TileRequest): ListenableFuture<Tile> {
     val count = getDueCount(this)
-    val textLayout =
-      LayoutElementBuilders.Box.Builder()
+    val caughtUp = count == 0
+
+    val content =
+      LayoutElementBuilders.Column.Builder()
         .addContent(
-          Text.Builder(this, "Due: $count")
-            .setTypography(Typography.TYPOGRAPHY_TITLE2)
-            .setColor(argb(0xFF66BB6A.toInt()))
+          Text.Builder(this, count.toString())
+            .setTypography(Typography.TYPOGRAPHY_DISPLAY2)
+            .setColor(argb(if (caughtUp) 0xFF9E9E9E.toInt() else 0xFF66BB6A.toInt()))
+            .build()
+        )
+        .addContent(
+          Text.Builder(this, if (count == 1) "card due today" else "cards due today")
+            .setTypography(Typography.TYPOGRAPHY_CAPTION1)
+            .setColor(argb(0xFFFFFFFF.toInt()))
+            .build()
+        )
+        .addContent(
+          Text.Builder(this, etaText(count))
+            .setTypography(Typography.TYPOGRAPHY_CAPTION2)
+            .setColor(argb(0xFF9E9E9E.toInt()))
             .build()
         )
         .build()
@@ -41,11 +55,12 @@ class AnkiTileService : TileService() {
     val rootLayout =
       PrimaryLayout.Builder(protoDeviceParams)
         .setPrimaryLabelTextContent(
-          Text.Builder(this, "AnkiDroid WearOS")
+          Text.Builder(this, "AnkiDroid Wear")
             .setTypography(Typography.TYPOGRAPHY_CAPTION1)
+            .setColor(argb(0xFF66BB6A.toInt()))
             .build()
         )
-        .setContent(textLayout)
+        .setContent(content)
         .build()
 
     val tile =
@@ -78,6 +93,17 @@ class AnkiTileService : TileService() {
     } catch (e: Exception) {
       0
     }
+  }
+
+  /** Rough estimated time to clear the queue, assuming ~10s per card. */
+  private fun etaText(count: Int): String {
+    if (count == 0) return "All caught up 🎉"
+    val seconds = count * SECONDS_PER_CARD
+    return if (seconds < 60) "~${seconds}s to finish" else "~${seconds / 60} min to finish"
+  }
+
+  companion object {
+    private const val SECONDS_PER_CARD = 10
   }
 
   private fun argb(color: Int): androidx.wear.protolayout.ColorBuilders.ColorProp {
