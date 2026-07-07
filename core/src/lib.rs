@@ -1,4 +1,4 @@
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -87,7 +87,8 @@ fn get_db_connection() -> Result<Connection, CoreError> {
         })
     } else {
         Err(CoreError::DatabaseError {
-            error_message: "Database has not been initialized. Call init_database first.".to_string(),
+            error_message: "Database has not been initialized. Call init_database first."
+                .to_string(),
         })
     }
 }
@@ -170,11 +171,15 @@ pub fn get_buffered_answers() -> Result<Vec<WearosAnswer>, CoreError> {
                 time_taken_ms: row.get(4)?,
             })
         })
-        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+        .map_err(|e| CoreError::DatabaseError {
+            error_message: e.to_string(),
+        })?;
 
     let mut answers = Vec::new();
     for row in rows {
-        answers.push(row.map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?);
+        answers.push(row.map_err(|e| CoreError::DatabaseError {
+            error_message: e.to_string(),
+        })?);
     }
 
     Ok(answers)
@@ -183,14 +188,20 @@ pub fn get_buffered_answers() -> Result<Vec<WearosAnswer>, CoreError> {
 #[uniffi::export]
 pub fn remove_buffered_answers(ids: Vec<String>) -> Result<(), CoreError> {
     let mut conn = get_db_connection()?;
-    let tx = conn.transaction().map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    let tx = conn.transaction().map_err(|e| CoreError::DatabaseError {
+        error_message: e.to_string(),
+    })?;
 
     for id in ids {
         tx.execute("DELETE FROM buffered_answers WHERE id = ?1", params![id])
-            .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+            .map_err(|e| CoreError::DatabaseError {
+                error_message: e.to_string(),
+            })?;
     }
 
-    tx.commit().map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    tx.commit().map_err(|e| CoreError::DatabaseError {
+        error_message: e.to_string(),
+    })?;
     Ok(())
 }
 
@@ -246,7 +257,11 @@ impl ReviewSession {
         *revealed = true;
     }
 
-    pub fn answer_card(&self, ease: i32, time_taken_ms: i64) -> Result<Option<WearosAnswer>, CoreError> {
+    pub fn answer_card(
+        &self,
+        ease: i32,
+        time_taken_ms: i64,
+    ) -> Result<Option<WearosAnswer>, CoreError> {
         let mut index = self.current_index.lock().unwrap();
         let mut revealed = self.is_revealed.lock().unwrap();
 
@@ -257,7 +272,15 @@ impl ReviewSession {
         }
 
         let card = &self.batch.cards[*index];
-        let id = format!("{}_{}_{}", card.id, card.ord, SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis());
+        let id = format!(
+            "{}_{}_{}",
+            card.id,
+            card.ord,
+            SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        );
 
         let answer = WearosAnswer {
             id,
@@ -268,7 +291,7 @@ impl ReviewSession {
         };
 
         // Attempt to buffer locally if database is configured
-        if let Ok(_) = get_db_connection() {
+        if get_db_connection().is_ok() {
             let _ = save_answer(answer.clone());
         }
 
@@ -327,7 +350,8 @@ mod tests {
 
     #[test]
     fn test_clean_html() {
-        let html = "<p>Hello <b>World</b>!</p><br/>Welcome &nbsp; back &amp; enjoy &lt;3.".to_string();
+        let html =
+            "<p>Hello <b>World</b>!</p><br/>Welcome &nbsp; back &amp; enjoy &lt;3.".to_string();
         let clean = clean_html(html);
         assert_eq!(clean, "Hello World!\n\nWelcome   back & enjoy <3.");
     }
@@ -341,7 +365,12 @@ mod tests {
             front: "Q".to_string(),
             back: "A".to_string(),
             button_count: 4,
-            next_review_times: vec!["1m".to_string(), "10m".to_string(), "4d".to_string(), "7d".to_string()],
+            next_review_times: vec![
+                "1m".to_string(),
+                "10m".to_string(),
+                "4d".to_string(),
+                "7d".to_string(),
+            ],
         };
         let batch = WearosDueBatch {
             deck_id: 123,
@@ -368,7 +397,12 @@ mod tests {
             front: "Q1".to_string(),
             back: "A1".to_string(),
             button_count: 4,
-            next_review_times: vec!["1m".to_string(), "10m".to_string(), "4d".to_string(), "7d".to_string()],
+            next_review_times: vec![
+                "1m".to_string(),
+                "10m".to_string(),
+                "4d".to_string(),
+                "7d".to_string(),
+            ],
         };
         let card2 = WearosCard {
             id: 2,
@@ -388,14 +422,14 @@ mod tests {
         let session = ReviewSession::new(batch);
         assert_eq!(session.get_total_cards(), 2);
         assert_eq!(session.get_current_index(), 0);
-        assert_eq!(session.is_revealed(), false);
+        assert!(!session.is_revealed());
 
         // Check first card
         let c1 = session.get_current_card().unwrap();
         assert_eq!(c1.front, "Q1");
 
         session.reveal_answer();
-        assert_eq!(session.is_revealed(), true);
+        assert!(session.is_revealed());
 
         // Answer card
         let ans1 = session.answer_card(3, 5000).unwrap().unwrap();
@@ -405,7 +439,7 @@ mod tests {
 
         // Check index advanced
         assert_eq!(session.get_current_index(), 1);
-        assert_eq!(session.is_revealed(), false);
+        assert!(!session.is_revealed());
 
         // Check second card
         let c2 = session.get_current_card().unwrap();
@@ -413,14 +447,17 @@ mod tests {
 
         let _ = session.answer_card(4, 2000).unwrap();
         assert_eq!(session.get_current_index(), 2);
-        assert_eq!(session.get_current_card().is_none(), true);
+        assert!(session.get_current_card().is_none());
     }
 
     #[test]
     fn test_local_sqlite_buffering() {
         let temp_dir = std::env::temp_dir();
-        let db_path = temp_dir.join("test_wearos_buffer.db").to_string_lossy().to_string();
-        
+        let db_path = temp_dir
+            .join("test_wearos_buffer.db")
+            .to_string_lossy()
+            .to_string();
+
         // Clean start
         let _ = std::fs::remove_file(&db_path);
 
