@@ -1,0 +1,27 @@
+root = true
+
+[*.{kt,kts}]
+indent_size = 4
+max_line_length = 120
+insert_final_newline = true
+ktlint_standard_indent = disabled
+ktlint_standard_max-line-length = disabled
+ktlint_standard_wrapping = disabled
+ktlint_standard_argument-list-wrapping = disabled
+ktlint_standard_parameter-list-wrapping = disabled
+ktlint_standard_function-signature = disabled
+ktlint_standard_import-ordering = disabled
+ktlint_standard_string-template-indent = disabled
+ktlint_standard_trailing-comma-on-call-site = disabled
+ktlint_standard_trailing-comma-on-declaration-site = disabled
+ktlint_standard_no-wildcard-imports = disabled
+ktlint_standard_function-naming = disabled
+
+[bindings/**]
+ktlint_disabled = true
+
+[wear/src/main/jniLibs/**]
+ktlint_disabled = true
+
+[phone/src/main/jniLibs/**]
+ktlint_disabled = true

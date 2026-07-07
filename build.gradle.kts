@@ -4,6 +4,8 @@ plugins {
     alias(libs.plugins.android.application) apply false
     alias(libs.plugins.kotlin.android) apply false
     alias(libs.plugins.compose.compiler) apply false
+    alias(libs.plugins.ktlint) apply false
+    alias(libs.plugins.ktfmt) apply false
 }
 
 tasks.register("clean", Delete::class) {
@@ -36,6 +38,7 @@ tasks.register<Exec>("compileRustAndroidWear") {
     commandLine(
         "cargo", "ndk",
         "-t", "arm64-v8a",
+        "-t", "armeabi-v7a",
         "-t", "x86_64",
         "-o", "${projectDir}/wear/src/main/jniLibs",
         "build", "--release"
@@ -50,6 +53,7 @@ tasks.register<Exec>("compileRustAndroidPhone") {
     commandLine(
         "cargo", "ndk",
         "-t", "arm64-v8a",
+        "-t", "armeabi-v7a",
         "-t", "x86_64",
         "-o", "${projectDir}/phone/src/main/jniLibs",
         "build", "--release"
@@ -68,4 +72,62 @@ tasks.register<Exec>("generateBindings") {
         "--language", "kotlin",
         "--out-dir", "../bindings"
     )
+}
+
+subprojects {
+    apply(plugin = "org.jlleitschuh.gradle.ktlint")
+    apply(plugin = "com.ncorti.ktfmt.gradle")
+
+    configure<org.jlleitschuh.gradle.ktlint.KtlintExtension> {
+        filter {
+            exclude("**/bindings/**")
+            exclude("**/jniLibs/**")
+            exclude("**/uniffi/**")
+            exclude("**/wearos_core.kt")
+        }
+    }
+
+    configure<com.ncorti.ktfmt.gradle.KtfmtExtension> {
+        googleStyle()
+    }
+
+    tasks.withType<com.ncorti.ktfmt.gradle.tasks.KtfmtFormatTask>().configureEach {
+        exclude("**/bindings/**")
+        exclude("**/jniLibs/**")
+        exclude("**/uniffi/**")
+        exclude("**/wearos_core.kt")
+    }
+
+    tasks.withType<com.ncorti.ktfmt.gradle.tasks.KtfmtCheckTask>().configureEach {
+        exclude("**/bindings/**")
+        exclude("**/jniLibs/**")
+        exclude("**/uniffi/**")
+        exclude("**/wearos_core.kt")
+    }
+}
+
+tasks.register<Exec>("rustFmt") {
+    group = "formatting"
+    description = "Auto-format Rust core code using cargo fmt"
+    workingDir = file("core")
+    commandLine("cargo", "fmt", "--all")
+}
+
+tasks.register<Exec>("rustLint") {
+    group = "verification"
+    description = "Lint Rust core code using cargo clippy"
+    workingDir = file("core")
+    commandLine("cargo", "clippy", "--all-targets", "--", "-D", "warnings")
+}
+
+tasks.register("formatAll") {
+    group = "formatting"
+    description = "Auto-format both Kotlin and Rust codebases"
+    dependsOn(":phone:ktfmtFormat", ":wear:ktfmtFormat", "rustFmt")
+}
+
+tasks.register("lintAll") {
+    group = "verification"
+    description = "Run linter checks on both Kotlin and Rust codebases"
+    dependsOn(":phone:ktfmtCheck", ":wear:ktfmtCheck", ":phone:ktlintCheck", ":wear:ktlintCheck", "rustLint")
 }
