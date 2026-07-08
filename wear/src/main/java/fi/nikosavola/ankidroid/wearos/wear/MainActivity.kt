@@ -13,22 +13,33 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.ScrollableState
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.text.HtmlCompat
+import androidx.wear.compose.foundation.AnchorType
+import androidx.wear.compose.foundation.CurvedDirection
+import androidx.wear.compose.foundation.CurvedLayout
+import androidx.wear.compose.foundation.curvedComposable
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyListScope
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
+import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.material.*
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
@@ -409,6 +420,21 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /**
+   * Route rotary bezel/crown input into [state] with animated scrolling and haptic detents (the
+   * built-in Wear behavior). Grabs focus when composed; only one screen shows at a time so they
+   * don't fight over focus.
+   */
+  @Composable
+  private fun Modifier.rotaryScroll(state: ScrollableState): Modifier {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    return this.rotaryScrollable(
+      RotaryScrollableDefaults.behavior(scrollableState = state),
+      focusRequester = focusRequester,
+    )
+  }
+
   @Composable
   fun WearAppScreen() {
     MaterialTheme {
@@ -447,7 +473,7 @@ class MainActivity : ComponentActivity() {
     val entries = deckEntries()
     ScalingLazyColumn(
       state = listState,
-      modifier = Modifier.fillMaxSize(),
+      modifier = Modifier.fillMaxSize().rotaryScroll(listState),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -527,7 +553,7 @@ class MainActivity : ComponentActivity() {
     var pickingNewCount by remember { mutableStateOf(false) }
     ScalingLazyColumn(
       state = listState,
-      modifier = Modifier.fillMaxSize(),
+      modifier = Modifier.fillMaxSize().rotaryScroll(listState),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -619,6 +645,7 @@ class MainActivity : ComponentActivity() {
       remember(card.id, card.ord) { mutableLongStateOf(System.currentTimeMillis()) }
     var isRevealed by remember(card.id, card.ord) { mutableStateOf(session.isRevealed()) }
     var isAnswering by remember(card.id, card.ord) { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
 
     // Anki answers usually embed the question followed by <hr id=answer>; show only the part after
     // it so the answer view doesn't duplicate the front. Falls back to the whole back if no marker.
@@ -647,66 +674,82 @@ class MainActivity : ComponentActivity() {
       }
     }
 
-    Column(
-      modifier = Modifier.fillMaxSize().padding(horizontal = 8.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
-    ) {
-      // Header Progress & Stats
-      Text(
-        text = session.getProgressString(),
-        style = MaterialTheme.typography.caption2,
-        color = MaterialTheme.colors.secondary,
-        modifier = Modifier.padding(top = 4.dp),
-      )
-
-      // Wear OS has no WebView provider, so render the sanitized card text natively. Takes all
-      // remaining vertical space and scrolls internally.
-      Column(
-        modifier =
-          Modifier.weight(1f)
-            .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
-            .padding(vertical = 6.dp),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-      ) {
-        HtmlText(html = displayFront, modifier = Modifier.fillMaxWidth())
-        if (isRevealed) {
+    if (!isRevealed) {
+      // Front: the whole card is tappable to reveal; a small grey hint says so.
+      Box(modifier = Modifier.fillMaxSize()) {
+        Text(
+          text = session.getProgressString(),
+          style = MaterialTheme.typography.caption2,
+          color = MaterialTheme.colors.secondary,
+          modifier = Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
+        )
+        Column(
+          modifier =
+            Modifier.fillMaxSize()
+              .verticalScroll(scrollState)
+              .rotaryScroll(scrollState)
+              .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+              ) {
+                session.revealAnswer()
+                isRevealed = true
+              }
+              .padding(start = 12.dp, end = 12.dp, top = 30.dp, bottom = 34.dp),
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.Center,
+        ) {
+          HtmlText(html = displayFront, modifier = Modifier.fillMaxWidth())
+        }
+        Text(
+          text = "Tap to show answer",
+          style = MaterialTheme.typography.caption3,
+          color = Color.LightGray,
+          modifier =
+            Modifier.align(Alignment.BottomCenter)
+              .padding(bottom = 14.dp)
+              .background(Color.DarkGray.copy(alpha = 0.55f), RoundedCornerShape(50))
+              .padding(horizontal = 10.dp, vertical = 3.dp),
+        )
+      }
+    } else {
+      // Answer: the card fills the screen and scrolls under the grade buttons, which overlay the
+      // lower bezel with some transparency so the card shows through.
+      val duration = System.currentTimeMillis() - cardStartTime
+      Box(modifier = Modifier.fillMaxSize()) {
+        Text(
+          text = session.getProgressString(),
+          style = MaterialTheme.typography.caption2,
+          color = MaterialTheme.colors.secondary,
+          modifier = Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
+        )
+        Column(
+          modifier =
+            Modifier.fillMaxSize()
+              .verticalScroll(scrollState)
+              .rotaryScroll(scrollState)
+              // Extra bottom space so the answer can scroll past the overlay buttons and every
+              // line can be brought fully into the clear above them.
+              .padding(start = 14.dp, end = 14.dp, top = 28.dp, bottom = 96.dp),
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.Center,
+        ) {
+          HtmlText(html = displayFront, modifier = Modifier.fillMaxWidth())
           Spacer(
             modifier =
-              Modifier.padding(vertical = 8.dp)
-                .fillMaxWidth(0.55f)
+              Modifier.padding(vertical = 6.dp)
+                .fillMaxWidth(0.5f)
                 .height(1.dp)
                 .background(Color.DarkGray)
           )
           HtmlText(html = displayBack, modifier = Modifier.fillMaxWidth())
         }
-      }
-
-      // Render the actions and grading buttons at the bottom of the screen
-      Box(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-        contentAlignment = Alignment.Center,
-      ) {
-        if (!isRevealed) {
-          Chip(
-            label = { Text("Show Answer") },
-            onClick = {
-              session.revealAnswer()
-              isRevealed = true
-            },
-            colors = ChipDefaults.primaryChipColors(),
-            modifier = Modifier.fillMaxWidth(0.9f),
-          )
-        } else {
-          val duration = System.currentTimeMillis() - cardStartTime
-          GradeGrid(card = card, enabled = !isAnswering) { ease, autoSync ->
-            if (!isAnswering) {
-              isAnswering = true
-              answerCardSafely(session, ease, duration) {
-                if (autoSync) triggerAnswersSync() // auto sync when finishing with Easy
-                isAnswering = false
-              }
+        GradeEdgeButtons(card = card, enabled = !isAnswering) { ease, autoSync ->
+          if (!isAnswering) {
+            isAnswering = true
+            answerCardSafely(session, ease, duration) {
+              if (autoSync) triggerAnswersSync() // auto sync when finishing with Easy
+              isAnswering = false
             }
           }
         }
@@ -716,57 +759,59 @@ class MainActivity : ComponentActivity() {
 
   private data class GradeSpec(
     val text: String,
-    val time: String,
     val color: Color,
     val ease: Int,
     val autoSync: Boolean,
   )
 
+  private fun gradeSpecs(card: WearosCard): List<GradeSpec> =
+    if (card.buttonCount == 3) {
+      listOf(
+        GradeSpec("Again", Color(0xFFEF5350), 1, false),
+        GradeSpec("Good", Color(0xFF66BB6A), 3, false),
+        GradeSpec("Easy", Color(0xFF42A5F5), 4, true),
+      )
+    } else {
+      listOf(
+        GradeSpec("Again", Color(0xFFEF5350), 1, false),
+        GradeSpec("Hard", Color(0xFFFFA726), 2, false),
+        GradeSpec("Good", Color(0xFF66BB6A), 3, false),
+        GradeSpec("Easy", Color(0xFF42A5F5), 4, true),
+      )
+    }
+
   /**
-   * Grading buttons laid out as a centered 2x2 grid so all of Again/Hard/Good/Easy stay inside the
-   * round display instead of overflowing off the edges in a single row.
+   * Grade buttons laid out along the bottom round edge with [CurvedLayout], so each chip is rotated
+   * tangent to the bezel and follows the arc. The interval preview is dropped so the words fit at
+   * this size (colour signals the grade); curvedComposable children stay clickable.
    */
   @Composable
-  fun GradeGrid(
+  private fun GradeEdgeButtons(
     card: WearosCard,
     enabled: Boolean,
     onGrade: (ease: Int, autoSync: Boolean) -> Unit,
   ) {
-    fun t(i: Int, default: String) = card.nextReviewTimes.getOrNull(i) ?: default
-    val grades =
-      if (card.buttonCount == 3) {
-        listOf(
-          GradeSpec("Again", t(0, "1m"), Color(0xFFEF5350), 1, false),
-          GradeSpec("Good", t(1, "4d"), Color(0xFF66BB6A), 3, false),
-          GradeSpec("Easy", t(2, "7d"), Color(0xFF42A5F5), 4, true),
-        )
-      } else {
-        listOf(
-          GradeSpec("Again", t(0, "1m"), Color(0xFFEF5350), 1, false),
-          GradeSpec("Hard", t(1, "10m"), Color(0xFFFFA726), 2, false),
-          GradeSpec("Good", t(2, "4d"), Color(0xFF66BB6A), 3, false),
-          GradeSpec("Easy", t(3, "7d"), Color(0xFF42A5F5), 4, true),
-        )
-      }
-    Column(
-      horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(4.dp),
+    val grades = gradeSpecs(card)
+    CurvedLayout(
+      modifier = Modifier.fillMaxSize(),
+      anchor = 90f,
+      anchorType = AnchorType.Center,
+      angularDirection = CurvedDirection.Angular.Reversed,
     ) {
-      grades.chunked(2).forEach { row ->
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-          row.forEach { g ->
-            Chip(
-              onClick = { if (enabled) onGrade(g.ease, g.autoSync) },
-              label = { Text(g.text, maxLines = 1) },
-              secondaryLabel = { Text(g.time, maxLines = 1) },
-              colors =
-                ChipDefaults.chipColors(
-                  backgroundColor = g.color.copy(alpha = 0.30f),
-                  contentColor = g.color,
-                ),
-              modifier = Modifier.width(90.dp),
-            )
-          }
+      grades.forEachIndexed { i, g ->
+        if (i > 0) {
+          curvedComposable { Spacer(modifier = Modifier.size(2.dp)) }
+        }
+        curvedComposable {
+          CompactChip(
+            onClick = { if (enabled) onGrade(g.ease, g.autoSync) },
+            label = { Text(g.text, maxLines = 1, style = MaterialTheme.typography.caption3) },
+            colors =
+              ChipDefaults.chipColors(
+                backgroundColor = g.color.copy(alpha = 0.32f),
+                contentColor = g.color,
+              ),
+          )
         }
       }
     }
@@ -845,7 +890,7 @@ class MainActivity : ComponentActivity() {
     var pickingNewCount by remember { mutableStateOf(false) }
     ScalingLazyColumn(
       state = listState,
-      modifier = Modifier.fillMaxSize(),
+      modifier = Modifier.fillMaxSize().rotaryScroll(listState),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Center,
     ) {
