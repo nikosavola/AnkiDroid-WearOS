@@ -437,6 +437,74 @@ mod tests {
     }
 
     #[test]
+    fn test_session_summary() {
+        // answer_card buffers into DB_CONN when configured; serialize with the other DB tests.
+        let _guard = db_test_guard();
+        let mk = |id: i64| WearosCard {
+            id,
+            note_id: id,
+            ord: 0,
+            front: "Q".to_string(),
+            back: "A".to_string(),
+            button_count: 4,
+            next_review_times: vec!["1m".to_string()],
+        };
+        let batch = WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![mk(1), mk(2), mk(3)],
+        };
+        let session = ReviewSession::new(batch);
+
+        let empty = session.get_summary();
+        assert_eq!(empty.total, 0);
+
+        session.answer_card(1, 1000).unwrap(); // Again
+        session.answer_card(3, 2000).unwrap(); // Good
+        session.answer_card(4, 3000).unwrap(); // Easy
+        let s = session.get_summary();
+        assert_eq!(s.total, 3);
+        assert_eq!(s.again, 1);
+        assert_eq!(s.hard, 0);
+        assert_eq!(s.good, 1);
+        assert_eq!(s.easy, 1);
+        assert_eq!(s.total_time_ms, 6000);
+
+        // Undo drops the last (Easy) from the tally.
+        session.undo_last_answer().unwrap();
+        let s2 = session.get_summary();
+        assert_eq!(s2.total, 2);
+        assert_eq!(s2.easy, 0);
+        assert_eq!(s2.total_time_ms, 3000);
+    }
+
+    #[test]
+    fn test_reviews_since() {
+        let _guard = db_test_guard();
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join("test_wearos_reviewlog.db").to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&db_path);
+        init_database(db_path.clone()).unwrap();
+
+        assert_eq!(reviews_since(0).unwrap(), 0);
+        for i in 0..3 {
+            save_answer(WearosAnswer {
+                id: format!("r{i}"),
+                note_id: i,
+                ord: 0,
+                ease: 3,
+                time_taken_ms: 1000,
+            })
+            .unwrap();
+        }
+        // All three logged "now", so counted from epoch 0; none from far in the future.
+        assert_eq!(reviews_since(0).unwrap(), 3);
+        assert_eq!(reviews_since(i64::MAX).unwrap(), 0);
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn test_format_queue_eta() {
         // Empty queue.
         assert_eq!(format_queue_eta(0, None), "All caught up 🎉");

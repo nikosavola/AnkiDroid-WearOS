@@ -83,6 +83,8 @@ class MainActivity : ComponentActivity() {
   private var outstandingAnswersCount by mutableStateOf(0)
   // Age (seconds) of the oldest un-synced review, to nudge the user when reviews go stale.
   private var outstandingOldestSecs by mutableLongStateOf(0L)
+  // Reviews completed since local midnight (motivational counter).
+  private var reviewedToday by mutableStateOf(0)
   private var isReviewing by mutableStateOf(false)
   private var ttsEnabled by mutableStateOf(false)
 
@@ -432,12 +434,31 @@ class MainActivity : ComponentActivity() {
       else -> "${secs / 86400}d"
     }
 
+  /** Epoch seconds at the device's local midnight today (passed to the Rust "reviews today" count). */
+  private fun todayMidnightSecs(): Long {
+    val cal =
+      java.util.Calendar.getInstance().apply {
+        set(java.util.Calendar.HOUR_OF_DAY, 0)
+        set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0)
+        set(java.util.Calendar.MILLISECOND, 0)
+      }
+    return cal.timeInMillis / 1000
+  }
+
+  /** Human review duration: "45s" under a minute, else "3m 20s". */
+  private fun formatDuration(ms: Long): String {
+    val totalSecs = ms / 1000
+    return if (totalSecs < 60) "${totalSecs}s" else "${totalSecs / 60}m ${totalSecs % 60}s"
+  }
+
   private fun updateOutstandingCount() {
     scope.launch(Dispatchers.IO) {
       try {
         val stats = bufferedAnswerStats()
         outstandingAnswersCount = stats.count
         outstandingOldestSecs = stats.oldestAgeSecs
+        reviewedToday = reviewsSince(todayMidnightSecs())
         Log.d(TAG, "Outstanding buffered reviews: ${stats.count}, oldest ${stats.oldestAgeSecs}s")
       } catch (e: Exception) {
         Log.e(TAG, "Failed to query buffered answers: ${e.message}")
@@ -560,7 +581,7 @@ class MainActivity : ComponentActivity() {
         } else {
           val currentCard = session.getCurrentCard()
           if (currentCard == null) {
-            FinishedScreen()
+            FinishedScreen(session)
           } else if (!isReviewing) {
             DeckScreen(session)
           } else {
@@ -771,6 +792,13 @@ class MainActivity : ComponentActivity() {
                 style = MaterialTheme.typography.labelSmall,
                 color = Color.LightGray,
               )
+              if (reviewedToday > 0) {
+                Text(
+                  text = "Reviewed today: $reviewedToday 🔥",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = Color(0xFFFFA726),
+                )
+              }
             }
           }
         }
@@ -1169,9 +1197,11 @@ class MainActivity : ComponentActivity() {
   }
 
   @Composable
-  fun FinishedScreen() {
+  fun FinishedScreen(session: ReviewSession) {
     var pickingNewCount by remember { mutableStateOf(false) }
     val listState = rememberScalingLazyListState()
+    // Tally what was graded this session (recomputed if an undo/answer changed it).
+    val summary = remember(cardCompletedTrigger) { session.getSummary() }
     ScreenScaffold(scrollState = listState) { contentPadding ->
       ScalingLazyColumn(
         state = listState,
@@ -1195,6 +1225,34 @@ class MainActivity : ComponentActivity() {
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(horizontal = 16.dp),
           )
+        }
+        // Session recap: how many cards, the ease split, and time spent.
+        if (summary.total > 0) {
+          item {
+            Card(onClick = {}, modifier = Modifier.fillMaxWidth(0.9f)) {
+              Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                  text = "${summary.total} cards · ${formatDuration(summary.totalTimeMs)}",
+                  style = MaterialTheme.typography.bodyMedium,
+                )
+                Text(
+                  text =
+                    "Again ${summary.again} · Hard ${summary.hard} · " +
+                      "Good ${summary.good} · Easy ${summary.easy}",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  textAlign = TextAlign.Center,
+                )
+                if (reviewedToday > 0) {
+                  Text(
+                    text = "Today: $reviewedToday 🔥",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color(0xFFFFA726),
+                  )
+                }
+              }
+            }
+          }
         }
         item {
           Text(
