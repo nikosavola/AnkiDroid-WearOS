@@ -62,6 +62,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import kotlinx.coroutines.withContext
 import uniffi.wearos_core.*
 
 /** A deck shown in the picker; [cardCount] is null when the deck has not been downloaded yet. */
@@ -114,15 +115,8 @@ class MainActivity : ComponentActivity() {
               val wasNew = pendingIsNew
               pendingDeckId = null
               pendingIsNew = false
-              loadDeckSession(pending)
-              if (wasNew && (reviewSession?.getTotalCards() ?: 0) == 0) {
-                Toast.makeText(
-                    this@MainActivity,
-                    "No studyable new cards (multi-template notes are skipped).",
-                    Toast.LENGTH_LONG,
-                  )
-                  .show()
-              }
+              // toastIfEmptyNew runs the "no studyable new cards" check after the async load.
+              loadDeckSession(pending, toastIfEmptyNew = wasNew)
             }
           }
           WearSyncService.ACTION_ANSWERS_CLEARED -> {
@@ -181,28 +175,38 @@ class MainActivity : ComponentActivity() {
     tts?.shutdown()
   }
 
-  /** Refresh both the locally-downloaded decks and the full deck list synced from the phone. */
+  /**
+   * Refresh both the locally-downloaded decks and the full deck list synced from the phone. Reading
+   * + Rust-deserializing every cached deck (DeckCache.listCached) is real I/O, so do it off the main
+   * thread and publish the Compose state back on the main thread.
+   */
   private fun loadDecks() {
-    cachedDecks = DeckCache.listCached(this)
-    try {
-      val cacheFile = File(filesDir, "decks_cache.txt")
-      knownDecks =
-        if (cacheFile.exists()) {
-          cacheFile
-            .readText(Charsets.UTF_8)
-            .split("\n")
-            .filter { it.isNotEmpty() }
-            .map {
-              val parts = it.split(":", limit = 2)
-              Pair(parts[0].toLong(), parts.getOrElse(1) { "Deck ${parts[0]}" })
+    scope.launch {
+      val cached = withContext(Dispatchers.IO) { DeckCache.listCached(this@MainActivity) }
+      val known =
+        withContext(Dispatchers.IO) {
+          try {
+            val cacheFile = File(filesDir, "decks_cache.txt")
+            if (cacheFile.exists()) {
+              cacheFile
+                .readText(Charsets.UTF_8)
+                .split("\n")
+                .filter { it.isNotEmpty() }
+                .map {
+                  val parts = it.split(":", limit = 2)
+                  Pair(parts[0].toLong(), parts.getOrElse(1) { "Deck ${parts[0]}" })
+                }
+            } else {
+              emptyList()
             }
-        } else {
-          emptyList()
+          } catch (e: Exception) {
+            Log.e(TAG, "Failed to load decks list: ${e.message}", e)
+            emptyList()
+          }
         }
-      Log.d(TAG, "Loaded ${cachedDecks.size} cached decks, ${knownDecks.size} known decks.")
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to load decks list: ${e.message}", e)
-      knownDecks = emptyList()
+      cachedDecks = cached
+      knownDecks = known
+      Log.d(TAG, "Loaded ${cached.size} cached decks, ${known.size} known decks.")
     }
   }
 
@@ -229,18 +233,36 @@ class MainActivity : ComponentActivity() {
   /** Parent of a `::` deck path; "" when already at a top-level segment. */
   private fun parentFolder(path: String): String = path.substringBeforeLast("::", "")
 
-  /** Load an already-downloaded deck into a review session entirely offline. */
-  private fun loadDeckSession(deckId: Long) {
-    try {
-      val bytes = DeckCache.deckFile(this, deckId).readBytes()
-      val batch = deserializeDueBatch(bytes)
-      reviewSession = ReviewSession(batch)
-      activeDeckId = deckId
-      isReviewing = false
-      Log.i(TAG, "Loaded deck '${batch.deckName}' with ${batch.cards.size} cards from cache.")
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to load cached deck $deckId: ${e.message}", e)
-      Toast.makeText(this, "Could not open deck.", Toast.LENGTH_SHORT).show()
+  /**
+   * Load an already-downloaded deck into a review session entirely offline. When [toastIfEmptyNew]
+   * is set (a "learn new cards" request), warn if nothing studyable came back once the session is
+   * loaded.
+   */
+  private fun loadDeckSession(deckId: Long, toastIfEmptyNew: Boolean = false) {
+    scope.launch {
+      try {
+        // File read + Rust deserialize is I/O; keep it off the main thread.
+        val batch =
+          withContext(Dispatchers.IO) {
+            deserializeDueBatch(DeckCache.deckFile(this@MainActivity, deckId).readBytes())
+          }
+        val session = ReviewSession(batch)
+        reviewSession = session
+        activeDeckId = deckId
+        isReviewing = false
+        Log.i(TAG, "Loaded deck '${batch.deckName}' with ${batch.cards.size} cards from cache.")
+        if (toastIfEmptyNew && session.getTotalCards() == 0) {
+          Toast.makeText(
+              this@MainActivity,
+              "No studyable new cards (multi-template notes are skipped).",
+              Toast.LENGTH_LONG,
+            )
+            .show()
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to load cached deck $deckId: ${e.message}", e)
+        Toast.makeText(this@MainActivity, "Could not open deck.", Toast.LENGTH_SHORT).show()
+      }
     }
   }
 
