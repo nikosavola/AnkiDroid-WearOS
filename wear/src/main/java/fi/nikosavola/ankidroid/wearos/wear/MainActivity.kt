@@ -18,7 +18,6 @@ import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -29,6 +28,7 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.text.HtmlCompat
 import androidx.wear.compose.foundation.AnchorType
@@ -45,7 +45,6 @@ import androidx.wear.compose.material3.AppScaffold
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.Card
-import androidx.wear.compose.material3.ChildButton
 import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.EdgeButton
 import androidx.wear.compose.material3.EdgeButtonSize
@@ -54,6 +53,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SwitchButton
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.curvedText
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import java.io.File
@@ -651,8 +651,9 @@ class MainActivity : ComponentActivity() {
             }
           }
         }
+        item { Spacer(modifier = Modifier.height(8.dp)) }
         item {
-          ChildButton(onClick = { reviewSession = null }, modifier = Modifier.fillMaxWidth(0.9f)) {
+          EdgeButton(onClick = { reviewSession = null }, buttonSize = EdgeButtonSize.Medium) {
             Text("Change Deck")
           }
         }
@@ -661,12 +662,19 @@ class MainActivity : ComponentActivity() {
   }
 
   @Composable
+  @Suppress("LongMethod")
   fun ReviewCardScreen(session: ReviewSession, card: WearosCard) {
     var cardStartTime by
       remember(card.id, card.ord) { mutableLongStateOf(System.currentTimeMillis()) }
     var isRevealed by remember(card.id, card.ord) { mutableStateOf(session.isRevealed()) }
     var isAnswering by remember(card.id, card.ord) { mutableStateOf(false) }
     val scrollState = rememberScrollState()
+
+    val labelStyle = MaterialTheme.typography.labelSmall
+    val curvedStyle =
+      remember(labelStyle) {
+        androidx.wear.compose.foundation.CurvedTextStyle(labelStyle.copy(fontSize = 11.sp))
+      }
 
     // Anki answers usually embed the question followed by <hr id=answer>; show only the part after
     // it so the answer view doesn't duplicate the front. Falls back to the whole back if no marker.
@@ -727,16 +735,18 @@ class MainActivity : ComponentActivity() {
             modifier = Modifier.fillMaxWidth(),
           )
         }
-        Text(
-          text = "Tap to show answer",
-          style = MaterialTheme.typography.labelSmall,
-          color = Color.LightGray,
-          modifier =
-            Modifier.align(Alignment.BottomCenter)
-              .padding(bottom = 14.dp)
-              .background(Color.DarkGray.copy(alpha = 0.55f), RoundedCornerShape(50))
-              .padding(horizontal = 10.dp, vertical = 3.dp),
-        )
+        CurvedLayout(
+          modifier = Modifier.fillMaxSize(),
+          anchor = 90f,
+          anchorType = AnchorType.Center,
+          angularDirection = CurvedDirection.Angular.Reversed,
+        ) {
+          curvedText(
+            text = "Tap to show answer",
+            style = curvedStyle,
+            color = Color.LightGray.copy(alpha = 0.7f),
+          )
+        }
       } else {
         // Answer: the card fills the screen and scrolls under the grade buttons, which overlay the
         // lower bezel with some transparency so the card shows through.
