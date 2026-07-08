@@ -20,6 +20,9 @@ thiserror = "1.0.63"
 # Pure-Rust gzip backend (miniz_oxide) so the crate's `unsafe_code = forbid` still holds; used to
 # compress the due-batch payload inside the sync (de)serializers.
 flate2 = "1.0"
+# Protobuf encoding via derive macros only — no protoc / build.rs needed (messages are defined as
+# annotated Rust structs). Experimental compact wire format for the due batch (see proto.rs).
+prost = "0.13"
 
 [lints.rust]
 unsafe_code = "forbid"

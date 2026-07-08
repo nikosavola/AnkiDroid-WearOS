@@ -174,7 +174,14 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
             setMargins(0, 0, 0, 16)
           }
       }
-    deckListLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+    deckListLayout =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        // Stopgap "Expressive motion": animate rows appearing/disappearing on expand/collapse. A
+        // true M3 Expressive tree (spring chevron, per-subtree animation) wants the Compose
+        // migration — see HANDOFF_TESTING.md; this at least removes the abrupt full redraw.
+        layoutTransition = android.animation.LayoutTransition()
+      }
     scrollView.addView(deckListLayout)
     rootLayout.addView(scrollView)
 

@@ -53,6 +53,16 @@ class SyncService : Service() {
 
     // One sync at a time; a second start while running is ignored.
     private val running = AtomicBoolean(false)
+
+    /**
+     * Progress percent while pushing decks: setup work occupies 0–15%, then each of the [prePushCap]
+     * decks advances the bar up to 95% (the final "done" step sets 100). Extracted as a pure
+     * function so it can be unit-tested without a running service. Guards a zero/negative cap.
+     */
+    fun syncProgressPercent(pushed: Int, prePushCap: Int): Int {
+      if (prePushCap <= 0) return 95
+      return (15 + 80 * pushed / prePushCap).coerceIn(15, 95)
+    }
   }
 
   private val job = SupervisorJob()
@@ -151,8 +161,10 @@ class SyncService : Service() {
 
       pushed++
       totalCards += batch.cards.size
-      val percent = 15 + 80 * pushed / prePushCap
-      progress("Copying $deckName… ($pushed decks, $totalCards cards)", percent.coerceAtMost(95))
+      progress(
+        "Copying $deckName… ($pushed decks, $totalCards cards)",
+        syncProgressPercent(pushed, prePushCap),
+      )
       Log.d(TAG, "Pushed deck $deckId ('$deckName') with ${batch.cards.size} cards.")
     }
 
