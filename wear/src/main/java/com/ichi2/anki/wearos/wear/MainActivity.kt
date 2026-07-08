@@ -660,7 +660,8 @@ class MainActivity : ComponentActivity() {
       )
 
       // Wear OS has no WebView provider, so render the sanitized card text natively. Takes all
-      // remaining vertical space and scrolls internally.
+      // remaining vertical space and scrolls internally. When unrevealed, the "Show Answer" button
+      // sits with the card centered in the wide middle band so it never touches the round bezel.
       Column(
         modifier =
           Modifier.weight(1f)
@@ -680,15 +681,8 @@ class MainActivity : ComponentActivity() {
                 .background(Color.DarkGray)
           )
           HtmlText(html = displayBack, modifier = Modifier.fillMaxWidth())
-        }
-      }
-
-      // Render the actions and grading buttons at the bottom of the screen
-      Box(
-        modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
-        contentAlignment = Alignment.Center,
-      ) {
-        if (!isRevealed) {
+        } else {
+          Spacer(modifier = Modifier.height(16.dp))
           Chip(
             label = { Text("Show Answer") },
             onClick = {
@@ -696,9 +690,18 @@ class MainActivity : ComponentActivity() {
               isRevealed = true
             },
             colors = ChipDefaults.primaryChipColors(),
-            modifier = Modifier.fillMaxWidth(0.9f),
+            modifier = Modifier.fillMaxWidth(0.75f),
           )
-        } else {
+        }
+      }
+
+      // Grading grid is fixed at the bottom (so it stays reachable while the answer scrolls),
+      // lifted off the round bezel.
+      if (isRevealed) {
+        Box(
+          modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
+          contentAlignment = Alignment.Center,
+        ) {
           val duration = System.currentTimeMillis() - cardStartTime
           GradeGrid(card = card, enabled = !isAnswering) { ease, autoSync ->
             if (!isAnswering) {
