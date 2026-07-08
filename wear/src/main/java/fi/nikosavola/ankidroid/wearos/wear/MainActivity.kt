@@ -80,6 +80,10 @@ class MainActivity : ComponentActivity() {
   private var isReviewing by mutableStateOf(false)
   private var ttsEnabled by mutableStateOf(false)
 
+  // Current folder in the deck picker's `::` hierarchy ("" = root). Descending sets it to a child
+  // path; the physical back button and the up row pop it one level.
+  private var deckFolderPath by mutableStateOf("")
+
   // Decks downloaded to the watch (switchable offline) and the full list known from the phone.
   private var cachedDecks by mutableStateOf<List<DeckCache.CachedDeck>>(emptyList())
   private var knownDecks by mutableStateOf<List<Pair<Long, String>>>(emptyList())
@@ -218,6 +222,12 @@ class MainActivity : ComponentActivity() {
     }
     return byId.values.toList()
   }
+
+  /** Flatten the known/cached decks into the id+name pairs the Rust folder resolver expects. */
+  private fun deckInfos(): List<DeckInfo> = deckEntries().map { DeckInfo(it.id, it.name) }
+
+  /** Parent of a `::` deck path; "" when already at a top-level segment. */
+  private fun parentFolder(path: String): String = path.substringBeforeLast("::", "")
 
   /** Load an already-downloaded deck into a review session entirely offline. */
   private fun loadDeckSession(deckId: Long) {
@@ -457,6 +467,9 @@ class MainActivity : ComponentActivity() {
         androidx.activity.compose.BackHandler { isReviewing = false }
       } else if (session != null) {
         androidx.activity.compose.BackHandler { reviewSession = null }
+      } else if (deckFolderPath.isNotEmpty()) {
+        // On the deck picker, back goes up one folder instead of leaving the app.
+        androidx.activity.compose.BackHandler { deckFolderPath = parentFolder(deckFolderPath) }
       }
 
       AppScaffold {
@@ -483,6 +496,15 @@ class MainActivity : ComponentActivity() {
   fun WelcomeScreen() {
     val listState = rememberScalingLazyListState()
     val entries = deckEntries()
+    val countById = remember(entries) { entries.associate { it.id to it.cardCount } }
+    // Resolve one folder level from the flat deck list in Rust; card counts stay a UI concern here.
+    val level = remember(entries, deckFolderPath) { deckChildren(deckInfos(), deckFolderPath) }
+    // Reset scroll to the top whenever we descend into or pop out of a folder.
+    LaunchedEffect(deckFolderPath) { listState.scrollToItem(0) }
+
+    val title =
+      if (deckFolderPath.isEmpty()) "AnkiDroid Wear" else deckFolderPath.substringAfterLast("::")
+
     ScreenScaffold(scrollState = listState) { contentPadding ->
       ScalingLazyColumn(
         state = listState,
@@ -498,9 +520,12 @@ class MainActivity : ComponentActivity() {
       ) {
         item {
           Text(
-            text = "AnkiDroid Wear",
+            text = title,
             style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(bottom = 6.dp),
+            maxLines = 2,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
           )
         }
 
@@ -514,39 +539,46 @@ class MainActivity : ComponentActivity() {
             )
           }
         } else {
-          item {
-            Text(
-              text = "Select a Deck:",
-              style = MaterialTheme.typography.labelMedium,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-              modifier = Modifier.padding(bottom = 4.dp),
-            )
-          }
-          items(entries) { entry ->
-            Card(onClick = { selectDeck(entry.id) }, modifier = Modifier.fillMaxWidth(0.95f)) {
-              Column {
-                Text(
-                  text = entry.name,
-                  style = MaterialTheme.typography.bodyMedium,
-                  maxLines = 2,
-                  overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                )
-                Text(
-                  text =
-                    if (entry.cardCount != null) {
-                      "${entry.cardCount} cards ready"
-                    } else {
-                      "Tap to download"
-                    },
-                  style = MaterialTheme.typography.labelSmall,
-                  color =
-                    if (entry.cardCount != null) {
-                      Color(0xFF66BB6A)
-                    } else {
-                      MaterialTheme.colorScheme.onSurfaceVariant
-                    },
-                )
+          // Up one folder. Only shown when we've descended below the root.
+          if (deckFolderPath.isNotEmpty()) {
+            item {
+              CompactButton(
+                onClick = { deckFolderPath = parentFolder(deckFolderPath) },
+                colors = ButtonDefaults.filledTonalButtonColors(),
+                modifier = Modifier.fillMaxWidth(0.7f),
+              ) {
+                Text("⬆  Up")
               }
+            }
+          }
+
+          // Studying the folder itself (Anki parent decks are real decks).
+          level.ownDeck?.let { own ->
+            item { DeckCard(id = own.id, label = "Study ${own.name}", cardCount = countById[own.id]) }
+          }
+
+          items(level.children) { node ->
+            if (node.isFolder) {
+              Card(
+                onClick = { deckFolderPath = node.path },
+                modifier = Modifier.fillMaxWidth(0.95f),
+              ) {
+                Column {
+                  Text(
+                    text = "📁  ${node.name}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    maxLines = 2,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                  )
+                  Text(
+                    text = "Folder",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  )
+                }
+              }
+            } else {
+              DeckCard(id = node.id, label = node.name, cardCount = countById[node.id])
             }
           }
         }
@@ -566,6 +598,27 @@ class MainActivity : ComponentActivity() {
             )
           }
         }
+      }
+    }
+  }
+
+  /** A studyable deck row: taps open it offline if cached, else request it from the phone. */
+  @Composable
+  private fun DeckCard(id: Long, label: String, cardCount: Int?) {
+    Card(onClick = { selectDeck(id) }, modifier = Modifier.fillMaxWidth(0.95f)) {
+      Column {
+        Text(
+          text = label,
+          style = MaterialTheme.typography.bodyMedium,
+          maxLines = 2,
+          overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+        )
+        Text(
+          text = if (cardCount != null) "$cardCount cards ready" else "Tap to download",
+          style = MaterialTheme.typography.labelSmall,
+          color =
+            if (cardCount != null) Color(0xFF66BB6A) else MaterialTheme.colorScheme.onSurfaceVariant,
+        )
       }
     }
   }
