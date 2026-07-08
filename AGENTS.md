@@ -49,6 +49,14 @@ To run self-contained, offline unit tests for our SQLite cache, state-machine tr
 cargo test --manifest-path core/Cargo.toml
 ```
 
+### Clean Up Daemons After Toolchain Changes
+Gradle and Kotlin each spawn a long-lived background daemon (`GradleDaemon`, `KotlinCompileDaemon`)
+per distinct version they run. Bumping `gradle-wrapper.properties` or the Kotlin version during
+experimentation leaves the *old* daemons running indefinitely in the background, each holding
+`-Xmx2048m`. Run `./gradlew --stop` after a toolchain bump (it only stops daemons matching the
+wrapper version in this project), and check `ps aux | grep java` for stray daemons from versions
+you tried and reverted — kill those directly since `--stop` won't reach them.
+
 ---
 
 ## 5. Card Rendering (native, no WebView)
