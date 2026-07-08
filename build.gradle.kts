@@ -82,7 +82,9 @@ subprojects {
 
     configure<io.gitlab.arturbosch.detekt.extensions.DetektExtension> {
         buildUponDefaultConfig = true
-        allRules = false
+        // Enable detekt's off-by-default rules too (the Kotlin analog of clippy pedantic/nursery);
+        // config/detekt/detekt.yml re-disables only the ones that conflict with our conventions.
+        allRules = true
         parallel = true
     }
 

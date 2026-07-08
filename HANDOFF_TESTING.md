@@ -375,6 +375,32 @@ the crate-wide allow list to only genuinely-justified entries.
     sub-composables. **Verify** the review flow still works after this extraction (state hoisting:
     reveal + grade go through the passed lambdas; `cardStartTime` is now a `val remember`).
 
+## 1.20 Kotlin lint tightening + .editorconfig reconciliation  ⚠️ detekt run required
+
+Mirrors the clippy "max checks" pass for the Kotlin tools.
+
+- **detekt `allRules = true`** (root `build.gradle.kts`) — enables detekt's off-by-default rules
+  (the analog of clippy pedantic/nursery/cargo). `config/detekt/detekt.yml` was rewritten to
+  re-disable only the genuine conflicts (mirroring the kept FFI clippy allows): `comments`
+  Undocumented*/license rules (we don't require KDoc everywhere), `ForbiddenComment` (we use NOTE:
+  markers), `TooGenericExceptionCaught`/`SwallowedException` (Android catch-and-log is deliberate),
+  Compose-friendly `FunctionNaming`, and a raised `LongParameterList` threshold (11) since
+  composables take many hoisted params — `ReviewAnswer` has 8, which the **default threshold (6)
+  would already have failed**, so this also fixes a latent break from the earlier extraction.
+  - **CANNOT verify here (no detekt/JVM):** `allRules = true` will likely surface a few more
+    findings than I pre-disabled — the known suspect is `UnusedPrivateMember` on the `@Preview`
+    `DeckSelectionTreePreview` (Compose previews look unused to detekt). **Run `./gradlew detekt`**
+    and either add the specific rule's `ignoreAnnotated: ['Preview']` or annotate. This is the one
+    change in the branch most likely to need a follow-up triage pass.
+- **`.editorconfig` reconciliation.** Investigated tool support: **ktlint** is fully `.editorconfig`
+  -driven (already the config home for the standard-rule toggles); **ktfmt** only reads a limited
+  subset via a CLI flag the ncorti 0.26 plugin doesn't wire (stays `googleStyle()` in Gradle);
+  **detekt core** is YAML-only. So nothing new to *move* in — but the file mis-declared
+  `indent_size = 4` while ktfmt `googleStyle` (the authority) formats to **2-space / 100-col**
+  (verified against the committed code). Fixed `indent_size = 2` + `max_line_length = 100` so
+  editors stop fighting the formatter, added a header documenting what reads the file, and added
+  editor-guidance sections for `*.rs` / `*.{yml,yaml,toml}`.
+
 ---
 
 # Part 2 — Remaining backlog (not implemented here)
