@@ -177,8 +177,8 @@ class MainActivity : ComponentActivity() {
 
   /**
    * Refresh both the locally-downloaded decks and the full deck list synced from the phone. Reading
-   * + Rust-deserializing every cached deck (DeckCache.listCached) is real I/O, so do it off the main
-   * thread and publish the Compose state back on the main thread.
+   * + Rust-deserializing every cached deck (DeckCache.listCached) is real I/O, so do it off the
+   *   main thread and publish the Compose state back on the main thread.
    */
   private fun loadDecks() {
     scope.launch {
@@ -583,7 +583,9 @@ class MainActivity : ComponentActivity() {
 
           // Studying the folder itself (Anki parent decks are real decks).
           level.ownDeck?.let { own ->
-            item { DeckCard(id = own.id, label = "Study ${own.name}", cardCount = countById[own.id]) }
+            item {
+              DeckCard(id = own.id, label = "Study ${own.name}", cardCount = countById[own.id])
+            }
           }
 
           items(level.children) { node ->
