@@ -91,6 +91,7 @@ class MainActivity : ComponentActivity() {
   private var themeMode by mutableStateOf(WatchSettings.ThemeMode.DARK)
   private var fontScale by mutableFloatStateOf(1.0f)
   private var cardFont by mutableStateOf(WatchSettings.CardFont.DEFAULT)
+  private var keepScreenOn by mutableStateOf(false)
   private var showSettings by mutableStateOf(false)
 
   // Current folder in the deck picker's `::` hierarchy ("" = root). Descending sets it to a child
@@ -168,6 +169,7 @@ class MainActivity : ComponentActivity() {
     themeMode = WatchSettings.themeMode(this)
     fontScale = WatchSettings.fontScale(this)
     cardFont = WatchSettings.cardFont(this)
+    keepScreenOn = WatchSettings.keepScreenOn(this)
 
     // 4. Load the list of decks (cached locally + known from the phone). Start on the picker.
     loadDecks()
@@ -493,6 +495,19 @@ class MainActivity : ComponentActivity() {
         Log.e(TAG, "Failed to answer card securely via Rust FFI: ${e.message}", e)
       } finally {
         onDone()
+      }
+    }
+  }
+
+  /** Undo the last grade: Rust steps the queue back and drops the buffered answer; refresh the UI. */
+  fun undoLastAnswer(session: ReviewSession) {
+    scope.launch {
+      try {
+        withContext(Dispatchers.IO) { session.undoLastAnswer() }
+        updateOutstandingCount()
+        cardCompletedTrigger++ // recompose the review screen onto the restored card
+      } catch (e: Exception) {
+        Log.e(TAG, "Undo failed: ${e.message}", e)
       }
     }
   }
@@ -852,6 +867,15 @@ class MainActivity : ComponentActivity() {
       }
     }
 
+    // Optionally hold the screen on for the duration of the review (opt-in; battery cost). The flag
+    // is cleared when we leave the review screen.
+    if (keepScreenOn) {
+      DisposableEffect(Unit) {
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose { window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
+      }
+    }
+
     ScreenScaffold(scrollState = scrollState) {
       if (!isRevealed) {
         // Front: the whole card is tappable to reveal; a small grey hint says so.
@@ -861,6 +885,18 @@ class MainActivity : ComponentActivity() {
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
         )
+        // Undo the previous grade (steps back a card and drops its buffered answer). Only shown once
+        // at least one card has been answered. NOTE: placement near the top edge may need tuning on
+        // round displays where the corners are clipped.
+        if (session.canUndo()) {
+          CompactButton(
+            onClick = { undoLastAnswer(session) },
+            colors = ButtonDefaults.filledTonalButtonColors(),
+            modifier = Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 2.dp),
+          ) {
+            Text("↩", style = MaterialTheme.typography.labelSmall)
+          }
+        }
         Column(
           modifier =
             Modifier.fillMaxSize()
@@ -1297,6 +1333,18 @@ class MainActivity : ComponentActivity() {
             cardFont = font
             WatchSettings.setCardFont(this@MainActivity, font)
           }
+        }
+        item {
+          SwitchButton(
+            checked = keepScreenOn,
+            onCheckedChange = {
+              keepScreenOn = it
+              WatchSettings.setKeepScreenOn(this@MainActivity, it)
+            },
+            label = { Text("Keep screen on") },
+            secondaryLabel = { Text("During review · uses battery") },
+            modifier = Modifier.fillMaxWidth(0.95f),
+          )
         }
         item { Spacer(modifier = Modifier.height(8.dp)) }
         item {

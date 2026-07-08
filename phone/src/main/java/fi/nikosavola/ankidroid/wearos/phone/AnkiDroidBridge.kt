@@ -92,6 +92,37 @@ class AnkiDroidBridge(private val context: Context) {
     return list
   }
 
+  /**
+   * Best-effort per-deck due counts from the Deck provider's counts column, when the installed
+   * AnkiDroid exposes one (`deck_counts`, typically a bracketed `[learn, review, new]`). Returns
+   * `deckId -> total` (sum of whatever integers the column holds). Empty map when the column is
+   * absent, AnkiDroid is unavailable, or anything fails — callers MUST treat a missing entry as
+   * "unknown", never as zero. This does one provider query, but the provider may compute counts for
+   * the whole collection, so call it off the main thread.
+   */
+  fun fetchDeckCounts(): Map<Long, Int> {
+    if (!isAnkiDroidAvailable()) return emptyMap()
+    val out = mutableMapOf<Long, Int>()
+    try {
+      context.contentResolver.query(DECKS_URI, null, null, null, null)?.use { c ->
+        val idIdx = c.getColumnIndex(COL_DECK_ID)
+        val countsIdx = c.getColumnIndex("deck_counts")
+        if (idIdx == -1 || countsIdx == -1) return emptyMap()
+        while (c.moveToNext()) {
+          val id = c.getLong(idIdx)
+          val raw = c.getString(countsIdx) ?: continue
+          // Sum every integer in the value, tolerant of the exact bracket/format the version uses.
+          val nums = Regex("\\d+").findAll(raw).map { it.value.toIntOrNull() ?: 0 }.toList()
+          if (nums.isNotEmpty()) out[id] = nums.sum()
+        }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to read deck counts (column may not exist): ${e.message}")
+      return emptyMap()
+    }
+    return out
+  }
+
   /** Query the user's active, currently selected deck from AnkiDroid dynamically. */
   fun getSelectedDeck(): Pair<Long, String> {
     try {

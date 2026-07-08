@@ -387,6 +387,56 @@ mod tests {
     }
 
     #[test]
+    fn test_review_session_undo() {
+        let _guard = db_test_guard();
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join("test_wearos_undo.db").to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&db_path);
+        init_database(db_path.clone()).unwrap();
+
+        let mk = |id: i64, front: &str| WearosCard {
+            id,
+            note_id: id * 10,
+            ord: 0,
+            front: front.to_string(),
+            back: "A".to_string(),
+            button_count: 4,
+            next_review_times: vec!["1m".to_string()],
+        };
+        let batch = WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![mk(1, "Q1"), mk(2, "Q2")],
+        };
+        let session = ReviewSession::new(batch);
+
+        assert!(!session.can_undo(), "nothing answered yet");
+        assert!(session.undo_last_answer().unwrap().is_none());
+
+        session.answer_card(3, 1000).unwrap();
+        session.answer_card(2, 2000).unwrap();
+        assert_eq!(session.get_current_index(), 2);
+        assert_eq!(get_buffered_answers().unwrap().len(), 2);
+
+        // Undo once: back to card 2, its buffered answer removed.
+        assert!(session.can_undo());
+        let back = session.undo_last_answer().unwrap().unwrap();
+        assert_eq!(back.front, "Q2");
+        assert_eq!(session.get_current_index(), 1);
+        assert!(!session.is_revealed());
+        assert_eq!(get_buffered_answers().unwrap().len(), 1);
+
+        // Undo again: back to card 1, buffer empty.
+        let back1 = session.undo_last_answer().unwrap().unwrap();
+        assert_eq!(back1.front, "Q1");
+        assert_eq!(session.get_current_index(), 0);
+        assert_eq!(get_buffered_answers().unwrap().len(), 0);
+        assert!(!session.can_undo());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn test_format_queue_eta() {
         // Empty queue.
         assert_eq!(format_queue_eta(0, None), "All caught up 🎉");
