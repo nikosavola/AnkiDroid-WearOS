@@ -1,6 +1,7 @@
 plugins {
   alias(libs.plugins.android.application)
   alias(libs.plugins.kotlin.android)
+  alias(libs.plugins.compose.compiler)
 }
 
 android {
@@ -29,6 +30,7 @@ android {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
   }
+  buildFeatures { compose = true }
   sourceSets { getByName("main") { java.srcDirs("src/main/java", "../bindings") } }
 
   testOptions {
@@ -56,6 +58,15 @@ dependencies {
   implementation(libs.androidx.lifecycle.runtime.ktx)
   implementation("androidx.appcompat:appcompat:1.7.0")
   implementation("com.google.android.material:material:1.12.0")
+
+  // Jetpack Compose (Material 3) — phase-1 of the phone UI migration; hosts the animated deck tree.
+  implementation(libs.androidx.activity.compose)
+  implementation(libs.compose.foundation)
+  implementation(libs.compose.ui)
+  implementation(libs.compose.ui.tooling.preview)
+  implementation(libs.compose.animation)
+  implementation(libs.compose.material3)
+
   implementation(libs.play.services.wearable)
   implementation(libs.androidx.work.runtime)
   implementation("net.java.dev.jna:jna:5.14.0@aar")
