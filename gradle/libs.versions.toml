@@ -8,6 +8,13 @@ coroutines = "1.8.1"
 ktlint = "12.1.1"
 ktfmt = "0.26.0"
 detekt = "1.23.6"
+# Testing
+junit = "4.13.2"
+robolectric = "4.14.1"
+mockk = "1.13.13"
+androidx-test-core = "1.6.1"
+androidx-test-ext-junit = "1.2.1"
+compose = "1.9.0"
 
 [libraries]
 # Kotlin and Coroutines
@@ -34,6 +41,17 @@ wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-fou
 wear-compose-navigation = { group = "androidx.wear.compose", name = "compose-navigation", version.ref = "wear-compose" }
 wear-tiles = { group = "androidx.wear.tiles", name = "tiles", version = "1.2.0" }
 wear-protolayout = { group = "androidx.wear.protolayout", name = "protolayout-material", version = "1.1.0" }
+
+# Testing
+junit = { group = "junit", name = "junit", version.ref = "junit" }
+robolectric = { group = "org.robolectric", name = "robolectric", version.ref = "robolectric" }
+mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
+# Plain desktop JNA jar (the app uses the @aar with Android .so's; host JVM tests need the jar).
+jna-jvm = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
+androidx-test-core = { group = "androidx.test", name = "core", version.ref = "androidx-test-core" }
+androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidx-test-ext-junit" }
+compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4", version.ref = "compose" }
+compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest", version.ref = "compose" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
