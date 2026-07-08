@@ -7,10 +7,6 @@
 //! `serialize_due_batch`/`deserialize_due_batch` once it's validated end-to-end (see
 //! HANDOFF_TESTING.md). Kept a separate export so the migration can be staged and A/B measured.
 
-// Generated codec + our thin conversions don't need to satisfy every pedantic/nursery lint the
-// hand-written core holds itself to; this module is experimental scaffolding.
-#![allow(clippy::pedantic, clippy::nursery)]
-
 use crate::models::{CoreError, WearosCard, WearosDueBatch};
 use prost::Message;
 

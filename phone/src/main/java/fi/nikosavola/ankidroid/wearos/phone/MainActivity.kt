@@ -800,12 +800,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   private fun appVersionString(pkg: String): String =
     try {
       val info = packageManager.getPackageInfo(pkg, 0)
-      val code =
-        if (android.os.Build.VERSION.SDK_INT >= 28) {
-          info.longVersionCode
-        } else {
-          @Suppress("DEPRECATION") info.versionCode.toLong()
-        }
+      // PackageInfoCompat picks longVersionCode / versionCode by API level, so no deprecated call.
+      val code = androidx.core.content.pm.PackageInfoCompat.getLongVersionCode(info)
       "${info.versionName} ($code)"
     } catch (e: Exception) {
       if (pkg == packageName) "?" else "not installed"

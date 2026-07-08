@@ -246,89 +246,84 @@ class AnkiDroidBridge(private val context: Context) {
    * (a single-card note matched by `is:new` is provably the new card); multi-card notes are skipped
    * since the Card projection doesn't expose per-card queue state.
    */
-  @Suppress("LongMethod", "CyclomaticComplexMethod")
   fun fetchNewCards(deckId: Long, limit: Int, forceMock: Boolean = false): WearosDueBatch {
     if (forceMock || !isAnkiDroidAvailable()) {
       return getMockDueBatch(deckId).let { it.copy(deckName = "${it.deckName} (new)") }
     }
-    try {
-      val allDecks = fetchAllDecks()
+    return try {
       val (resolvedDeckId, resolvedDeckName) =
-        allDecks.find { it.first == deckId } ?: getSelectedDeck()
-
-      val escaped = resolvedDeckName.replace("\"", "\\\"")
-      val search = "deck:\"$escaped\" is:new"
-      Log.i(TAG, "Searching new cards: $search")
-
-      val cr = context.contentResolver
-      val noteIds = mutableListOf<Long>()
-      cr.query(NOTES_URI, arrayOf("_id"), search, null, null)?.use { cursor ->
-        val idIdx = cursor.getColumnIndex("_id")
-        while (cursor.moveToNext() && noteIds.size < limit) {
-          if (idIdx != -1) noteIds.add(cursor.getLong(idIdx))
-        }
+        fetchAllDecks().find { it.first == deckId } ?: getSelectedDeck()
+      val noteIds = searchNewCardNoteIds(resolvedDeckName, limit)
+      // Single-card notes only (see fetchSingleNewCard); the rest are skipped.
+      val cards = noteIds.mapNotNull { fetchSingleNewCard(it) }
+      val skipped = noteIds.size - cards.size
+      if (skipped > 0) {
+        Log.i(TAG, "Skipped $skipped multi-card notes to avoid rescheduling non-new cards.")
       }
-      Log.d(TAG, "Found ${noteIds.size} new-card notes (capped at $limit).")
-
-      val cards = mutableListOf<WearosCard>()
-      var skippedMulti = 0
-      for (noteId in noteIds) {
-        val ords = mutableListOf<Int>()
-        cr
-          .query(Uri.parse("content://$AUTHORITY/notes/$noteId/cards"), null, null, null, null)
-          ?.use { c ->
-            val ordIdx = c.getColumnIndex(COL_CARD_ORD)
-            while (c.moveToNext()) if (ordIdx != -1) ords.add(c.getInt(ordIdx))
-          }
-        // Only single-card notes are guaranteed to be the new card matched by the search.
-        if (ords.size != 1) {
-          skippedMulti++
-          continue
-        }
-        val ord = ords[0]
-        var front = "No Front Text"
-        var back = "No Back Text"
-        var cardId = 0L
-        cr
-          .query(
-            Uri.parse("content://$AUTHORITY/notes/$noteId/cards/$ord"),
-            arrayOf("_id", "question", "answer"),
-            null,
-            null,
-            null,
-          )
-          ?.use { cc ->
-            if (cc.moveToFirst()) {
-              cc.getColumnIndex("_id").let { if (it != -1) cardId = cc.getLong(it) }
-              cc.getColumnIndex("question").let { if (it != -1) front = cc.getString(it) }
-              cc.getColumnIndex("answer").let { if (it != -1) back = cc.getString(it) }
-            }
-          }
-        cards.add(
-          WearosCard(
-            id = cardId,
-            noteId = noteId,
-            ord = ord,
-            front = front,
-            back = back,
-            buttonCount = 4,
-            // New cards aren't in the scheduler queue, so we don't have per-ease previews.
-            nextReviewTimes = listOf("1m", "10m", "1d", "4d"),
-          )
-        )
-      }
-      if (skippedMulti > 0) {
-        Log.i(TAG, "Skipped $skippedMulti multi-card notes to avoid rescheduling non-new cards.")
-      }
-      return WearosDueBatch(
-        deckId = resolvedDeckId,
-        deckName = "$resolvedDeckName (new)",
-        cards = cards,
-      )
+      WearosDueBatch(deckId = resolvedDeckId, deckName = "$resolvedDeckName (new)", cards = cards)
     } catch (e: Exception) {
       Log.e(TAG, "Failed to fetch new cards: ${e.message}", e)
-      return WearosDueBatch(deckId = deckId, deckName = "New cards", cards = emptyList())
+      WearosDueBatch(deckId = deckId, deckName = "New cards", cards = emptyList())
     }
+  }
+
+  /** Note ids of up to [limit] new cards in [deckName], via the notes search endpoint. */
+  private fun searchNewCardNoteIds(deckName: String, limit: Int): List<Long> {
+    val escaped = deckName.replace("\"", "\\\"")
+    val search = "deck:\"$escaped\" is:new"
+    Log.i(TAG, "Searching new cards: $search")
+    val ids = mutableListOf<Long>()
+    context.contentResolver.query(NOTES_URI, arrayOf("_id"), search, null, null)?.use { cursor ->
+      val idIdx = cursor.getColumnIndex("_id")
+      while (cursor.moveToNext() && ids.size < limit) {
+        if (idIdx != -1) ids.add(cursor.getLong(idIdx))
+      }
+    }
+    Log.d(TAG, "Found ${ids.size} new-card notes (capped at $limit).")
+    return ids
+  }
+
+  /**
+   * Build a [WearosCard] for a single-card new note, or null when the note has any other number of
+   * cards (skipped, since the Card projection can't say which card is the new one).
+   */
+  private fun fetchSingleNewCard(noteId: Long): WearosCard? {
+    val cr = context.contentResolver
+    val ords = mutableListOf<Int>()
+    cr.query(Uri.parse("content://$AUTHORITY/notes/$noteId/cards"), null, null, null, null)?.use { c
+      ->
+      val ordIdx = c.getColumnIndex(COL_CARD_ORD)
+      while (c.moveToNext()) if (ordIdx != -1) ords.add(c.getInt(ordIdx))
+    }
+    val ord = ords.singleOrNull() ?: return null
+
+    var front = "No Front Text"
+    var back = "No Back Text"
+    var cardId = 0L
+    cr.query(
+        Uri.parse("content://$AUTHORITY/notes/$noteId/cards/$ord"),
+        arrayOf("_id", "question", "answer"),
+        null,
+        null,
+        null,
+      )
+      ?.use { cc ->
+        if (cc.moveToFirst()) {
+          cc.getColumnIndex("_id").let { if (it != -1) cardId = cc.getLong(it) }
+          cc.getColumnIndex("question").let { if (it != -1) front = cc.getString(it) }
+          cc.getColumnIndex("answer").let { if (it != -1) back = cc.getString(it) }
+        }
+      }
+    return WearosCard(
+      id = cardId,
+      noteId = noteId,
+      ord = ord,
+      front = front,
+      back = back,
+      buttonCount = 4,
+      // New cards aren't in the scheduler queue, so we don't have per-ease previews.
+      nextReviewTimes = listOf("1m", "10m", "1d", "4d"),
+    )
   }
 
   /**

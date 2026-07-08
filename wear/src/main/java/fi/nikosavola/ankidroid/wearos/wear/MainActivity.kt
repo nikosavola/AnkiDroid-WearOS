@@ -563,15 +563,15 @@ class MainActivity : ComponentActivity() {
       }
 
       AppScaffold {
-        @Suppress("UNUSED_VARIABLE")
-        val trigger =
-          cardCompletedTrigger // Subscribes this composable context to our recomposition trigger!
         if (showSettings) {
           SettingsScreen()
         } else if (session == null) {
           WelcomeScreen()
         } else {
-          val currentCard = session.getCurrentCard()
+          // Keying on cardCompletedTrigger subscribes this scope, so answering/undoing a card
+          // recomposes it onto the next card (and switches to the finished screen when the queue
+          // empties) without a throwaway "unused variable" read.
+          val currentCard = remember(session, cardCompletedTrigger) { session.getCurrentCard() }
           if (currentCard == null) {
             FinishedScreen(session)
           } else if (!isReviewing) {
@@ -854,10 +854,8 @@ class MainActivity : ComponentActivity() {
   }
 
   @Composable
-  @Suppress("LongMethod")
   fun ReviewCardScreen(session: ReviewSession, card: WearosCard) {
-    var cardStartTime by
-      remember(card.id, card.ord) { mutableLongStateOf(System.currentTimeMillis()) }
+    val cardStartTime = remember(card.id, card.ord) { System.currentTimeMillis() }
     var isRevealed by remember(card.id, card.ord) { mutableStateOf(session.isRevealed()) }
     var isAnswering by remember(card.id, card.ord) { mutableStateOf(false) }
     val scrollState = rememberScrollState()
@@ -898,102 +896,20 @@ class MainActivity : ComponentActivity() {
 
     ScreenScaffold(scrollState = scrollState) {
       if (!isRevealed) {
-        // Front: the whole card is tappable to reveal; a small grey hint says so.
-        Text(
-          text = session.getProgressString(),
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
-        )
-        // Undo the previous grade (steps back a card and drops its buffered answer). Only shown once
-        // at least one card has been answered. NOTE: placement near the top edge may need tuning on
-        // round displays where the corners are clipped.
-        if (session.canUndo()) {
-          CompactButton(
-            onClick = { undoLastAnswer(session) },
-            colors = ButtonDefaults.filledTonalButtonColors(),
-            modifier = Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 2.dp),
-          ) {
-            Text("↩", style = MaterialTheme.typography.labelSmall)
-          }
-        }
-        Column(
-          modifier =
-            Modifier.fillMaxSize()
-              .verticalScroll(scrollState)
-              .rotaryScroll(scrollState)
-              .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-              ) {
-                session.revealAnswer()
-                isRevealed = true
-              }
-              .padding(start = 12.dp, end = 12.dp, top = 30.dp, bottom = 34.dp),
-          horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.Center,
-        ) {
-          CardSideContent(
-            cardId = card.id,
-            side = "front",
-            fallbackHtml = displayFront,
-            modifier = Modifier.fillMaxWidth(),
-          )
-        }
-        CurvedLayout(
-          modifier = Modifier.fillMaxSize(),
-          anchor = 90f,
-          anchorType = AnchorType.Center,
-          angularDirection = CurvedDirection.Angular.Reversed,
-        ) {
-          curvedText(
-            text = "Tap to show answer",
-            style = curvedStyle,
-            color = Color.LightGray.copy(alpha = 0.7f),
-          )
+        ReviewFront(session, card, displayFront, curvedStyle, scrollState) {
+          session.revealAnswer()
+          isRevealed = true
         }
       } else {
-        // Answer: the card fills the screen and scrolls under the grade buttons, which overlay the
-        // lower bezel with some transparency so the card shows through.
-        val duration = System.currentTimeMillis() - cardStartTime
-        Text(
-          text = session.getProgressString(),
-          style = MaterialTheme.typography.labelSmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
-        )
-        Column(
-          modifier =
-            Modifier.fillMaxSize()
-              .verticalScroll(scrollState)
-              .rotaryScroll(scrollState)
-              // Extra bottom space so the answer can scroll past the overlay buttons and every
-              // line can be brought fully into the clear above them.
-              .padding(start = 14.dp, end = 14.dp, top = 28.dp, bottom = 96.dp),
-          horizontalAlignment = Alignment.CenterHorizontally,
-          verticalArrangement = Arrangement.Center,
-        ) {
-          CardSideContent(
-            cardId = card.id,
-            side = "front",
-            fallbackHtml = displayFront,
-            modifier = Modifier.fillMaxWidth(),
-          )
-          Spacer(
-            modifier =
-              Modifier.padding(vertical = 6.dp)
-                .fillMaxWidth(0.5f)
-                .height(1.dp)
-                .background(Color.DarkGray)
-          )
-          CardSideContent(
-            cardId = card.id,
-            side = "back",
-            fallbackHtml = displayBack,
-            modifier = Modifier.fillMaxWidth(),
-          )
-        }
-        GradeEdgeButtons(card = card, enabled = !isAnswering) { ease, autoSync ->
+        ReviewAnswer(
+          session,
+          card,
+          displayFront,
+          displayBack,
+          scrollState,
+          cardStartTime,
+          gradeEnabled = !isAnswering,
+        ) { ease, autoSync, duration ->
           if (!isAnswering) {
             isAnswering = true
             // Confirm the grade with a short haptic tick (eyes-free / glanceable feedback).
@@ -1005,6 +921,122 @@ class MainActivity : ComponentActivity() {
           }
         }
       }
+    }
+  }
+
+  /** Front of a review card: progress, an optional undo, the tappable card body, and a reveal hint. */
+  @Composable
+  private fun BoxScope.ReviewFront(
+    session: ReviewSession,
+    card: WearosCard,
+    displayFront: String,
+    curvedStyle: androidx.wear.compose.foundation.CurvedTextStyle,
+    scrollState: androidx.compose.foundation.ScrollState,
+    onReveal: () -> Unit,
+  ) {
+    Text(
+      text = session.getProgressString(),
+      style = MaterialTheme.typography.labelSmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
+    )
+    // Undo the previous grade (steps back a card and drops its buffered answer). Only shown once at
+    // least one card has been answered. NOTE: placement near the top edge may need tuning on round
+    // displays where the corners are clipped.
+    if (session.canUndo()) {
+      CompactButton(
+        onClick = { undoLastAnswer(session) },
+        colors = ButtonDefaults.filledTonalButtonColors(),
+        modifier = Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 2.dp),
+      ) {
+        Text("↩", style = MaterialTheme.typography.labelSmall)
+      }
+    }
+    Column(
+      modifier =
+        Modifier.fillMaxSize()
+          .verticalScroll(scrollState)
+          .rotaryScroll(scrollState)
+          .clickable(
+            interactionSource = remember { MutableInteractionSource() },
+            indication = null,
+          ) {
+            onReveal()
+          }
+          .padding(start = 12.dp, end = 12.dp, top = 30.dp, bottom = 34.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.Center,
+    ) {
+      CardSideContent(
+        cardId = card.id,
+        side = "front",
+        fallbackHtml = displayFront,
+        modifier = Modifier.fillMaxWidth(),
+      )
+    }
+    CurvedLayout(
+      modifier = Modifier.fillMaxSize(),
+      anchor = 90f,
+      anchorType = AnchorType.Center,
+      angularDirection = CurvedDirection.Angular.Reversed,
+    ) {
+      curvedText(
+        text = "Tap to show answer",
+        style = curvedStyle,
+        color = Color.LightGray.copy(alpha = 0.7f),
+      )
+    }
+  }
+
+  /** Revealed card: front + answer scrolling under the curved grade buttons. */
+  @Composable
+  private fun BoxScope.ReviewAnswer(
+    session: ReviewSession,
+    card: WearosCard,
+    displayFront: String,
+    displayBack: String,
+    scrollState: androidx.compose.foundation.ScrollState,
+    cardStartTime: Long,
+    gradeEnabled: Boolean,
+    onGrade: (ease: Int, autoSync: Boolean, durationMs: Long) -> Unit,
+  ) {
+    val duration = System.currentTimeMillis() - cardStartTime
+    Text(
+      text = session.getProgressString(),
+      style = MaterialTheme.typography.labelSmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
+    )
+    Column(
+      modifier =
+        Modifier.fillMaxSize()
+          .verticalScroll(scrollState)
+          .rotaryScroll(scrollState)
+          // Extra bottom space so the answer can scroll past the overlay buttons and every line can
+          // be brought fully into the clear above them.
+          .padding(start = 14.dp, end = 14.dp, top = 28.dp, bottom = 96.dp),
+      horizontalAlignment = Alignment.CenterHorizontally,
+      verticalArrangement = Arrangement.Center,
+    ) {
+      CardSideContent(
+        cardId = card.id,
+        side = "front",
+        fallbackHtml = displayFront,
+        modifier = Modifier.fillMaxWidth(),
+      )
+      Spacer(
+        modifier =
+          Modifier.padding(vertical = 6.dp).fillMaxWidth(0.5f).height(1.dp).background(Color.DarkGray)
+      )
+      CardSideContent(
+        cardId = card.id,
+        side = "back",
+        fallbackHtml = displayBack,
+        modifier = Modifier.fillMaxWidth(),
+      )
+    }
+    GradeEdgeButtons(card = card, enabled = gradeEnabled) { ease, autoSync ->
+      onGrade(ease, autoSync, duration)
     }
   }
 

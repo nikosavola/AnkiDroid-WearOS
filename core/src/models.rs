@@ -38,8 +38,9 @@ pub struct DeckInfo {
 }
 
 /// One entry in a folder level: either a folder to descend into (`is_folder`) or a studyable deck.
-/// `id` is the deck id at this exact node, or -1 when a folder has no directly-studyable deck of its
-/// own. `path` is the full `::`-joined path (used as the key to descend).
+///
+/// `id` is the deck id at this exact node, or -1 when a folder has no directly-studyable deck of
+/// its own. `path` is the full `::`-joined path (used as the key to descend).
 #[derive(uniffi::Record, Clone)]
 pub struct DeckNodeInfo {
     pub id: i64,

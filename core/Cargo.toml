@@ -2,6 +2,13 @@
 name = "wearos-core"
 version = "0.1.0"
 edition = "2024"
+description = "Shared Rust core (session, buffer, sync protocol, card-HTML sanitizing, deck tree) for the AnkiDroid Wear OS companion, exported to Kotlin via UniFFI."
+license = "Apache-2.0"
+repository = "https://github.com/nikosavola/AnkiDroid-WearOS"
+readme = "../README.md"
+keywords = ["ankidroid", "wearos", "uniffi", "flashcards", "android"]
+categories = ["api-bindings", "gui"]
+publish = false
 
 [lib]
 name = "wearos_core"
@@ -31,20 +38,29 @@ unsafe_code = "forbid"
 all = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+# Curated `restriction` guardrails (the group must never be enabled wholesale — it has
+# contradictory lints). These catch debug/placeholder leftovers and enforce documented suppressions.
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
 # Allow FFI and UniFFI-induced signature constraints
 needless_pass_by_value = "allow"
 # Allow missing public API documentation patterns in UniFFI wrappers
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
-# Allow standard/natural cast-type conventions
+# Allow standard/natural cast-type conventions at the FFI numeric boundary
 cast_possible_truncation = "allow"
 cast_possible_wrap = "allow"
 cast_sign_loss = "allow"
 cast_precision_loss = "allow"
-# Allow readable code structure over minor map-combinators
-option_if_let_else = "allow"
-# Allow other pedantic lints that are too strict for FFI bindings
-must_use_candidate = "allow"
-missing_const_for_fn = "allow"
-too_long_first_doc_paragraph = "allow"
+# Docs naturally name types/identifiers (AnkiDroid, HtmlCompat, NEXT_REVIEW_TIMES) in prose.
 doc_markdown = "allow"
+# #[must_use] is meaningless on the #[uniffi::export] surface (results always consumed by Kotlin).
+must_use_candidate = "allow"
+# const fn suggestions on FFI-exported methods are pointless (never called in a const context).
+missing_const_for_fn = "allow"

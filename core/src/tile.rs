@@ -5,9 +5,11 @@
 /// Flat fallback used before we have any observed answer times to average.
 const DEFAULT_SECS_PER_CARD: f64 = 10.0;
 
-/// Format the Tile's ETA line. `avg_ms_per_card` is the mean answer time from the local buffer
-/// (see [`crate::average_answer_time_ms`]) when known; a missing or non-positive value falls back to
-/// a flat [`DEFAULT_SECS_PER_CARD`] estimate. `card_count` <= 0 means the queue is clear.
+/// Format the Tile's ETA line.
+///
+/// `avg_ms_per_card` is the mean answer time from the local buffer (see
+/// [`crate::average_answer_time_ms`]) when known; a missing or non-positive value falls back to a
+/// flat [`DEFAULT_SECS_PER_CARD`] estimate. `card_count` <= 0 means the queue is clear.
 #[uniffi::export]
 pub fn format_queue_eta(card_count: i32, avg_ms_per_card: Option<i64>) -> String {
     if card_count <= 0 {

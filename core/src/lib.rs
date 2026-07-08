@@ -4,7 +4,6 @@
 
 uniffi::setup_scaffolding!();
 
-mod async_ops;
 mod db;
 mod decks;
 mod html;
@@ -18,8 +17,13 @@ mod util;
 // Flatten the crate's Rust surface so tests and any internal callers see everything at the root.
 // (UniFFI records each #[uniffi::export] at its definition site, so the module layout doesn't
 // affect the generated Kotlin API.)
-pub use async_ops::*;
-pub use db::*;
+// db is re-exported by name rather than with `*` so its crate-internal DB_CONN/get_db_connection
+// stay unexported (reached via `crate::db::...`) — that keeps them plain `pub` in a private module
+// without tripping `redundant_pub_crate`.
+pub use db::{
+    BufferStats, average_answer_time_ms, buffered_answer_stats, get_buffered_answers,
+    init_database, remove_buffered_answers, reviews_since, save_answer,
+};
 pub use decks::*;
 pub use html::*;
 pub use models::*;
@@ -594,7 +598,7 @@ mod tests {
         let _guard = db_test_guard();
         // Point the shared connection at nothing, mimicking a process that never called
         // init_database. Every buffer op must surface a DatabaseError rather than panic.
-        *DB_CONN.lock().unwrap() = None;
+        *crate::db::DB_CONN.lock().unwrap() = None;
         assert!(matches!(save_answer(sample_answer()), Err(CoreError::DatabaseError { .. })));
         assert!(matches!(get_buffered_answers(), Err(CoreError::DatabaseError { .. })));
         assert!(matches!(average_answer_time_ms(), Err(CoreError::DatabaseError { .. })));

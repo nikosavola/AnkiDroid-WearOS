@@ -1,7 +1,31 @@
-# Custom Detekt configuration overriding overly pedantic rules for Android and Jetpack Compose.
+# Detekt configuration.
+#
+# `allRules = true` is set in the root build.gradle.kts (the Kotlin analog of enabling clippy's
+# pedantic/nursery/cargo groups). This file re-disables ONLY the rules that genuinely conflict with
+# deliberate project choices — Jetpack Compose, ktfmt as the sole formatting authority, and the
+# Android ContentProvider / Wearable / FFI style — mirroring the FFI `allow`s kept in
+# core/Cargo.toml. Everything else detekt offers is left on.
 build:
   maxIssues: 0
   excludeCorrectable: true
+
+comments:
+  active: true
+  # Public API is documented where it aids understanding, not exhaustively; don't require KDoc on
+  # every public declaration (Composables, data classes, simple helpers).
+  UndocumentedPublicClass:
+    active: false
+  UndocumentedPublicFunction:
+    active: false
+  UndocumentedPublicProperty:
+    active: false
+  CommentOverPrivateFunction:
+    active: false
+  CommentOverPrivateProperty:
+    active: false
+  AbsentOrWrongFileLicense:
+    active: false
+
 complexity:
   active: true
   LongMethod:
@@ -13,15 +37,25 @@ complexity:
   NestedBlockDepth:
     active: true
     threshold: 8
+  # Compose composables legitimately take many parameters (hoisted state + event callbacks), e.g.
+  # ReviewAnswer / DeckSelectionTree.
+  LongParameterList:
+    active: true
+    functionThreshold: 11
+    constructorThreshold: 11
+    ignoreDefaultParameters: true
   LargeClass:
     active: false
   TooManyFunctions:
     active: false
+
 naming:
   active: true
+  # Composables are PascalCase, so allow an uppercase first letter.
   FunctionNaming:
     active: true
     functionPattern: '[a-zA-Z][a-zA-Z0-9]*'
+
 style:
   active: true
   MagicNumber:
@@ -32,8 +66,14 @@ style:
     active: false
   WildcardImport:
     active: false
+  # We use explanatory NOTE:/TODO-style comments deliberately (e.g. hand-off markers).
+  ForbiddenComment:
+    active: false
+
 exceptions:
   active: true
+  # Android ContentProvider / Wearable Data Layer calls throw broad exceptions that we intentionally
+  # catch-and-log (offline-first: a failure is retried later, not propagated).
   TooGenericExceptionCaught:
     active: false
   SwallowedException:

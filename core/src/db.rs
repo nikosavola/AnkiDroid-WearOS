@@ -5,10 +5,9 @@ use crate::util::unix_secs;
 use rusqlite::{Connection, params};
 use std::sync::Mutex;
 
-// pub(crate) purely so the crate-root tests can reset it to simulate an uninitialized process; it
-// is never part of the FFI surface.
-#[expect(clippy::redundant_pub_crate, reason = "crate-only test hook, intentionally pub(crate)")]
-pub(crate) static DB_CONN: Mutex<Option<String>> = Mutex::new(None);
+// `pub` within this private, un-re-exported module = crate-internal. Reached as `crate::db::DB_CONN`
+// (e.g. the tests reset it to simulate an uninitialized process); never part of the FFI surface.
+pub static DB_CONN: Mutex<Option<String>> = Mutex::new(None);
 
 #[uniffi::export]
 pub fn init_database(db_path: String) -> Result<(), CoreError> {
@@ -41,10 +40,9 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
     Ok(())
 }
 
-// pub(crate) reads as redundant in a private module, but it documents the intent: an internal
-// helper the session module shares, never part of the FFI surface.
-#[expect(clippy::redundant_pub_crate, reason = "shared with the session module, never FFI")]
-pub(crate) fn get_db_connection() -> Result<Connection, CoreError> {
+// Crate-internal helper the session module shares (via `crate::db::get_db_connection`); `pub` in
+// this private, un-re-exported module keeps it off the FFI surface without a lint suppression.
+pub fn get_db_connection() -> Result<Connection, CoreError> {
     // Clone the path out of the guard in one statement so the lock releases before the blocking open.
     let Some(path) = DB_CONN.lock().unwrap().clone() else {
         return Err(CoreError::DatabaseError {

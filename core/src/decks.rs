@@ -59,9 +59,11 @@ pub fn deck_children(decks: Vec<DeckInfo>, path: String) -> DeckLevel {
     DeckLevel { own_deck, children }
 }
 
-/// Parse AnkiDroid's NEXT_REVIEW_TIMES: a JSON-array string whose numbers are wrapped in Unicode
-/// bidi isolates (e.g. `["\u{2068}10\u{2069}m", ...]`). Returns clean values like "10m", falling
-/// back to a lenient bracket split when the input isn't valid JSON.
+/// Parse AnkiDroid's NEXT_REVIEW_TIMES.
+///
+/// It's a JSON-array string whose numbers are wrapped in Unicode bidi isolates (e.g.
+/// `["\u{2068}10\u{2069}m", ...]`). Returns clean values like "10m", falling back to a lenient
+/// bracket split when the input isn't valid JSON.
 #[uniffi::export]
 pub fn parse_review_times(raw: String) -> Vec<String> {
     // Drop bidi isolate controls (LRI/RLI/FSI/PDI) Anki wraps around the numbers.
