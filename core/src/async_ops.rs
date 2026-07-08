@@ -19,14 +19,14 @@ use crate::models::{CoreError, WearosDueBatch};
 /// and can call it directly from a coroutine instead of `withContext(Dispatchers.IO) { ... }`.
 // No `.await`: see the module note — a real runtime (tokio + spawn_blocking) is what would add the
 // yield point; this proves the binding shape.
-#[allow(clippy::unused_async)]
+#[expect(clippy::unused_async, reason = "runtime-free async seed; body is sync until tokio lands")]
 #[uniffi::export]
 pub async fn deserialize_due_batch_async(bytes: Vec<u8>) -> Result<WearosDueBatch, CoreError> {
     crate::deserialize_due_batch(bytes)
 }
 
 /// Async twin of [`crate::serialize_due_batch`].
-#[allow(clippy::unused_async)]
+#[expect(clippy::unused_async, reason = "runtime-free async seed; body is sync until tokio lands")]
 #[uniffi::export]
 pub async fn serialize_due_batch_async(batch: WearosDueBatch) -> Result<Vec<u8>, CoreError> {
     crate::serialize_due_batch(batch)

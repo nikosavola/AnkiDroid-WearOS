@@ -435,16 +435,8 @@ class MainActivity : ComponentActivity() {
     }
 
   /** Epoch seconds at the device's local midnight today (passed to the Rust "reviews today" count). */
-  private fun todayMidnightSecs(): Long {
-    val cal =
-      java.util.Calendar.getInstance().apply {
-        set(java.util.Calendar.HOUR_OF_DAY, 0)
-        set(java.util.Calendar.MINUTE, 0)
-        set(java.util.Calendar.SECOND, 0)
-        set(java.util.Calendar.MILLISECOND, 0)
-      }
-    return cal.timeInMillis / 1000
-  }
+  private fun todayMidnightSecs(): Long =
+    java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond()
 
   /** Human review duration: "45s" under a minute, else "3m 20s". */
   private fun formatDuration(ms: Long): String {

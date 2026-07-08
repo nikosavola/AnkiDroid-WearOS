@@ -328,6 +328,21 @@ Genuine partial progress on the two big documented items.
 - **Phone "Decks to sync (N/M)"** — the header now shows selected vs total, updated on every toggle
   (folder re-render and single-deck check) without rebuilding the tree.
 
+## 1.18 Language-modernization pass
+
+- **Rust** (verified — 35 tests, clippy `-D warnings`, fmt): new `core/src/util.rs` with panic-free
+  `unix_secs()` / `unix_millis()` helpers (via `Duration::map_or`) replacing the repeated
+  `SystemTime::now().duration_since(UNIX_EPOCH).unwrap()...` dance in `db.rs`/`session.rs`;
+  `get_db_connection` uses a `let-else` and clones the path out of the mutex guard so the lock
+  releases before the blocking `Connection::open`; inline `#[allow(...)]`s became
+  `#[expect(..., reason = "...")]` (the modern lint-expectation idiom — fails if the lint stops
+  firing). Edition is already 2024 and let-chains were already in use (`answer_html`, undo).
+- **Kotlin** (unbuilt): a `DeckNode.deckIds()` `buildList` extension replaces the
+  `mutableListOf().also { collectDeckIds(...) }` pattern at every call site (main + Compose + test);
+  the watch's `todayMidnightSecs` moved from `java.util.Calendar` to `java.time.LocalDate`
+  (both modules are minSdk ≥ 26, so no desugaring needed). The rest of the Kotlin was already
+  idiomatic (KTX, coroutines, scope functions, `runCatching`, Compose).
+
 ---
 
 # Part 2 — Remaining backlog (not implemented here)

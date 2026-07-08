@@ -1,13 +1,13 @@
 //! SQLite-backed local buffer for card answers, plus the connection bootstrap.
 
 use crate::models::{CoreError, WearosAnswer};
+use crate::util::unix_secs;
 use rusqlite::{Connection, params};
 use std::sync::Mutex;
-use std::time::SystemTime;
 
 // pub(crate) purely so the crate-root tests can reset it to simulate an uninitialized process; it
 // is never part of the FFI surface.
-#[allow(clippy::redundant_pub_crate)]
+#[expect(clippy::redundant_pub_crate, reason = "crate-only test hook, intentionally pub(crate)")]
 pub(crate) static DB_CONN: Mutex<Option<String>> = Mutex::new(None);
 
 #[uniffi::export]
@@ -43,24 +43,22 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
 
 // pub(crate) reads as redundant in a private module, but it documents the intent: an internal
 // helper the session module shares, never part of the FFI surface.
-#[allow(clippy::redundant_pub_crate)]
+#[expect(clippy::redundant_pub_crate, reason = "shared with the session module, never FFI")]
 pub(crate) fn get_db_connection() -> Result<Connection, CoreError> {
-    let db = DB_CONN.lock().unwrap();
-    if let Some(path) = &*db {
-        Connection::open(path)
-            .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })
-    } else {
-        Err(CoreError::DatabaseError {
+    // Clone the path out of the guard in one statement so the lock releases before the blocking open.
+    let Some(path) = DB_CONN.lock().unwrap().clone() else {
+        return Err(CoreError::DatabaseError {
             error_message: "Database has not been initialized. Call init_database first."
                 .to_string(),
-        })
-    }
+        });
+    };
+    Connection::open(&path).map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })
 }
 
 #[uniffi::export]
 pub fn save_answer(answer: WearosAnswer) -> Result<(), CoreError> {
     let conn = get_db_connection()?;
-    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64;
+    let now = unix_secs();
 
     conn.execute(
         "INSERT OR REPLACE INTO buffered_answers (id, note_id, card_ord, ease, time_taken_ms, created_at)
@@ -143,8 +141,7 @@ pub fn buffered_answer_stats() -> Result<BufferStats, CoreError> {
             Ok((row.get(0)?, row.get(1)?))
         })
         .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
-    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64;
-    let oldest_age_secs = oldest.map_or(0, |t| (now - t).max(0));
+    let oldest_age_secs = oldest.map_or(0, |t| (unix_secs() - t).max(0));
     Ok(BufferStats { count: count as i32, oldest_age_secs })
 }
 

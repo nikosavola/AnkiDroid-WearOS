@@ -13,6 +13,7 @@ mod proto;
 mod session;
 mod sync;
 mod tile;
+mod util;
 
 // Flatten the crate's Rust surface so tests and any internal callers see everything at the root.
 // (UniFFI records each #[uniffi::export] at its definition site, so the module layout doesn't

@@ -22,9 +22,8 @@ class DeckTreeTest {
   }
 
   @Test
-  fun collectDeckIds_gathersWholeSubtree() {
+  fun deckIds_gathersWholeSubtree() {
     val root = buildDeckTree(listOf(1L to "A", 2L to "A::B", 3L to "A::B::C", 4L to "Other"))
-    val ids = mutableListOf<Long>().also { collectDeckIds(root.children["A"]!!, it) }
-    assertEquals(setOf(1L, 2L, 3L), ids.toSet())
+    assertEquals(setOf(1L, 2L, 3L), root.children["A"]!!.deckIds().toSet())
   }
 }
