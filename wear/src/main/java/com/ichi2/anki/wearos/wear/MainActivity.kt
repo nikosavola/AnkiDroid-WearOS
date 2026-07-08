@@ -41,6 +41,8 @@ import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.material.*
+import androidx.wear.compose.material3.EdgeButton
+import androidx.wear.compose.material3.EdgeButtonSize
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import java.io.File
@@ -920,16 +922,20 @@ class MainActivity : ComponentActivity() {
       if (activeDeckId != null) {
         newCardControlItems(pickingNewCount) { pickingNewCount = it }
       }
+      // Material 3 expressive edge button hugging the bottom bezel: sync answers and go back.
       item {
-        Button(
+        EdgeButton(
           onClick = {
             triggerAnswersSync()
             isReviewing = false
             reviewSession = null // return to decks selector list
           },
-          modifier = Modifier.padding(top = 8.dp),
+          buttonSize = EdgeButtonSize.Medium,
         ) {
-          Text("Sync & Decks")
+          Icon(
+            painter = painterResource(id = R.drawable.ic_check),
+            contentDescription = "Sync and back to decks",
+          )
         }
       }
     }

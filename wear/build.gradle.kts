@@ -46,6 +46,7 @@ dependencies {
   implementation(libs.androidx.activity.compose)
 
   implementation(libs.wear.compose.material)
+  implementation(libs.wear.compose.material3)
   implementation(libs.wear.compose.foundation)
   implementation(libs.wear.compose.navigation)
   implementation(libs.wear.tiles)
