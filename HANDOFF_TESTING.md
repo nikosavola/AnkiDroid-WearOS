@@ -140,12 +140,14 @@ tags, multiple `[sound:]`, case-insensitive `<STYLE>`), `deck_children` (deep tr
 own deck, duplicate leaf names), buffer error paths when the DB was never initialized, and
 `answer_html` marker edge cases. Buffer tests are serialized with a lock (shared global `DB_CONN`).
 
-## 1.7 UniFFI async/suspend seed  ✅ Rust-verified (Kotlin consumption unverified)
+## 1.7 UniFFI async/suspend — design note (seed code removed in §1.19)
 
-`core/src/async_ops.rs` exports `deserialize_due_batch_async` / `serialize_due_batch_async` as
-Rust `async fn`, which UniFFI maps to Kotlin `suspend fun deserializeDueBatchAsync(...)` etc. This
-is the migration seed for "do the work in Rust, consume with coroutines" instead of
-`withContext(Dispatchers.IO) { blockingFfi() }`.
+The migration target: expose heavy work as Rust `async fn`, which UniFFI maps to Kotlin
+`suspend fun`, so the Kotlin side drops `withContext(Dispatchers.IO) { blockingFfi() }`. An earlier
+`async_ops.rs` scaffolded this with `deserialize_due_batch_async` etc., but those bodies had no
+`.await` (they only earned a lint suppression), so they were **removed** in the lint-cleanup pass
+(§1.19). To actually implement: add the `tokio` feature to the `uniffi` dep and annotate the
+real work with `#[uniffi::export(async_runtime = "tokio")]` + `tokio::task::spawn_blocking`.
 - **Important caveat (in the module doc too):** these bodies have no `.await`, so they don't yet
   move CPU work off the caller's thread — they prove the binding shape. To *actually* offload,
   add the `tokio` feature to the `uniffi` dep and use `#[uniffi::export(async_runtime = "tokio")]`
@@ -342,6 +344,36 @@ Genuine partial progress on the two big documented items.
   the watch's `todayMidnightSecs` moved from `java.util.Calendar` to `java.time.LocalDate`
   (both modules are minSdk ≥ 26, so no desugaring needed). The rest of the Kotlin was already
   idiomatic (KTX, coroutines, scope functions, `runCatching`, Compose).
+
+## 1.19 Lint-suppression cleanup (fix, don't suppress)
+
+Removed every inline lint suppression in both languages by fixing the underlying cause, and pruned
+the crate-wide allow list to only genuinely-justified entries.
+
+- **Rust** (verified — 35 tests, clippy `-D warnings`, fmt): now **zero** `#[allow(clippy::…)]` /
+  `#[expect(clippy::…)]` in `core/src`.
+  - `redundant_pub_crate` (4 sites): fixed structurally — `util`'s helpers are `pub` in a private,
+    un-re-exported module (crate-internal without the lint); `db`'s `DB_CONN`/`get_db_connection`
+    are `pub` and deliberately kept out of the `pub use db::{…}` name list (tests reach `DB_CONN`
+    via `crate::db::`).
+  - `unused_async` (2 sites): removed the no-op `async_ops.rs` seed entirely (see §1.7).
+  - proto.rs blanket `#![allow(pedantic, nursery)]`: dropped — the generated + hand-written code
+    was already clean.
+  - Cargo.toml allow list: dropped `option_if_let_else` (dead) and `too_long_first_doc_paragraph`
+    (fixed the 5 long summary paragraphs by splitting them). Kept the FFI-justified ones
+    (`needless_pass_by_value`, `missing_errors/panics_doc`, `cast_*`) and the genuinely-pervasive
+    prose/FFI ones (`doc_markdown`, `must_use_candidate`, `missing_const_for_fn`) with rationale
+    comments.
+- **Kotlin** (unbuilt): now **zero** `@Suppress`.
+  - `DEPRECATION` on `versionCode` → `PackageInfoCompat.getLongVersionCode()` (no deprecated call,
+    no SDK check).
+  - `UNUSED_VARIABLE` on the recomposition trigger → folded into `remember(session,
+    cardCompletedTrigger) { session.getCurrentCard() }`.
+  - `LongMethod`/`CyclomaticComplexMethod` on `fetchNewCards` → extracted `searchNewCardNoteIds` +
+    `fetchSingleNewCard` (using `singleOrNull()`).
+  - `LongMethod` on `ReviewCardScreen` → extracted `BoxScope.ReviewFront` / `BoxScope.ReviewAnswer`
+    sub-composables. **Verify** the review flow still works after this extraction (state hoisting:
+    reveal + grade go through the passed lambdas; `cardStartTime` is now a `val remember`).
 
 ---
 

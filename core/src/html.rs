@@ -132,10 +132,11 @@ fn decode_entity(ent: &str) -> Option<String> {
     Some(mapped.to_string())
 }
 
-/// Sanitize card HTML for on-device rendering (e.g. HtmlCompat), keeping formatting tags like
-/// <b>/<div>/<font> but removing what a watch can't render: HTML comments (which hide fields like
-/// {{Pitch Accent}}), [sound:...] refs, and <img> (media isn't shipped to the watch). Furigana
-/// <ruby>base<rt>reading</rt></ruby> becomes base(reading).
+/// Sanitize card HTML for on-device rendering (e.g. HtmlCompat).
+///
+/// Keeps formatting tags like <b>/<div>/<font> but removes what a watch can't render: HTML comments
+/// (which hide fields like {{Pitch Accent}}), [sound:...] refs, and <img> (media isn't shipped to
+/// the watch). Furigana <ruby>base<rt>reading</rt></ruby> becomes base(reading).
 #[uniffi::export]
 pub fn html_for_display(raw_html: String) -> String {
     let without_scripts = strip_tag_blocks(&raw_html, "script");
@@ -145,9 +146,11 @@ pub fn html_for_display(raw_html: String) -> String {
     normalize_ruby(&without_sound).trim().to_string()
 }
 
-/// Extract just the answer portion of a card's back. Anki emits question + `<hr id=answer>` + the
-/// answer, so return everything after that marker tag (or the whole string if it isn't present),
-/// which the watch then feeds through [`html_for_display`] / [`clean_html`].
+/// Extract just the answer portion of a card's back.
+///
+/// Anki emits question + `<hr id=answer>` + the answer, so return everything after that marker tag
+/// (or the whole string if it isn't present), which the watch then feeds through
+/// [`html_for_display`] / [`clean_html`].
 #[uniffi::export]
 pub fn answer_html(back: String) -> String {
     if let Some(marker) = back.find("id=answer")
