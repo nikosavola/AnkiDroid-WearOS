@@ -4,6 +4,10 @@
     <!-- Permission required to access AnkiDroid ContentProvider -->
     <uses-permission android:name="com.ichi2.anki.permission.READ_WRITE_DATABASE" />
 
+    <queries>
+        <package android:name="com.ichi2.anki" />
+    </queries>
+
     <application
         android:allowBackup="true"
         android:icon="@android:drawable/sym_def_app_icon"

@@ -25,6 +25,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -483,86 +484,89 @@ class MainActivity : ComponentActivity() {
     val listState = rememberScalingLazyListState()
     val entries = deckEntries()
     ScreenScaffold(scrollState = listState) { contentPadding ->
-    ScalingLazyColumn(
-      state = listState,
-      contentPadding = contentPadding,
-      // ScreenScaffold's contentPadding already reserves exactly the space needed at each end
-      // (including room for the trailing EdgeButton); auto-centering would additionally pad the
-      // list so the last item can reach the screen's vertical center, letting it be over-scrolled
-      // well past its resting spot at the bezel.
-      autoCentering = null,
-      modifier = Modifier.fillMaxSize().rotaryScroll(listState),
-      horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-      item {
-        Text(
-          text = "AnkiDroid Wear",
-          style = MaterialTheme.typography.titleMedium,
-          modifier = Modifier.padding(bottom = 6.dp),
-        )
-      }
+      ScalingLazyColumn(
+        state = listState,
+        contentPadding = contentPadding,
+        // ScreenScaffold's contentPadding already reserves exactly the space needed at each end
+        // (including room for the trailing EdgeButton); auto-centering would additionally pad the
+        // list so the last item can reach the screen's vertical center, letting it be over-scrolled
+        // well past its resting spot at the bezel.
+        autoCentering = null,
+        modifier = Modifier.fillMaxSize().rotaryScroll(listState),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+      ) {
+        item {
+          Text(
+            text = "AnkiDroid Wear",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 6.dp),
+          )
+        }
 
-      if (entries.isEmpty()) {
-        item {
-          Text(
-            text = "Tap Refresh to load your decks, or open the phone app and press Sync.",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-            textAlign = TextAlign.Center,
-          )
-        }
-      } else {
-        item {
-          Text(
-            text = "Select a Deck:",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 4.dp),
-          )
-        }
-        items(entries) { entry ->
-          Card(onClick = { selectDeck(entry.id) }, modifier = Modifier.fillMaxWidth(0.95f)) {
-            Column {
-              Text(
-                text = entry.name,
-                style = MaterialTheme.typography.bodyMedium,
-                maxLines = 2,
-                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-              )
-              Text(
-                text =
-                  if (entry.cardCount != null) {
-                    "${entry.cardCount} cards ready"
-                  } else {
-                    "Tap to download"
-                  },
-                style = MaterialTheme.typography.labelSmall,
-                color =
-                  if (entry.cardCount != null) Color(0xFF66BB6A)
-                  else MaterialTheme.colorScheme.onSurfaceVariant,
-              )
+        if (entries.isEmpty()) {
+          item {
+            Text(
+              text = "Tap Refresh to load your decks, or open the phone app and press Sync.",
+              style = MaterialTheme.typography.bodyMedium,
+              modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+              textAlign = TextAlign.Center,
+            )
+          }
+        } else {
+          item {
+            Text(
+              text = "Select a Deck:",
+              style = MaterialTheme.typography.labelMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.padding(bottom = 4.dp),
+            )
+          }
+          items(entries) { entry ->
+            Card(onClick = { selectDeck(entry.id) }, modifier = Modifier.fillMaxWidth(0.95f)) {
+              Column {
+                Text(
+                  text = entry.name,
+                  style = MaterialTheme.typography.bodyMedium,
+                  maxLines = 2,
+                  overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                )
+                Text(
+                  text =
+                    if (entry.cardCount != null) {
+                      "${entry.cardCount} cards ready"
+                    } else {
+                      "Tap to download"
+                    },
+                  style = MaterialTheme.typography.labelSmall,
+                  color =
+                    if (entry.cardCount != null) {
+                      Color(0xFF66BB6A)
+                    } else {
+                      MaterialTheme.colorScheme.onSurfaceVariant
+                    },
+                )
+              }
             }
           }
         }
-      }
 
-      item { Spacer(modifier = Modifier.height(8.dp)) }
-      item {
-        EdgeButton(
-          onClick = {
-            requestDecksFromPhone()
-            loadDecks()
-          },
-          buttonSize = EdgeButtonSize.Medium,
-        ) {
-          Icon(
-            painter = painterResource(id = R.drawable.ic_refresh),
-            contentDescription = "Refresh decks",
-          )
+        item { Spacer(modifier = Modifier.height(8.dp)) }
+        item {
+          EdgeButton(
+            onClick = {
+              requestDecksFromPhone()
+              loadDecks()
+            },
+            buttonSize = EdgeButtonSize.Medium,
+          ) {
+            Icon(
+              painter = painterResource(id = R.drawable.ic_refresh),
+              contentDescription = "Refresh decks",
+            )
+          }
         }
       }
-    }
     }
   }
 
@@ -571,88 +575,88 @@ class MainActivity : ComponentActivity() {
     var pickingNewCount by remember { mutableStateOf(false) }
     val listState = rememberScalingLazyListState()
     ScreenScaffold(scrollState = listState) { contentPadding ->
-    ScalingLazyColumn(
-      state = listState,
-      contentPadding = contentPadding,
-      // See WelcomeScreen: avoid over-scrolling the list past its natural end.
-      autoCentering = null,
-      modifier = Modifier.fillMaxSize().rotaryScroll(listState),
-      horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-      item {
-        Text(
-          text = "📚 Deck Stats",
-          style = MaterialTheme.typography.labelMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.padding(bottom = 2.dp),
-        )
-      }
-      item {
-        Text(
-          text = session.getDeckName(),
-          style = MaterialTheme.typography.titleMedium,
-          modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 4.dp),
-        )
-      }
-      item {
-        Card(onClick = {}, modifier = Modifier.fillMaxWidth(0.9f)) {
-          Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(
-              text = "Due Cards: ${session.getTotalCards()}",
-              style = MaterialTheme.typography.bodyMedium,
-            )
-            Text(
-              text = "Progress: ${session.getProgressString()}",
-              style = MaterialTheme.typography.labelSmall,
-              color = Color.LightGray,
-            )
+      ScalingLazyColumn(
+        state = listState,
+        contentPadding = contentPadding,
+        // See WelcomeScreen: avoid over-scrolling the list past its natural end.
+        autoCentering = null,
+        modifier = Modifier.fillMaxSize().rotaryScroll(listState),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+      ) {
+        item {
+          Text(
+            text = "📚 Deck Stats",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = 2.dp),
+          )
+        }
+        item {
+          Text(
+            text = session.getDeckName(),
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 4.dp),
+          )
+        }
+        item {
+          Card(onClick = {}, modifier = Modifier.fillMaxWidth(0.9f)) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+              Text(
+                text = "Due Cards: ${session.getTotalCards()}",
+                style = MaterialTheme.typography.bodyMedium,
+              )
+              Text(
+                text = "Progress: ${session.getProgressString()}",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color.LightGray,
+              )
+            }
           }
         }
-      }
-      item {
-        Button(
-          onClick = { isReviewing = true },
-          colors = ButtonDefaults.buttonColors(),
-          modifier = Modifier.fillMaxWidth(0.9f),
-        ) {
-          Text("Start Review")
-        }
-      }
-      // Study new cards ahead of the daily queue limit. Only available when we know the deck id.
-      if (activeDeckId != null) {
-        newCardControlItems(pickingNewCount) { pickingNewCount = it }
-      }
-      item {
-        SwitchButton(
-          checked = ttsEnabled,
-          onCheckedChange = { ttsEnabled = it },
-          label = { Text("Voice Reviews") },
-          secondaryLabel = { Text(if (ttsEnabled) "Speaker On 🔊" else "Speaker Off 🔇") },
-          modifier = Modifier.fillMaxWidth(0.9f),
-        )
-      }
-      if (outstandingAnswersCount > 0) {
         item {
           Button(
-            onClick = { triggerAnswersSync() },
-            colors =
-              ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF66BB6A).copy(alpha = 0.2f),
-                contentColor = Color(0xFF66BB6A),
-              ),
+            onClick = { isReviewing = true },
+            colors = ButtonDefaults.buttonColors(),
             modifier = Modifier.fillMaxWidth(0.9f),
           ) {
-            Text("Sync $outstandingAnswersCount Reviews")
+            Text("Start Review")
+          }
+        }
+        // Study new cards ahead of the daily queue limit. Only available when we know the deck id.
+        if (activeDeckId != null) {
+          newCardControlItems(pickingNewCount) { pickingNewCount = it }
+        }
+        item {
+          SwitchButton(
+            checked = ttsEnabled,
+            onCheckedChange = { ttsEnabled = it },
+            label = { Text("Voice Reviews") },
+            secondaryLabel = { Text(if (ttsEnabled) "Speaker On 🔊" else "Speaker Off 🔇") },
+            modifier = Modifier.fillMaxWidth(0.9f),
+          )
+        }
+        if (outstandingAnswersCount > 0) {
+          item {
+            Button(
+              onClick = { triggerAnswersSync() },
+              colors =
+                ButtonDefaults.buttonColors(
+                  containerColor = Color(0xFF66BB6A).copy(alpha = 0.2f),
+                  contentColor = Color(0xFF66BB6A),
+                ),
+              modifier = Modifier.fillMaxWidth(0.9f),
+            ) {
+              Text("Sync $outstandingAnswersCount Reviews")
+            }
+          }
+        }
+        item {
+          ChildButton(onClick = { reviewSession = null }, modifier = Modifier.fillMaxWidth(0.9f)) {
+            Text("Change Deck")
           }
         }
       }
-      item {
-        ChildButton(onClick = { reviewSession = null }, modifier = Modifier.fillMaxWidth(0.9f)) {
-          Text("Change Deck")
-        }
-      }
-    }
     }
   }
 
@@ -716,7 +720,12 @@ class MainActivity : ComponentActivity() {
           horizontalAlignment = Alignment.CenterHorizontally,
           verticalArrangement = Arrangement.Center,
         ) {
-          HtmlText(html = displayFront, modifier = Modifier.fillMaxWidth())
+          CardSideContent(
+            cardId = card.id,
+            side = "front",
+            fallbackHtml = displayFront,
+            modifier = Modifier.fillMaxWidth(),
+          )
         }
         Text(
           text = "Tap to show answer",
@@ -749,7 +758,12 @@ class MainActivity : ComponentActivity() {
           horizontalAlignment = Alignment.CenterHorizontally,
           verticalArrangement = Arrangement.Center,
         ) {
-          HtmlText(html = displayFront, modifier = Modifier.fillMaxWidth())
+          CardSideContent(
+            cardId = card.id,
+            side = "front",
+            fallbackHtml = displayFront,
+            modifier = Modifier.fillMaxWidth(),
+          )
           Spacer(
             modifier =
               Modifier.padding(vertical = 6.dp)
@@ -757,7 +771,12 @@ class MainActivity : ComponentActivity() {
                 .height(1.dp)
                 .background(Color.DarkGray)
           )
-          HtmlText(html = displayBack, modifier = Modifier.fillMaxWidth())
+          CardSideContent(
+            cardId = card.id,
+            side = "back",
+            fallbackHtml = displayBack,
+            modifier = Modifier.fillMaxWidth(),
+          )
         }
         GradeEdgeButtons(card = card, enabled = !isAnswering) { ease, autoSync ->
           if (!isAnswering) {
@@ -830,6 +849,45 @@ class MainActivity : ComponentActivity() {
           }
         }
       }
+    }
+  }
+
+  /**
+   * Renders the pre-rendered card bitmap side if cached locally on the watch, falling back to
+   * standard HtmlText if not.
+   */
+  @Composable
+  fun CardSideContent(
+    cardId: Long,
+    side: String,
+    fallbackHtml: String,
+    modifier: Modifier = Modifier,
+  ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val hasCachedImage = remember(cardId, side) { CardImageCache.hasImage(context, cardId, side) }
+
+    if (hasCachedImage) {
+      val bitmap =
+        remember(cardId, side) {
+          try {
+            val file = CardImageCache.getImagePath(context, cardId, side)
+            android.graphics.BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
+          } catch (e: Exception) {
+            null
+          }
+        }
+      if (bitmap != null) {
+        androidx.compose.foundation.Image(
+          bitmap = bitmap,
+          contentDescription = "Card side $side",
+          modifier = modifier.fillMaxWidth(),
+          contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+        )
+      } else {
+        HtmlText(html = fallbackHtml, modifier = modifier)
+      }
+    } else {
+      HtmlText(html = fallbackHtml, modifier = modifier)
     }
   }
 
@@ -910,58 +968,58 @@ class MainActivity : ComponentActivity() {
     var pickingNewCount by remember { mutableStateOf(false) }
     val listState = rememberScalingLazyListState()
     ScreenScaffold(scrollState = listState) { contentPadding ->
-    ScalingLazyColumn(
-      state = listState,
-      contentPadding = contentPadding,
-      // See WelcomeScreen: avoid over-scrolling the list past its natural end.
-      autoCentering = null,
-      modifier = Modifier.fillMaxSize().rotaryScroll(listState),
-      horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.Center,
-    ) {
-      item {
-        Text(
-          text = "Nice Job! 🎉",
-          style = MaterialTheme.typography.titleMedium,
-          modifier = Modifier.padding(bottom = 8.dp),
-        )
-      }
-      item {
-        Text(
-          text = "You finished your study queue for now.",
-          style = MaterialTheme.typography.bodyMedium,
-          modifier = Modifier.padding(horizontal = 16.dp),
-        )
-      }
-      item {
-        Text(
-          text = "Outstanding reviews: $outstandingAnswersCount",
-          style = MaterialTheme.typography.labelSmall,
-          color = Color.LightGray,
-          modifier = Modifier.padding(vertical = 8.dp),
-        )
-      }
-      // Learn new cards right after finishing the due queue.
-      if (activeDeckId != null) {
-        newCardControlItems(pickingNewCount) { pickingNewCount = it }
-      }
-      // Material 3 expressive edge button hugging the bottom bezel: sync answers and go back.
-      item {
-        EdgeButton(
-          onClick = {
-            triggerAnswersSync()
-            isReviewing = false
-            reviewSession = null // return to decks selector list
-          },
-          buttonSize = EdgeButtonSize.Medium,
-        ) {
-          Icon(
-            painter = painterResource(id = R.drawable.ic_check),
-            contentDescription = "Sync and back to decks",
+      ScalingLazyColumn(
+        state = listState,
+        contentPadding = contentPadding,
+        // See WelcomeScreen: avoid over-scrolling the list past its natural end.
+        autoCentering = null,
+        modifier = Modifier.fillMaxSize().rotaryScroll(listState),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.Center,
+      ) {
+        item {
+          Text(
+            text = "Nice Job! 🎉",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 8.dp),
           )
         }
+        item {
+          Text(
+            text = "You finished your study queue for now.",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(horizontal = 16.dp),
+          )
+        }
+        item {
+          Text(
+            text = "Outstanding reviews: $outstandingAnswersCount",
+            style = MaterialTheme.typography.labelSmall,
+            color = Color.LightGray,
+            modifier = Modifier.padding(vertical = 8.dp),
+          )
+        }
+        // Learn new cards right after finishing the due queue.
+        if (activeDeckId != null) {
+          newCardControlItems(pickingNewCount) { pickingNewCount = it }
+        }
+        // Material 3 expressive edge button hugging the bottom bezel: sync answers and go back.
+        item {
+          EdgeButton(
+            onClick = {
+              triggerAnswersSync()
+              isReviewing = false
+              reviewSession = null // return to decks selector list
+            },
+            buttonSize = EdgeButtonSize.Medium,
+          ) {
+            Icon(
+              painter = painterResource(id = R.drawable.ic_check),
+              contentDescription = "Sync and back to decks",
+            )
+          }
+        }
       }
-    }
     }
   }
 }
