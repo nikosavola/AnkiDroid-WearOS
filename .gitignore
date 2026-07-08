@@ -21,3 +21,6 @@ captures/
 
 # Local-only scratch notes
 /TODO.md
+
+# Local-only symlink so Claude Code picks up AGENTS.md as project instructions
+/CLAUDE.md
