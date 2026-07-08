@@ -34,8 +34,65 @@ JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew lintAll
 JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew testDebugUnitTest
 ```
 
-If Kotlin fails to compile, the most likely culprit is the Wear M3 `ColorScheme` constructor in
-`wear/.../AnkiWearTheme.kt` (see item **Watch light mode** below) — it is the single riskiest edit.
+---
+
+# ⭐ Verification plan (read this first)
+
+Everything in `core/` (Rust) is compiled + tested here. **All Kotlin/Android is unbuilt.** Work
+top-to-bottom: fix the compile-risk hotlist, then run the automated tests, then walk the on-device
+checklist. Section numbers (§1.x) point to the full detail below.
+
+### A. Compile-risk hotlist — fix these first (most-likely `compileDebugKotlin`/`lintAll` breakages)
+
+1. **Phone Compose deps** (§1.16): `androidx.compose.material3:material3` pinned to `1.3.2` on top of
+   `compose = 1.9.0` / Kotlin 2.4.0. If resolution fails, switch `:phone` to a **Compose BOM**
+   (`implementation(platform("androidx.compose:compose-bom:<ver>"))`) and drop the explicit versions.
+   *This is the single most likely break.*
+2. **Wear M3 `ColorScheme`** (§1.4): `wear/.../AnkiWearTheme.kt` names color roles
+   (`background`, `onBackground`, `surfaceContainerLow/Container/High`, `onSurface`,
+   `onSurfaceVariant`). If they don't match `wear-compose 1.6.2`, the `:wear` module won't compile —
+   align to the real `ColorScheme` constructor.
+3. **detekt `allRules = true`** (§1.20): run `./gradlew detekt`; the known likely finding is
+   `UnusedPrivateMember` on the `@Preview DeckSelectionTreePreview`. Add `ignoreAnnotated: ['Preview']`
+   to that rule (or triage whatever else fires).
+4. **UniFFI generated names** — the Kotlin calls these; confirm the bindgen output matches (camelCase
+   of the Rust names). New/changed since the bindings were last generated: `ReviewSession.destroy()`,
+   `canUndo()`, `undoLastAnswer()`, `getSummary()` (→ `SessionSummary`), `bufferedAnswerStats()`
+   (→ `BufferStats`), `averageAnswerTimeMs()`, `reviewsSince()`, `formatQueueEta()`,
+   `serializeDueBatchProto()`/`deserializeDueBatchProto()`. Run `./gradlew generateBindings` first.
+5. **ReviewCardScreen extraction** (§1.19): the review screen was split into `BoxScope.ReviewFront` /
+   `ReviewAnswer`; if a param/type is off it won't compile. Behaviorally verify reveal + grade.
+6. **Per-deck `deck_counts` column** (§1.15): LOW confidence — the column name/format is a guess;
+   if counts are wrong/missing, confirm against `FlashCardsContract.Deck` (guarded so it degrades to
+   "no annotation", never a wrong number).
+
+### B. Automated tests (added this branch)
+
+- **Rust — 35 tests, all green here** (`cargo test --manifest-path core/Cargo.toml`). Notable new
+  ones: `test_review_session_undo`, `test_session_summary`, `test_reviews_since`,
+  `test_buffered_answer_stats`, `test_format_queue_eta`, `test_average_answer_time_ms`,
+  `test_due_batch_is_gzipped_and_smaller`, `test_deserialize_due_batch_accepts_raw_json`,
+  `test_due_batch_proto_*`, `test_clean_html_decodes_entities`, `test_clean_html_breaks_block_elements`,
+  `test_buffer_error_paths_without_init`.
+- **Kotlin — unrun** (`./gradlew testDebugUnitTest`): `phone/.../SyncServiceTest` (progress math),
+  `phone/.../DeckTreeTest.deckIds_*`, `wear/.../CoreFfiTest` (`formatQueueEta`,
+  `serializeDueBatchProto_roundTrips`). These call into the host `.so`, so run `:compileRustHost`
+  first (the Gradle test task already depends on it).
+
+### C. On-device behavior checklist (grouped)
+
+- **Watch — new UI:** Settings screen (theme System/Dark/Light, text size S–XL, card font, keep-screen-on)
+  §1.4/§1.15; undo "↩" button §1.15; end-of-session summary + "Reviewed today 🔥" §1.17; stale-review
+  nudge §1.14; grade haptic §1.14; Tile tap-to-open + auto-refresh §1.16. Rotary on every screen
+  incl. Settings §2.10.
+- **Phone — new UI:** M3 header §1.12; deck **search** + **Select all/none** + **"Decks to sync (N/M)"**
+  §1.15/§1.17; **"Last synced …"** §1.15; **read-only mode** §1.5; **auto-sync** switch + interval slider
+  §1.13; per-deck **" · N due"** §1.15; dark/light follows system §2.1.
+- **Cross-device sync:** gzip is now in Rust — sync a large/dense deck and confirm it arrives + opens;
+  check a pre-upgrade↔post-upgrade mixed pair still works §1.2. Auto-sync delivers in the background
+  §1.13. Predictive-back gesture animates on both apps §1.9.
+- **Data safety:** with **read-only mode ON**, a watch→phone sync must NOT change any card's due
+  date/interval §1.5.
 
 ---
 
@@ -140,22 +197,14 @@ tags, multiple `[sound:]`, case-insensitive `<STYLE>`), `deck_children` (deep tr
 own deck, duplicate leaf names), buffer error paths when the DB was never initialized, and
 `answer_html` marker edge cases. Buffer tests are serialized with a lock (shared global `DB_CONN`).
 
-## 1.7 UniFFI async/suspend — design note (seed code removed in §1.19)
+## 1.7 UniFFI async/suspend — design note only (nothing to test)
 
-The migration target: expose heavy work as Rust `async fn`, which UniFFI maps to Kotlin
-`suspend fun`, so the Kotlin side drops `withContext(Dispatchers.IO) { blockingFfi() }`. An earlier
-`async_ops.rs` scaffolded this with `deserialize_due_batch_async` etc., but those bodies had no
-`.await` (they only earned a lint suppression), so they were **removed** in the lint-cleanup pass
-(§1.19). To actually implement: add the `tokio` feature to the `uniffi` dep and annotate the
-real work with `#[uniffi::export(async_runtime = "tokio")]` + `tokio::task::spawn_blocking`.
-- **Important caveat (in the module doc too):** these bodies have no `.await`, so they don't yet
-  move CPU work off the caller's thread — they prove the binding shape. To *actually* offload,
-  add the `tokio` feature to the `uniffi` dep and use `#[uniffi::export(async_runtime = "tokio")]`
-  + `tokio::task::spawn_blocking`. Kept runtime-free so the crate still builds with no runtime.
-- **How to test:** after `generateBindings`, call `deserializeDueBatchAsync(bytes)` from a coroutine
-  in the watch's `loadDeckSession` instead of `withContext(Dispatchers.IO){ deserializeDueBatch }`;
-  confirm it suspends and returns correctly, and that cancellation behaves. A host-JVM
-  `runBlocking { }` test is possible but async-over-JNA under Robolectric wasn't validated here.
+Target: expose heavy work as Rust `async fn`, which UniFFI maps to a Kotlin `suspend fun`, letting
+the Kotlin side drop `withContext(Dispatchers.IO) { blockingFfi() }`. An earlier `async_ops.rs` seed
+(`deserialize_due_batch_async` etc.) was **removed** in §1.19 — its bodies had no `.await` and only
+earned a lint suppression, so it was dead weight. **No async code ships on this branch; nothing to
+test here.** Implementation plan lives in §2.13 (add the `tokio` feature to `uniffi`, wrap real work
+in `#[uniffi::export(async_runtime = "tokio")]` + `tokio::task::spawn_blocking`).
 
 ## 1.8 Protobuf wire format (experimental, parallel to JSON)  ✅ Rust-verified
 
@@ -588,7 +637,7 @@ treatment.
 | Rotary dial verification | ⏸ device-only |
 | Power checklist | ⏸ device-only |
 | AGP 9.2.1 migration | ⏸ blocked, dedicated task |
-| UniFFI async/suspend | ◐ seed exports added (runtime-free); wire + tokio to offload |
+| UniFFI async/suspend | ⏸ documented only (no code — seed removed in §1.19); plan in §2.13 |
 | Protobuf/FlatBuffers | ◐ prost path added + tested; not wired into sync yet |
 | binder code 10 / error -74 | ⏸ investigate |
 | Kotlin + instrumented/E2E tests | ⏸ largest remaining test gap |
