@@ -26,6 +26,8 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -79,6 +81,8 @@ class MainActivity : ComponentActivity() {
   private var reviewSession by mutableStateOf<ReviewSession?>(null)
   private var cardCompletedTrigger by mutableStateOf(0)
   private var outstandingAnswersCount by mutableStateOf(0)
+  // Age (seconds) of the oldest un-synced review, to nudge the user when reviews go stale.
+  private var outstandingOldestSecs by mutableLongStateOf(0L)
   private var isReviewing by mutableStateOf(false)
   private var ttsEnabled by mutableStateOf(false)
 
@@ -417,12 +421,22 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /** Compact "5s"/"12m"/"3h"/"2d" age for the oldest un-synced review. */
+  private fun humanAge(secs: Long): String =
+    when {
+      secs < 60 -> "${secs}s"
+      secs < 3600 -> "${secs / 60}m"
+      secs < 86400 -> "${secs / 3600}h"
+      else -> "${secs / 86400}d"
+    }
+
   private fun updateOutstandingCount() {
     scope.launch(Dispatchers.IO) {
       try {
-        val answers = getBufferedAnswers()
-        outstandingAnswersCount = answers.size
-        Log.d(TAG, "Outstanding local buffered reviews count: $outstandingAnswersCount")
+        val stats = bufferedAnswerStats()
+        outstandingAnswersCount = stats.count
+        outstandingOldestSecs = stats.oldestAgeSecs
+        Log.d(TAG, "Outstanding buffered reviews: ${stats.count}, oldest ${stats.oldestAgeSecs}s")
       } catch (e: Exception) {
         Log.e(TAG, "Failed to query buffered answers: ${e.message}")
       }
@@ -781,6 +795,18 @@ class MainActivity : ComponentActivity() {
               Text("Sync $outstandingAnswersCount Reviews")
             }
           }
+          // Nudge when reviews have been waiting to reach the phone for a day or more.
+          if (outstandingOldestSecs >= 86400) {
+            item {
+              Text(
+                text = "⚠ Oldest unsynced ${humanAge(outstandingOldestSecs)} ago",
+                style = MaterialTheme.typography.labelSmall,
+                color = Color(0xFFFFA726),
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 12.dp),
+              )
+            }
+          }
         }
         item { Spacer(modifier = Modifier.height(8.dp)) }
         item {
@@ -800,6 +826,7 @@ class MainActivity : ComponentActivity() {
     var isRevealed by remember(card.id, card.ord) { mutableStateOf(session.isRevealed()) }
     var isAnswering by remember(card.id, card.ord) { mutableStateOf(false) }
     val scrollState = rememberScrollState()
+    val haptics = LocalHapticFeedback.current
 
     val labelStyle = MaterialTheme.typography.labelSmall
     val curvedStyle =
@@ -913,6 +940,8 @@ class MainActivity : ComponentActivity() {
         GradeEdgeButtons(card = card, enabled = !isAnswering) { ease, autoSync ->
           if (!isAnswering) {
             isAnswering = true
+            // Confirm the grade with a short haptic tick (eyes-free / glanceable feedback).
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
             answerCardSafely(session, ease, duration) {
               if (autoSync) triggerAnswersSync() // auto sync when finishing with Easy
               isAnswering = false

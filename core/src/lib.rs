@@ -435,6 +435,42 @@ mod tests {
     }
 
     #[test]
+    fn test_buffered_answer_stats() {
+        let _guard = db_test_guard();
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join("test_wearos_stats.db").to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&db_path);
+        init_database(db_path.clone()).unwrap();
+
+        // Empty buffer: zero count, zero age.
+        let empty = buffered_answer_stats().unwrap();
+        assert_eq!(empty.count, 0);
+        assert_eq!(empty.oldest_age_secs, 0);
+
+        save_answer(WearosAnswer {
+            id: "s1".to_string(),
+            note_id: 1,
+            ord: 0,
+            ease: 3,
+            time_taken_ms: 1000,
+        })
+        .unwrap();
+        save_answer(WearosAnswer {
+            id: "s2".to_string(),
+            note_id: 2,
+            ord: 0,
+            ease: 2,
+            time_taken_ms: 2000,
+        })
+        .unwrap();
+        let stats = buffered_answer_stats().unwrap();
+        assert_eq!(stats.count, 2);
+        assert!(stats.oldest_age_secs >= 0, "age should be non-negative");
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
     fn test_buffer_error_paths_without_init() {
         let _guard = db_test_guard();
         // Point the shared connection at nothing, mimicking a process that never called
@@ -443,6 +479,7 @@ mod tests {
         assert!(matches!(save_answer(sample_answer()), Err(CoreError::DatabaseError { .. })));
         assert!(matches!(get_buffered_answers(), Err(CoreError::DatabaseError { .. })));
         assert!(matches!(average_answer_time_ms(), Err(CoreError::DatabaseError { .. })));
+        assert!(matches!(buffered_answer_stats(), Err(CoreError::DatabaseError { .. })));
         assert!(matches!(
             remove_buffered_answers(vec!["x".to_string()]),
             Err(CoreError::DatabaseError { .. })
@@ -463,6 +500,30 @@ mod tests {
         assert_eq!(clean_html("<ruby><b>漢</b><rt>かん</rt></ruby>".to_string()), "漢(かん)");
         // Multiple [sound:] refs are all removed.
         assert_eq!(clean_html("a[sound:1.mp3]b[sound:2.mp3]c".to_string()), "abc");
+    }
+
+    #[test]
+    fn test_clean_html_decodes_entities() {
+        // Numeric (decimal + hex) and named references that TTS would otherwise read literally.
+        assert_eq!(clean_html("it&#39;s a &quot;test&quot;".to_string()), "it's a \"test\"");
+        assert_eq!(clean_html("a&#x2F;b".to_string()), "a/b");
+        assert_eq!(clean_html("dash&mdash;dash".to_string()), "dash\u{2014}dash");
+        // Single-pass: an escaped entity decodes exactly once, not twice.
+        assert_eq!(clean_html("&amp;lt;".to_string()), "&lt;");
+        // Unknown/unterminated references are left as-is.
+        assert_eq!(clean_html("Q&A".to_string()), "Q&A");
+        assert_eq!(clean_html("100&nada".to_string()), "100&nada");
+    }
+
+    #[test]
+    fn test_clean_html_breaks_block_elements() {
+        // Anki wraps lines in <div>s; closing them must break the line for readable text/TTS.
+        assert_eq!(
+            clean_html("<div>line one</div><div>line two</div>".to_string()),
+            "line one\nline two"
+        );
+        // List items and headers break too.
+        assert_eq!(clean_html("<h2>Title</h2><li>a</li><li>b</li>".to_string()), "Title\na\nb");
     }
 
     #[test]
