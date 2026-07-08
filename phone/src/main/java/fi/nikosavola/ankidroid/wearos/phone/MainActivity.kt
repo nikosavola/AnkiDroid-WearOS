@@ -11,6 +11,7 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.CoroutineScope
@@ -27,22 +28,40 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     private const val PERMISSION_ANKIDROID = "com.ichi2.anki.permission.READ_WRITE_DATABASE"
     private const val PERMISSION_REQUEST_CODE = 420
     private const val PATH_DUE_BATCH = "/due_batch"
-    private const val KEY_BATCH_BYTES = "batch_bytes"
+    // See WearSyncService: batch goes over an Asset to dodge the ~100KB DataItem cap.
+    private const val KEY_BATCH_ASSET = "batch_asset"
 
-    // Pre-push at most this many non-empty decks on a manual sync; scan at most this many looking
-    // for them so a large collection doesn't make Sync crawl. The rest download on demand.
-    private const val MAX_PREPUSH_DECKS = 15
+    // Pre-push at most this many non-empty decks on a manual sync (default; overridable in
+    // Settings); scan at most this many looking for them so a large collection doesn't make Sync
+    // crawl. The rest download on demand.
+    private const val DEFAULT_PREPUSH_DECKS = 15
     private const val MAX_SCAN_DECKS = 60
+
+    // User settings, persisted across launches.
+    private const val SETTINGS_PREFS = "settings_prefs"
+    private const val KEY_FORCE_MOCK = "force_mock"
+    private const val KEY_PREPUSH_CAP = "prepush_cap"
+    private const val PREPUSH_MIN = 5
+    private const val PREPUSH_MAX = 30
   }
 
   private lateinit var bridge: AnkiDroidBridge
   private lateinit var statusText: TextView
   private lateinit var syncButton: Button
   private lateinit var progressBar: ProgressBar
-  private lateinit var mockModeSwitch: com.google.android.material.switchmaterial.SwitchMaterial
   private lateinit var deckListLayout: LinearLayout
   private var allDecks: List<Pair<Long, String>> = emptyList()
+  // Folder paths currently expanded in the deck selector. Empty = everything collapsed, so the
+  // list opens compact (just the top-level folders) and the user drills in with [+].
+  private val expandedFolders = mutableSetOf<String>()
   private val scope = CoroutineScope(Dispatchers.Main)
+
+  private val settings by lazy { getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE) }
+
+  private fun forceMock(): Boolean =
+    settings.getBoolean(KEY_FORCE_MOCK, !bridge.isAnkiDroidAvailable())
+
+  private fun prePushCap(): Int = settings.getInt(KEY_PREPUSH_CAP, DEFAULT_PREPUSH_DECKS)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -54,14 +73,40 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         orientation = LinearLayout.VERTICAL
         setPadding(64, 64, 64, 64)
       }
+    // targetSdk 35 draws edge-to-edge on Android 15, so keep content (incl. the gear) clear of the
+    // status/nav bars by adding the system-bar insets on top of the base padding.
+    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { v, insets ->
+      val bars =
+        insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+      v.setPadding(64, 64 + bars.top, 64, 64 + bars.bottom)
+      insets
+    }
 
+    // Top bar: title on the left, a Material gear on the right that opens Settings.
+    val topBar =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = android.view.Gravity.CENTER_VERTICAL
+        setPadding(0, 0, 0, 32)
+      }
     val titleText =
       com.google.android.material.textview.MaterialTextView(this).apply {
         text = "AnkiDroid WearOS Companion"
         textSize = 24f
-        setPadding(0, 0, 0, 32)
+        layoutParams =
+          LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
       }
-    rootLayout.addView(titleText)
+    topBar.addView(titleText)
+    val settingsButton =
+      android.widget.ImageButton(this).apply {
+        setImageResource(R.drawable.ic_settings)
+        contentDescription = "Settings"
+        background =
+          resolveAttrDrawable(android.R.attr.selectableItemBackgroundBorderless)
+        setOnClickListener { showSettingsDialog() }
+      }
+    topBar.addView(settingsButton)
+    rootLayout.addView(topBar)
 
     statusText =
       com.google.android.material.textview.MaterialTextView(this).apply {
@@ -70,15 +115,6 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         setPadding(0, 0, 0, 48)
       }
     rootLayout.addView(statusText)
-
-    // Switch to toggle Force Mock Mode for testing
-    mockModeSwitch =
-      com.google.android.material.switchmaterial.SwitchMaterial(this).apply {
-        text = "Force Mock Mode (Demo / Testing)"
-        isChecked = !bridge.isAnkiDroidAvailable() // Default true if real app is missing
-        setPadding(0, 0, 0, 48)
-      }
-    rootLayout.addView(mockModeSwitch)
 
     // Scrollable container for the checkboxes for our decks list
     val scrollView =
@@ -173,26 +209,65 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
     val root = buildDeckTree(allDecks)
     for (child in root.children.values) {
-      addDeckNodeViews(child, 0, prefs)
+      addDeckNodeViews(child, 0, child.name, prefs)
     }
   }
+
+  // Fixed expander column width so leaf checkboxes line up under folder names at the same depth.
+  private val expanderWidthPx by lazy { (48 * resources.displayMetrics.density).toInt() }
 
   private fun addDeckNodeViews(
     node: DeckNode,
     depth: Int,
+    path: String,
     prefs: android.content.SharedPreferences,
   ) {
     val indent = 32 + depth * 56
     if (node.children.isNotEmpty()) {
-      // Folder row: one checkbox toggles every deck nested under this path (itself included).
+      // Folder row: a [+]/[-] expander plus a checkbox that toggles every deck nested under this
+      // path (itself included). Children only render when the folder is expanded.
+      val expanded = expandedFolders.contains(path)
       val deckIds = mutableListOf<Long>().also { collectDeckIds(node, it) }
       val allChecked = deckIds.isNotEmpty() && deckIds.all { prefs.getBoolean("deck_$it", true) }
+
+      val row =
+        LinearLayout(this).apply {
+          orientation = LinearLayout.HORIZONTAL
+          gravity = android.view.Gravity.CENTER_VERTICAL
+          setPadding(indent, 4, 0, 4)
+        }
+      // M3 expand affordance: a standard icon button with the expand_more chevron, rotated to
+      // point up when the folder is open (the Material 3 idiom, rather than a +/- glyph).
+      val expander =
+        com.google.android.material.button.MaterialButton(
+            this,
+            null,
+            com.google.android.material.R.attr.materialIconButtonStyle,
+          )
+          .apply {
+            icon = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_expand_more)
+            iconGravity = com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START
+            iconPadding = 0
+            rotation = if (expanded) 180f else 0f
+            minWidth = 0
+            minimumWidth = 0
+            insetTop = 0
+            insetBottom = 0
+            layoutParams =
+              LinearLayout.LayoutParams(expanderWidthPx, LinearLayout.LayoutParams.WRAP_CONTENT)
+            contentDescription = if (expanded) "Collapse ${node.name}" else "Expand ${node.name}"
+            setOnClickListener {
+              if (expanded) expandedFolders.remove(path) else expandedFolders.add(path)
+              renderDeckTree()
+            }
+          }
+      row.addView(expander)
       val folder =
         com.google.android.material.checkbox.MaterialCheckBox(this).apply {
           text = "📁 ${node.name}"
           setTypeface(null, android.graphics.Typeface.BOLD)
           isChecked = allChecked
-          setPadding(indent, 12, 0, 12)
+          setPadding(16, 0, 0, 0)
           setOnCheckedChangeListener { _, checked ->
             val editor = prefs.edit()
             for (id in deckIds) editor.putBoolean("deck_$id", checked)
@@ -200,22 +275,33 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
             renderDeckTree()
           }
         }
-      deckListLayout.addView(folder)
-      for (child in node.children.values) {
-        addDeckNodeViews(child, depth + 1, prefs)
+      row.addView(folder)
+      deckListLayout.addView(row)
+
+      if (expanded) {
+        for (child in node.children.values) {
+          addDeckNodeViews(child, depth + 1, "$path::${child.name}", prefs)
+        }
       }
     } else {
       val id = node.deckId ?: return
+      // Wrap in a padded row (rather than padding the checkbox) so the box, not just the text,
+      // lines up under the sibling folders' checkboxes past the expander column.
+      val row =
+        LinearLayout(this).apply {
+          orientation = LinearLayout.HORIZONTAL
+          setPadding(indent + expanderWidthPx + 16, 4, 0, 4)
+        }
       val cb =
         com.google.android.material.checkbox.MaterialCheckBox(this).apply {
           text = node.name
           isChecked = prefs.getBoolean("deck_$id", true)
-          setPadding(indent, 8, 0, 8)
           setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean("deck_$id", checked).apply()
           }
         }
-      deckListLayout.addView(cb)
+      row.addView(cb)
+      deckListLayout.addView(row)
     }
   }
 
@@ -252,13 +338,14 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         // 2. Pre-push the due batches for selected decks so switching to them is instant and works
         //    offline. Only decks that actually have due cards are pushed; the rest download on
         //    demand when tapped on the watch. Capped so a large collection keeps sync responsive.
-        val isForced = mockModeSwitch.isChecked
+        val isForced = forceMock()
+        val prePushCap = prePushCap()
         val renderer = CardBitmapRenderer(this@MainActivity)
         var pushed = 0
         var totalCards = 0
         var scanned = 0
         for ((deckId, deckName) in filteredDecks) {
-          if (pushed >= MAX_PREPUSH_DECKS || scanned >= MAX_SCAN_DECKS) break
+          if (pushed >= prePushCap || scanned >= MAX_SCAN_DECKS) break
           scanned++
           val batch =
             withContext(Dispatchers.IO) {
@@ -266,11 +353,19 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
             }
           if (batch.cards.isEmpty()) continue
 
-          val bytes = serializeDueBatch(batch)
+          val cleanedCards =
+            batch.cards.map { card ->
+              card.copy(
+                front = AnkiDroidBridge.stripBase64Images(card.front),
+                back = AnkiDroidBridge.stripBase64Images(card.back),
+              )
+            }
+          val cleanedBatch = batch.copy(cards = cleanedCards)
+          val bytes = serializeDueBatch(cleanedBatch)
           val putDataReq =
             PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId")
               .apply {
-                dataMap.putByteArray(KEY_BATCH_BYTES, gzip(bytes))
+                dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(gzip(bytes)))
                 // Vary the item so the watch always re-receives it on a manual sync.
                 dataMap.putLong("synced_at", System.currentTimeMillis())
                 setUrgent()
@@ -283,7 +378,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
           pushed++
           totalCards += batch.cards.size
-          progressBar.progress = 30 + 65 * pushed / MAX_PREPUSH_DECKS
+          progressBar.progress = 30 + 65 * pushed / prePushCap
           statusText.text = "Pushed $pushed decks ($totalCards cards)..."
           Log.d(TAG, "Pushed deck $deckId ('$deckName') with ${batch.cards.size} cards.")
         }
@@ -307,6 +402,64 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         syncButton.isEnabled = true
       }
     }
+  }
+
+  /** Material 3 settings dialog opened from the top-bar gear. */
+  private fun showSettingsDialog() {
+    val pad = (24 * resources.displayMetrics.density).toInt()
+    val content =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(pad, pad / 2, pad, 0)
+      }
+
+    val mockSwitch =
+      com.google.android.material.materialswitch.MaterialSwitch(this).apply {
+        text = "Force Mock Mode (Demo / Testing)"
+        isChecked = forceMock()
+      }
+    content.addView(mockSwitch)
+
+    val capLabel =
+      com.google.android.material.textview.MaterialTextView(this).apply {
+        textSize = 16f
+        setPadding(0, pad, 0, 0)
+      }
+    content.addView(capLabel)
+
+    val capSlider =
+      com.google.android.material.slider.Slider(this).apply {
+        valueFrom = PREPUSH_MIN.toFloat()
+        valueTo = PREPUSH_MAX.toFloat()
+        stepSize = 5f
+        value = prePushCap().coerceIn(PREPUSH_MIN, PREPUSH_MAX).toFloat()
+      }
+    fun updateCapLabel(v: Int) {
+      capLabel.text = "Decks to pre-push on sync: $v"
+    }
+    updateCapLabel(capSlider.value.toInt())
+    capSlider.addOnChangeListener { _, value, _ -> updateCapLabel(value.toInt()) }
+    content.addView(capSlider)
+
+    com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+      .setTitle("Settings")
+      .setView(content)
+      .setPositiveButton("Done") { _, _ ->
+        settings
+          .edit()
+          .putBoolean(KEY_FORCE_MOCK, mockSwitch.isChecked)
+          .putInt(KEY_PREPUSH_CAP, capSlider.value.toInt())
+          .apply()
+      }
+      .setNegativeButton("Cancel", null)
+      .show()
+  }
+
+  /** Resolve a theme attribute that points at a drawable (e.g. a ripple background). */
+  private fun resolveAttrDrawable(attr: Int): android.graphics.drawable.Drawable? {
+    val tv = android.util.TypedValue()
+    theme.resolveAttribute(attr, tv, true)
+    return androidx.core.content.ContextCompat.getDrawable(this, tv.resourceId)
   }
 }
 
