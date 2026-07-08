@@ -236,6 +236,24 @@ Adds recurring background sync so the watch gets fresh due cards without the use
     2.10.x if needed), and that offscreen `WebView` bitmap rendering works from the worker context
     (it goes through `render()`'s `Dispatchers.Main` switch, same as the foreground path).
 
+## 1.14 Card-text, buffer-stats, and review UX polish
+
+- **`clean_html` HTML-entity decoding + block breaks** (`core/src/html.rs`, Rust-verified). The
+  TTS/plain path now decodes named *and* numeric entities (`&#39;`, `&#x2F;`, `&quot;`, `&mdash;`,
+  …) in a single correct pass (so `&amp;lt;` → `&lt;`, not `<`), and breaks lines on closing block
+  tags (`</div>`, `</li>`, `</h1..6>`, `</tr>`, `</blockquote>`) since Anki wraps content in `<div>`s.
+  Before this, TTS read "&#39;" aloud and multi-`div` cards ran together. Tests:
+  `test_clean_html_decodes_entities`, `test_clean_html_breaks_block_elements`.
+- **Buffer stats FFI** (`buffered_answer_stats() -> BufferStats { count, oldest_age_secs }`,
+  Rust-verified, `test_buffered_answer_stats`). The watch's `updateOutstandingCount` now reads this
+  instead of counting the full answer list, and shows a "⚠ Oldest unsynced Nd ago" nudge on the deck
+  screen when reviews have waited ≥ 1 day. **Test:** review offline, wait/deep-sleep, confirm the
+  nudge appears with the right age; confirm it clears after a successful sync.
+- **Haptic feedback on grading** (watch, unverified). `ReviewCardScreen` fires a short
+  `HapticFeedbackType.LongPress` tick when a grade registers (glanceable/eyes-free confirmation).
+  **Test:** grade a card; feel one tick; ensure no double-fire when tapping fast (guarded by
+  `isAnswering`).
+
 ---
 
 # Part 2 — Remaining backlog (not implemented here)

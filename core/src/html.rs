@@ -45,6 +45,13 @@ pub fn clean_html(raw_html: String) -> String {
             match name.as_str() {
                 "rt" => clean.push(if closing { ')' } else { '(' }),
                 "rp" => in_rp = !closing,
+                // Block-level elements Anki uses to lay out lines (it wraps most content in <div>s):
+                // break the line when they close so text/TTS doesn't run together.
+                "div" | "li" | "tr" | "blockquote" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+                    if closing =>
+                {
+                    clean.push('\n');
+                }
                 _ => {}
             }
         } else if !in_rp {
@@ -52,14 +59,77 @@ pub fn clean_html(raw_html: String) -> String {
         }
     }
 
-    // 4. Convert HTML entities after all tags have been removed.
-    let decoded = clean
-        .replace("&nbsp;", " ")
-        .replace("&amp;", "&")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">");
+    // 4. Decode HTML entities (named + numeric) now that all tags are gone, so TTS doesn't read
+    //    "&#39;" aloud and apostrophes/dashes come through.
+    let decoded = decode_entities(&clean);
 
     collapse_blank_lines(&decoded).trim().to_string()
+}
+
+/// Decode HTML character references in `s`: named (`&amp;`, `&quot;`, `&apos;`, `&mdash;`, …) and
+/// numeric (`&#39;`, `&#x2F;`). Single-pass — an already-escaped `&amp;lt;` decodes to `&lt;`, not
+/// `<`. Unknown or unterminated references are left verbatim.
+fn decode_entities(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '&' {
+            out.push(c);
+            continue;
+        }
+        // Collect the reference body up to ';' (bounded, so a lone '&' can't scan the whole string).
+        let mut ent = String::new();
+        let mut terminated = false;
+        for _ in 0..12 {
+            match chars.peek() {
+                Some(&';') => {
+                    chars.next();
+                    terminated = true;
+                    break;
+                }
+                Some(&nc) if nc != '&' && !nc.is_whitespace() => {
+                    ent.push(nc);
+                    chars.next();
+                }
+                _ => break,
+            }
+        }
+        if let Some(decoded) = decode_entity(&ent).filter(|_| terminated) {
+            out.push_str(&decoded);
+        } else {
+            // Not a reference we recognize: emit it back untouched (with the ';' if present).
+            out.push('&');
+            out.push_str(&ent);
+            if terminated {
+                out.push(';');
+            }
+        }
+    }
+    out
+}
+
+/// Resolve a single entity body (the text between `&` and `;`) to its string, or `None` if unknown.
+fn decode_entity(ent: &str) -> Option<String> {
+    if let Some(rest) = ent.strip_prefix('#') {
+        let code = rest
+            .strip_prefix(['x', 'X'])
+            .map_or_else(|| rest.parse::<u32>().ok(), |hex| u32::from_str_radix(hex, 16).ok())?;
+        return char::from_u32(code).map(|c| c.to_string());
+    }
+    let mapped = match ent {
+        "nbsp" => " ",
+        "amp" => "&",
+        "lt" => "<",
+        "gt" => ">",
+        "quot" => "\"",
+        "apos" => "'",
+        "mdash" => "\u{2014}",
+        "ndash" => "\u{2013}",
+        "hellip" => "\u{2026}",
+        "middot" => "\u{00b7}",
+        _ => return None,
+    };
+    Some(mapped.to_string())
 }
 
 /// Sanitize card HTML for on-device rendering (e.g. HtmlCompat), keeping formatting tags like

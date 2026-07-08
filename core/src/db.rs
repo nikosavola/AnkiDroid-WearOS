@@ -101,6 +101,29 @@ pub fn get_buffered_answers() -> Result<Vec<WearosAnswer>, CoreError> {
     Ok(answers)
 }
 
+/// Snapshot of the local answer buffer for status UI: how many reviews are waiting to reach the
+/// phone, and how old the oldest one is (seconds; 0 when the buffer is empty).
+#[derive(uniffi::Record)]
+pub struct BufferStats {
+    pub count: i32,
+    pub oldest_age_secs: i64,
+}
+
+/// Count + oldest age of the buffered (un-synced) answers, so the watch can nudge the user when
+/// reviews have been sitting un-synced for a while.
+#[uniffi::export]
+pub fn buffered_answer_stats() -> Result<BufferStats, CoreError> {
+    let conn = get_db_connection()?;
+    let (count, oldest): (i64, Option<i64>) = conn
+        .query_row("SELECT COUNT(*), MIN(created_at) FROM buffered_answers", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64;
+    let oldest_age_secs = oldest.map_or(0, |t| (now - t).max(0));
+    Ok(BufferStats { count: count as i32, oldest_age_secs })
+}
+
 /// Mean answer time (ms) over the currently-buffered answers, or `None` when the buffer is empty.
 /// Lets the Tile replace its flat per-card estimate with the user's real observed pace.
 #[uniffi::export]
