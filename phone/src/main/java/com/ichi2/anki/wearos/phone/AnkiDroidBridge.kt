@@ -5,10 +5,10 @@ import android.content.ContentValues
 import android.content.Context
 import android.net.Uri
 import android.util.Log
-import org.json.JSONArray
 import uniffi.wearos_core.WearosAnswer
 import uniffi.wearos_core.WearosCard
 import uniffi.wearos_core.WearosDueBatch
+import uniffi.wearos_core.parseReviewTimes
 
 class AnkiDroidBridge(private val context: Context) {
   companion object {
@@ -356,28 +356,6 @@ class AnkiDroidBridge(private val context: Context) {
         "${answers.size - settledIds.size} kept for retry.",
     )
     return settledIds
-  }
-
-  /**
-   * NEXT_REVIEW_TIMES comes back as a JSON array string with bidi isolate chars around numbers
-   * (e.g. ["⁨10⁩m",...]). Parse it into clean values like "10m" so the watch buttons don't show
-   * fragments like ["10m".
-   */
-  private fun parseReviewTimes(raw: String): List<String> {
-    // Strip Unicode bidi isolates (LRI/RLI/FSI/PDI) Anki wraps around numbers.
-    val cleaned = raw.replace(Regex("[⁦⁧⁨⁩]"), "")
-    return try {
-      val arr = JSONArray(cleaned.trim())
-      (0 until arr.length()).map { arr.getString(it).trim() }
-    } catch (e: Exception) {
-      cleaned
-        .trim()
-        .removePrefix("[")
-        .removeSuffix("]")
-        .split(",")
-        .map { it.trim().trim('"') }
-        .filter { it.isNotEmpty() }
-    }
   }
 
   private fun getMockDueBatch(deckId: Long): WearosDueBatch {

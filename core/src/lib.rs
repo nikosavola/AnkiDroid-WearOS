@@ -517,6 +517,35 @@ pub fn deck_children(decks: Vec<DeckInfo>, path: String) -> DeckLevel {
     DeckLevel { own_deck, children }
 }
 
+/// Parse AnkiDroid's NEXT_REVIEW_TIMES: a JSON-array string whose numbers are wrapped in Unicode
+/// bidi isolates (e.g. `["\u{2068}10\u{2069}m", ...]`). Returns clean values like "10m", falling
+/// back to a lenient bracket split when the input isn't valid JSON.
+#[uniffi::export]
+pub fn parse_review_times(raw: String) -> Vec<String> {
+    // Drop bidi isolate controls (LRI/RLI/FSI/PDI) Anki wraps around the numbers.
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !matches!(c, '\u{2066}' | '\u{2067}' | '\u{2068}' | '\u{2069}'))
+        .collect();
+    let trimmed = cleaned.trim();
+
+    if let Ok(serde_json::Value::Array(arr)) = serde_json::from_str::<serde_json::Value>(trimmed) {
+        return arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.trim().to_string()))
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+
+    trimmed
+        .trim_start_matches('[')
+        .trim_end_matches(']')
+        .split(',')
+        .map(|s| s.trim().trim_matches('"').trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 // ==========================================
 // 6. Unit Tests
 // ==========================================
@@ -628,6 +657,21 @@ mod tests {
         assert_eq!(names, vec!["5. N2", "6. N1"]);
         assert!(level.children.iter().all(|c| !c.is_folder));
         assert_eq!(level.children[0].id, 4);
+    }
+
+    #[test]
+    fn test_parse_review_times() {
+        // Valid JSON array with bidi isolates around the numbers (real AnkiDroid shape).
+        let raw = "[\"\u{2068}10\u{2069}m\", \"\u{2068}2\u{2069}d\", \"\u{2068}4\u{2069}d\"]";
+        assert_eq!(parse_review_times(raw.to_string()), vec!["10m", "2d", "4d"]);
+
+        // Lenient fallback for a non-JSON comma list.
+        assert_eq!(
+            parse_review_times("1m, 10m, 4d, 7d".to_string()),
+            vec!["1m", "10m", "4d", "7d"]
+        );
+
+        assert!(parse_review_times(String::new()).is_empty());
     }
 
     #[test]
