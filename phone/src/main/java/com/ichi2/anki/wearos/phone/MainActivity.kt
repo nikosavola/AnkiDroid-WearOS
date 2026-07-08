@@ -266,6 +266,10 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     )
 
     checkPermissions()
+
+    // Schedule (or cancel) the recurring background sync per the saved preference. WorkManager
+    // keeps an already-running schedule (KEEP), so this is safe to call on every launch.
+    AutoSync.applyFromSettings(this)
   }
 
   override fun onDestroy() {
@@ -484,6 +488,14 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       }
     content.addView(readOnlySwitch)
 
+    val autoSyncSwitch =
+      com.google.android.material.materialswitch.MaterialSwitch(this).apply {
+        text = "Auto-sync decks in background"
+        isChecked = AutoSync.isEnabled(this@MainActivity)
+        setPadding(0, pad / 2, 0, 0)
+      }
+    content.addView(autoSyncSwitch)
+
     val capLabel =
       com.google.android.material.textview.MaterialTextView(this).apply {
         textSize = 16f
@@ -517,6 +529,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
           .putBoolean(KEY_READ_ONLY, readOnlySwitch.isChecked)
           .putInt(KEY_PREPUSH_CAP, capSlider.value.toInt())
           .apply()
+        // Persists the flag and (un)schedules the WorkManager job.
+        AutoSync.setEnabled(this, autoSyncSwitch.isChecked)
       }
       .setNegativeButton("Cancel", null)
       .show()
@@ -557,6 +571,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         "▸ Settings",
         "   Force mock mode: ${if (forceMock()) "on" else "off"}",
         "   Read-only mode: ${if (readOnly()) "on" else "off"}",
+        "   Auto-sync (background): ${if (AutoSync.isEnabled(this)) "on" else "off"}",
         "   Pre-push cap: ${prePushCap()} decks",
         "   Notifications: ${if (notifGranted) "granted" else "denied"}",
         "",

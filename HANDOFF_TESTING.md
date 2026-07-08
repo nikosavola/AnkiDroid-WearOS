@@ -199,6 +199,40 @@ theme primary color, the title should be a large on-surface headline, and the ge
 properly-sized (48dp) tinted icon button top-aligned in the corner. Confirm the title doesn't clip
 on a narrow device (it's `maxLines = 2`, ellipsized).
 
+## 1.13 Automatic background deck sync (WorkManager)  ⚠️ unverified, new dependency
+
+Adds recurring background sync so the watch gets fresh due cards without the user pressing "Sync".
+- **New dep:** `androidx.work:work-runtime-ktx:2.9.1` (catalog `androidx-work-runtime`, added to
+  `phone/build.gradle.kts`). WorkManager self-initializes via its `androidx.startup` provider — no
+  Application class or manifest entry needed, and it re-schedules periodic work across reboots (so
+  no BootReceiver).
+- **Refactor:** the push logic moved out of `SyncService.runSync()` into a shared `DeckSync.run()`
+  (`DeckSync.kt`), used by both the foreground `SyncService` (user "Sync now", with notification)
+  and the new background worker. `SyncService` is now a thin progress wrapper. `MAX_SCAN_DECKS` and
+  the batch/deck constants live in `DeckSync`; `syncProgressPercent` stays on `SyncService`
+  (referenced by both, still unit-tested).
+- **New files:** `AutoSyncWorker` (CoroutineWorker running `DeckSync.run`) and `AutoSync` (scheduling
+  — unique periodic work, 6h interval, `requiresBatteryNotLow`, linear backoff, `KEEP` policy).
+- **Safety:** `DeckSync.run` returns `null` (no-op) when AnkiDroid isn't reachable and mock mode
+  isn't forced, so background runs never silently push mock decks. `DataClient.putDataItem` is
+  offline-first, so a sync while the watch is disconnected still queues and delivers later.
+- **UI:** a "Auto-sync decks in background" switch in the phone Settings dialog (default ON) toggles
+  `AutoSync.setEnabled`; `MainActivity.onCreate` calls `AutoSync.applyFromSettings`. Shown in the
+  debug dialog's Settings section.
+- **How to test:**
+  - Toggle the switch → `adb shell dumpsys jobscheduler | grep auto_deck_sync` (or WorkManager's
+    `getWorkInfosForUniqueWork`) shows the job enqueued/cancelled.
+  - Force a run without waiting 6h:
+    `adb shell cmd jobscheduler run -f com.ichi2.anki <jobId>`, or temporarily drop the interval,
+    or trigger via a one-time `OneTimeWorkRequest` in a debug build. Confirm the watch receives the
+    decks/batches.
+  - With AnkiDroid uninstalled/permission revoked and mock off, the worker must be a no-op (check
+    Logcat "nothing to sync"), NOT push mock decks.
+  - Verify battery-not-low constraint by running under battery saver.
+  - **Unverified risk:** WorkManager version vs AGP 8.13.2/compileSdk 35 (should be fine; bump to
+    2.10.x if needed), and that offscreen `WebView` bitmap rendering works from the worker context
+    (it goes through `render()`'s `Dispatchers.Main` switch, same as the foreground path).
+
 ---
 
 # Part 2 — Remaining backlog (not implemented here)
@@ -369,6 +403,7 @@ treatment.
 | Watch fonts (size + family) | ⚠️ implemented, unbuilt |
 | Rich formatting / font sizing | ⚠️ global scale done; per-span needs bitmap path |
 | Phone read-only test mode | ⚠️ implemented, unbuilt |
+| Automatic background deck sync | ⚠️ implemented (WorkManager, new dep), unbuilt |
 | Grow Rust test coverage | ✅ done (verified) |
 | Move pre-push cap into setting | partial pre-push already a setting; scan cap remains |
 | Phone dark/light follow system | partial theme already DayNight — just verify |
