@@ -54,9 +54,8 @@ pub enum CoreError {
 
 #[uniffi::export]
 pub fn init_database(db_path: String) -> Result<(), CoreError> {
-    let conn = Connection::open(&db_path).map_err(|e| CoreError::DatabaseError {
-        error_message: e.to_string(),
-    })?;
+    let conn = Connection::open(&db_path)
+        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS buffered_answers (
@@ -69,12 +68,12 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
         )",
         [],
     )
-    .map_err(|e| CoreError::DatabaseError {
-        error_message: e.to_string(),
-    })?;
+    .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
 
-    let mut db = DB_CONN.lock().unwrap();
-    *db = Some(db_path);
+    {
+        let mut db = DB_CONN.lock().unwrap();
+        *db = Some(db_path);
+    }
 
     Ok(())
 }
@@ -82,9 +81,8 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
 fn get_db_connection() -> Result<Connection, CoreError> {
     let db = DB_CONN.lock().unwrap();
     if let Some(path) = &*db {
-        Connection::open(path).map_err(|e| CoreError::DatabaseError {
-            error_message: e.to_string(),
-        })
+        Connection::open(path)
+            .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })
     } else {
         Err(CoreError::DatabaseError {
             error_message: "Database has not been initialized. Call init_database first."
@@ -99,30 +97,26 @@ fn get_db_connection() -> Result<Connection, CoreError> {
 
 #[uniffi::export]
 pub fn serialize_due_batch(batch: WearosDueBatch) -> Result<Vec<u8>, CoreError> {
-    serde_json::to_vec(&batch).map_err(|e| CoreError::SerializationError {
-        error_message: e.to_string(),
-    })
+    serde_json::to_vec(&batch)
+        .map_err(|e| CoreError::SerializationError { error_message: e.to_string() })
 }
 
 #[uniffi::export]
 pub fn deserialize_due_batch(bytes: Vec<u8>) -> Result<WearosDueBatch, CoreError> {
-    serde_json::from_slice(&bytes).map_err(|e| CoreError::SerializationError {
-        error_message: e.to_string(),
-    })
+    serde_json::from_slice(&bytes)
+        .map_err(|e| CoreError::SerializationError { error_message: e.to_string() })
 }
 
 #[uniffi::export]
 pub fn serialize_answers(answers: Vec<WearosAnswer>) -> Result<Vec<u8>, CoreError> {
-    serde_json::to_vec(&answers).map_err(|e| CoreError::SerializationError {
-        error_message: e.to_string(),
-    })
+    serde_json::to_vec(&answers)
+        .map_err(|e| CoreError::SerializationError { error_message: e.to_string() })
 }
 
 #[uniffi::export]
 pub fn deserialize_answers(bytes: Vec<u8>) -> Result<Vec<WearosAnswer>, CoreError> {
-    serde_json::from_slice(&bytes).map_err(|e| CoreError::SerializationError {
-        error_message: e.to_string(),
-    })
+    serde_json::from_slice(&bytes)
+        .map_err(|e| CoreError::SerializationError { error_message: e.to_string() })
 }
 
 // ==========================================
@@ -132,10 +126,7 @@ pub fn deserialize_answers(bytes: Vec<u8>) -> Result<Vec<WearosAnswer>, CoreErro
 #[uniffi::export]
 pub fn save_answer(answer: WearosAnswer) -> Result<(), CoreError> {
     let conn = get_db_connection()?;
-    let now = SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .unwrap()
-        .as_secs() as i64;
+    let now = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_secs() as i64;
 
     conn.execute(
         "INSERT OR REPLACE INTO buffered_answers (id, note_id, card_ord, ease, time_taken_ms, created_at)
@@ -171,15 +162,11 @@ pub fn get_buffered_answers() -> Result<Vec<WearosAnswer>, CoreError> {
                 time_taken_ms: row.get(4)?,
             })
         })
-        .map_err(|e| CoreError::DatabaseError {
-            error_message: e.to_string(),
-        })?;
+        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
 
     let mut answers = Vec::new();
     for row in rows {
-        answers.push(row.map_err(|e| CoreError::DatabaseError {
-            error_message: e.to_string(),
-        })?);
+        answers.push(row.map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?);
     }
 
     Ok(answers)
@@ -188,20 +175,16 @@ pub fn get_buffered_answers() -> Result<Vec<WearosAnswer>, CoreError> {
 #[uniffi::export]
 pub fn remove_buffered_answers(ids: Vec<String>) -> Result<(), CoreError> {
     let mut conn = get_db_connection()?;
-    let tx = conn.transaction().map_err(|e| CoreError::DatabaseError {
-        error_message: e.to_string(),
-    })?;
+    let tx = conn
+        .transaction()
+        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
 
     for id in ids {
         tx.execute("DELETE FROM buffered_answers WHERE id = ?1", params![id])
-            .map_err(|e| CoreError::DatabaseError {
-                error_message: e.to_string(),
-            })?;
+            .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
     }
 
-    tx.commit().map_err(|e| CoreError::DatabaseError {
-        error_message: e.to_string(),
-    })?;
+    tx.commit().map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
     Ok(())
 }
 
@@ -220,11 +203,7 @@ pub struct ReviewSession {
 impl ReviewSession {
     #[uniffi::constructor]
     pub fn new(batch: WearosDueBatch) -> Self {
-        Self {
-            batch,
-            current_index: Mutex::new(0),
-            is_revealed: Mutex::new(false),
-        }
+        Self { batch, current_index: Mutex::new(0), is_revealed: Mutex::new(false) }
     }
 
     pub fn get_deck_name(&self) -> String {
@@ -245,11 +224,7 @@ impl ReviewSession {
 
     pub fn get_current_card(&self) -> Option<WearosCard> {
         let index = *self.current_index.lock().unwrap();
-        if index < self.batch.cards.len() {
-            Some(self.batch.cards[index].clone())
-        } else {
-            None
-        }
+        if index < self.batch.cards.len() { Some(self.batch.cards[index].clone()) } else { None }
     }
 
     pub fn reveal_answer(&self) {
@@ -262,41 +237,39 @@ impl ReviewSession {
         ease: i32,
         time_taken_ms: i64,
     ) -> Result<Option<WearosAnswer>, CoreError> {
-        let mut index = self.current_index.lock().unwrap();
-        let mut revealed = self.is_revealed.lock().unwrap();
+        let (card, id) = {
+            let mut index = self.current_index.lock().unwrap();
 
-        if *index >= self.batch.cards.len() {
-            return Err(CoreError::StateError {
-                error_message: "Session is already finished.".to_string(),
-            });
-        }
+            if *index >= self.batch.cards.len() {
+                return Err(CoreError::StateError {
+                    error_message: "Session is already finished.".to_string(),
+                });
+            }
 
-        let card = &self.batch.cards[*index];
-        let id = format!(
-            "{}_{}_{}",
-            card.id,
-            card.ord,
-            SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        );
-
-        let answer = WearosAnswer {
-            id,
-            note_id: card.note_id,
-            ord: card.ord,
-            ease,
-            time_taken_ms,
+            let card = &self.batch.cards[*index];
+            let id = format!(
+                "{}_{}_{}",
+                card.id,
+                card.ord,
+                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis()
+            );
+            let card_clone = card.clone();
+            *index += 1;
+            drop(index);
+            (card_clone, id)
         };
+
+        let answer = WearosAnswer { id, note_id: card.note_id, ord: card.ord, ease, time_taken_ms };
 
         // Attempt to buffer locally if database is configured
         if get_db_connection().is_ok() {
             let _ = save_answer(answer.clone());
         }
 
-        *index += 1;
-        *revealed = false;
+        {
+            let mut revealed = self.is_revealed.lock().unwrap();
+            *revealed = false;
+        }
 
         Ok(Some(answer))
     }
@@ -424,12 +397,11 @@ fn strip_delimited(s: &str, open: &str, close: &str) -> String {
     let mut rest = s;
     while let Some(start) = rest.find(open) {
         out.push_str(&rest[..start]);
-        match rest[start + open.len()..].find(close) {
-            Some(end) => rest = &rest[start + open.len() + end + close.len()..],
-            None => {
-                rest = "";
-                break;
-            }
+        if let Some(end) = rest[start + open.len()..].find(close) {
+            rest = &rest[start + open.len() + end + close.len()..];
+        } else {
+            rest = "";
+            break;
         }
     }
     out.push_str(rest);
@@ -483,9 +455,10 @@ mod tests {
 
     #[test]
     fn test_html_for_display_keeps_formatting() {
-        let html = "<div style='font-size:25px'><b><ruby><rb>答</rb><rt>こた</rt></ruby>え</b></div>\
+        let html =
+            "<div style='font-size:25px'><b><ruby><rb>答</rb><rt>こた</rt></ruby>え</b></div>\
                     <!-- {{Pitch Accent}} -->[sound:x.mp3]<img src=\"a.webp\">"
-            .to_string();
+                .to_string();
         let out = html_for_display(html);
         assert!(out.contains("<b>"), "formatting dropped: {out}");
         assert!(out.contains("答(こた)え"), "ruby not normalized: {out}");
@@ -497,9 +470,10 @@ mod tests {
     #[test]
     fn test_clean_html_strips_comments_and_sound() {
         // HTML comments (even when they contain tags/fields) and [sound:] refs must not leak.
-        let html = "答える\n<!-- {{#Pitch Accent}}<div>{{Pitch Accent}}</div>{{/Pitch Accent}} -->\n\
+        let html =
+            "答える\n<!-- {{#Pitch Accent}}<div>{{Pitch Accent}}</div>{{/Pitch Accent}} -->\n\
                     <div>to answer</div>\n[sound:answer_コタエ.mp3]\n<img src=\"x.webp\">"
-            .to_string();
+                .to_string();
         let clean = clean_html(html);
         assert!(!clean.contains("Pitch Accent"), "comment leaked: {clean}");
         assert!(!clean.contains("sound:"), "sound tag leaked: {clean}");
@@ -523,13 +497,10 @@ mod tests {
                 "7d".to_string(),
             ],
         };
-        let batch = WearosDueBatch {
-            deck_id: 123,
-            deck_name: "Test Deck".to_string(),
-            cards: vec![card],
-        };
+        let batch =
+            WearosDueBatch { deck_id: 123, deck_name: "Test Deck".to_string(), cards: vec![card] };
 
-        let bytes = serialize_due_batch(batch.clone()).unwrap();
+        let bytes = serialize_due_batch(batch).unwrap();
         let deserialized = deserialize_due_batch(bytes).unwrap();
 
         assert_eq!(deserialized.deck_id, 123);
@@ -604,10 +575,7 @@ mod tests {
     #[test]
     fn test_local_sqlite_buffering() {
         let temp_dir = std::env::temp_dir();
-        let db_path = temp_dir
-            .join("test_wearos_buffer.db")
-            .to_string_lossy()
-            .to_string();
+        let db_path = temp_dir.join("test_wearos_buffer.db").to_string_lossy().to_string();
 
         // Clean start
         let _ = std::fs::remove_file(&db_path);
@@ -629,8 +597,8 @@ mod tests {
             time_taken_ms: 12000,
         };
 
-        save_answer(ans1.clone()).unwrap();
-        save_answer(ans2.clone()).unwrap();
+        save_answer(ans1).unwrap();
+        save_answer(ans2).unwrap();
 
         let buffered = get_buffered_answers().unwrap();
         assert_eq!(buffered.len(), 2);

@@ -32,8 +32,8 @@ repos:
         priority: 20
 
       - id: kotlin-lint
-        name: Kotlin Codebases Linter (ktfmtCheck & ktlint)
-        entry: ./gradlew :phone:ktfmtCheck :wear:ktfmtCheck :phone:ktlintMainSourceSetCheck :wear:ktlintMainSourceSetCheck --no-daemon
+        name: Kotlin Codebases Linter (ktfmt, ktlint & detekt)
+        entry: ./gradlew :phone:ktfmtCheck :wear:ktfmtCheck :phone:ktlintMainSourceSetCheck :wear:ktlintMainSourceSetCheck :phone:detekt :wear:detekt --no-daemon
         language: system
         files: \.kt$
         pass_filenames: false
