@@ -767,24 +767,15 @@ class MainActivity : ComponentActivity() {
         androidx.wear.compose.foundation.CurvedTextStyle(labelStyle.copy(fontSize = 11.sp))
       }
 
-    // Anki answers usually embed the question followed by <hr id=answer>; show only the part after
-    // it so the answer view doesn't duplicate the front. Falls back to the whole back if no marker.
-    val answerHtml =
-      remember(card.back) {
-        val marker = card.back.indexOf("id=answer")
-        if (marker >= 0) {
-          val end = card.back.indexOf('>', marker)
-          if (end >= 0) card.back.substring(end + 1) else card.back
-        } else {
-          card.back
-        }
-      }
+    // Anki answers embed the question followed by <hr id=answer>; the Rust core returns just the
+    // part after it so the answer view doesn't duplicate the front (whole back if no marker).
+    val answerBack = remember(card.back) { answerHtml(card.back) }
 
     // Rich HTML for display; plain text for TTS.
     val displayFront = remember(card.front) { htmlForDisplay(card.front) }
-    val displayBack = remember(answerHtml) { htmlForDisplay(answerHtml) }
+    val displayBack = remember(answerBack) { htmlForDisplay(answerBack) }
     val cleanFront = remember(card.front) { cleanHtml(card.front) }
-    val cleanBack = remember(answerHtml) { cleanHtml(answerHtml) }
+    val cleanBack = remember(answerBack) { cleanHtml(answerBack) }
 
     // TTS voice effects triggered dynamically via state change
     LaunchedEffect(card.id, card.ord) { speak(cleanFront) }

@@ -383,6 +383,19 @@ pub fn html_for_display(raw_html: String) -> String {
     normalize_ruby(&without_sound).trim().to_string()
 }
 
+/// Extract just the answer portion of a card's back. Anki emits question + `<hr id=answer>` + the
+/// answer, so return everything after that marker tag (or the whole string if it isn't present),
+/// which the watch then feeds through [html_for_display] / [clean_html].
+#[uniffi::export]
+pub fn answer_html(back: String) -> String {
+    if let Some(marker) = back.find("id=answer") {
+        if let Some(rel_end) = back[marker..].find('>') {
+            return back[marker + rel_end + 1..].to_string();
+        }
+    }
+    back
+}
+
 /// Drop ruby wrapper tags and <img>, render <rt> as parenthesized readings, and discard <rp>
 /// fallbacks, while passing every other tag through unchanged.
 fn normalize_ruby(s: &str) -> String {
@@ -685,6 +698,19 @@ mod tests {
         assert_eq!(names, vec!["5. N2", "6. N1"]);
         assert!(level.children.iter().all(|c| !c.is_folder));
         assert_eq!(level.children[0].id, 4);
+    }
+
+    #[test]
+    fn test_answer_html() {
+        let back = "Question here<hr id=answer>The answer".to_string();
+        assert_eq!(answer_html(back), "The answer");
+
+        // Marker with attributes/spacing still splits at its closing '>'.
+        let back2 = "Q<hr id=answer class=\"x\">A".to_string();
+        assert_eq!(answer_html(back2), "A");
+
+        // No marker: return the whole string unchanged.
+        assert_eq!(answer_html("just a back".to_string()), "just a back");
     }
 
     #[test]
