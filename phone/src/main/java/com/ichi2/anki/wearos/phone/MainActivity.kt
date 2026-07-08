@@ -109,29 +109,66 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       insets
     }
 
-    // Top bar: title on the left, a Material gear on the right that opens Settings.
+    // Top bar (Material 3 large-top-app-bar feel): a primary-colored overline above a headline
+    // title on the left, and a Material icon button on the right that opens Settings. The gear is
+    // top-aligned so it sits in the corner like a real top-app-bar action when the title wraps.
+    val density = resources.displayMetrics.density
     val topBar =
       LinearLayout(this).apply {
         orientation = LinearLayout.HORIZONTAL
-        gravity = android.view.Gravity.CENTER_VERTICAL
-        setPadding(0, 0, 0, 32)
+        gravity = android.view.Gravity.TOP
+        setPadding(0, 0, 0, (24 * density).toInt())
       }
-    val titleText =
-      com.google.android.material.textview.MaterialTextView(this).apply {
-        text = "AnkiDroid WearOS Companion"
-        setTextAppearance(
-          com.google.android.material.R.style.TextAppearance_Material3_HeadlineSmall
-        )
+
+    val titleColumn =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
         layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
       }
-    topBar.addView(titleText)
-    val settingsButton =
-      android.widget.ImageButton(this).apply {
-        setImageResource(R.drawable.ic_settings)
-        contentDescription = "Settings"
-        background = resolveAttrDrawable(android.R.attr.selectableItemBackgroundBorderless)
-        setOnClickListener { showSettingsDialog() }
+    val overline =
+      com.google.android.material.textview.MaterialTextView(this).apply {
+        text = "ANKIDROID"
+        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
+        setTextColor(
+          com.google.android.material.color.MaterialColors.getColor(
+            this,
+            com.google.android.material.R.attr.colorPrimary,
+          )
+        )
+        // Wide tracking + medium weight give the caps overline the polished M3 label look.
+        letterSpacing = 0.1f
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
       }
+    titleColumn.addView(overline)
+    val titleText =
+      com.google.android.material.textview.MaterialTextView(this).apply {
+        text = "WearOS Companion"
+        setTextAppearance(
+          com.google.android.material.R.style.TextAppearance_Material3_HeadlineMedium
+        )
+        setTextColor(
+          com.google.android.material.color.MaterialColors.getColor(
+            this,
+            com.google.android.material.R.attr.colorOnSurface,
+          )
+        )
+        setPadding(0, (2 * density).toInt(), 0, 0)
+        maxLines = 2
+        ellipsize = android.text.TextUtils.TruncateAt.END
+      }
+    titleColumn.addView(titleText)
+    topBar.addView(titleColumn)
+
+    val settingsButton =
+      com.google.android.material.button
+        .MaterialButton(this, null, com.google.android.material.R.attr.materialIconButtonStyle)
+        .apply {
+          icon = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_settings)
+          iconGravity = com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START
+          iconPadding = 0
+          contentDescription = "Settings"
+          setOnClickListener { showSettingsDialog() }
+        }
     topBar.addView(settingsButton)
     rootLayout.addView(topBar)
 

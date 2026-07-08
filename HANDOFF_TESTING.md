@@ -188,6 +188,17 @@ the real blocker → do 2.6.
   (ramp, ≤95 clamp, zero-cap guard) — no device/native needed.
 - Kotlin (wear): `CoreFfiTest.serializeDueBatchProto_roundTrips` exercises the new proto bindings.
 
+## 1.12 Phone header restyle (Material 3)  ⚠️ unverified
+
+The phone top bar was a single `HeadlineSmall` "AnkiDroid WearOS Companion" line. It's now a
+Material 3 large-top-app-bar-style header: a primary-colored, wide-tracked caps overline
+("ANKIDROID") above a `HeadlineMedium` "WearOS Companion" title (`colorOnSurface`), with the gear
+converted from a raw `ImageButton` to a Material `materialIconButtonStyle` button (matching the deck
+expanders). **How to test:** launch the phone app in light and dark; the overline should be the
+theme primary color, the title should be a large on-surface headline, and the gear should be a
+properly-sized (48dp) tinted icon button top-aligned in the corner. Confirm the title doesn't clip
+on a narrow device (it's `maxLines = 2`, ellipsized).
+
 ---
 
 # Part 2 — Remaining backlog (not implemented here)
