@@ -1,9 +1,7 @@
 # Custom Detekt configuration overriding overly pedantic rules for Android and Jetpack Compose.
-
 build:
   maxIssues: 0
   excludeCorrectable: true
-
 complexity:
   active: true
   LongMethod:
@@ -19,13 +17,11 @@ complexity:
     active: false
   TooManyFunctions:
     active: false
-
 naming:
   active: true
   FunctionNaming:
     active: true
     functionPattern: '[a-zA-Z][a-zA-Z0-9]*'
-
 style:
   active: true
   MagicNumber:
@@ -36,7 +32,6 @@ style:
     active: false
   WildcardImport:
     active: false
-
 exceptions:
   active: true
   TooGenericExceptionCaught:
