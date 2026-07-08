@@ -91,7 +91,7 @@ class WearSyncService : WearableListenerService() {
             val putDataReq =
               PutDataMapRequest.create(PATH_DUE_BATCH)
                 .apply {
-                  dataMap.putByteArray(KEY_BATCH_BYTES, bytes)
+                  dataMap.putByteArray(KEY_BATCH_BYTES, gzip(bytes))
                   setUrgent()
                 }
                 .asPutDataRequest()
@@ -151,7 +151,7 @@ class WearSyncService : WearableListenerService() {
             val putDataReq =
               PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId")
                 .apply {
-                  dataMap.putByteArray(KEY_BATCH_BYTES, bytes)
+                  dataMap.putByteArray(KEY_BATCH_BYTES, gzip(bytes))
                   dataMap.putLong("synced_at", System.currentTimeMillis())
                   setUrgent()
                 }

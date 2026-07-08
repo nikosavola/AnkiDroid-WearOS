@@ -65,7 +65,7 @@ class WearSyncService : WearableListenerService() {
           val bytes = dataMapItem.dataMap.getByteArray(KEY_BATCH_BYTES)
 
           if (bytes != null) {
-            scope.launch { saveBatchCache(bytes) }
+            scope.launch { saveBatchCache(gunzip(bytes)) }
           }
         } else if (path == PATH_DECKS) {
           val dataMapItem = DataMapItem.fromDataItem(event.dataItem)

@@ -272,7 +272,7 @@ class MainActivity : Activity() {
           val putDataReq =
             PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId")
               .apply {
-                dataMap.putByteArray(KEY_BATCH_BYTES, bytes)
+                dataMap.putByteArray(KEY_BATCH_BYTES, gzip(bytes))
                 // Vary the item so the watch always re-receives it on a manual sync.
                 dataMap.putLong("synced_at", System.currentTimeMillis())
                 setUrgent()

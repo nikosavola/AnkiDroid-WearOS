@@ -16,11 +16,12 @@ class AnkiDroidBridge(private val context: Context) {
     private const val AUTHORITY = "com.ichi2.anki.flashcards"
     private val SCHEDULE_URI: Uri = Uri.parse("content://$AUTHORITY/schedule")
 
-    // Schedule columns from PLANNING.md
-    private const val COL_NOTE_ID = "NOTE_ID"
-    private const val COL_CARD_ORD = "CARD_ORD"
-    private const val COL_BUTTON_COUNT = "BUTTON_COUNT"
-    private const val COL_NEXT_REVIEW_TIMES = "NEXT_REVIEW_TIMES"
+    // Schedule/Card columns (FlashCardsContract). getColumnIndex is case-insensitive, but the
+    // ordinal column is literally "ord" (not "card_ord"), so it must match exactly.
+    private const val COL_NOTE_ID = "note_id"
+    private const val COL_CARD_ORD = "ord"
+    private const val COL_BUTTON_COUNT = "button_count"
+    private const val COL_NEXT_REVIEW_TIMES = "next_review_times"
 
     // ReviewInfo write-back columns (FlashCardsContract). Answering a card is an update on
     // SCHEDULE_URI with these keys in ContentValues and a null selection.
