@@ -16,6 +16,11 @@ class AnkiDroidBridge(private val context: Context) {
     private const val AUTHORITY = "com.ichi2.anki.flashcards"
     private val SCHEDULE_URI: Uri = Uri.parse("content://$AUTHORITY/schedule")
 
+    fun stripBase64Images(html: String): String {
+      val regex = Regex("data:image/[^;]+;base64,[a-zA-Z0-9+/=\\s\\r\\n]+")
+      return html.replace(regex, "data:image/placeholder")
+    }
+
     // Schedule/Card columns (FlashCardsContract). getColumnIndex is case-insensitive, but the
     // ordinal column is literally "ord" (not "card_ord"), so it must match exactly.
     private const val COL_NOTE_ID = "note_id"

@@ -2,16 +2,19 @@ package com.ichi2.anki.wearos.wear
 
 import android.content.Intent
 import android.util.Log
+import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
+import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import uniffi.wearos_core.deserializeDueBatch
 import uniffi.wearos_core.initDatabase
 import uniffi.wearos_core.removeBufferedAnswers
@@ -20,6 +23,9 @@ class WearSyncService : WearableListenerService() {
   companion object {
     private const val TAG = "WatchWearSyncService"
     private const val PATH_DUE_BATCH = "/due_batch"
+    // Batch arrives as an Asset now (see phone side); the old byte-array key is still read as a
+    // fallback for items a pre-upgrade phone may have left on the data layer.
+    private const val KEY_BATCH_ASSET = "batch_asset"
     private const val KEY_BATCH_BYTES = "batch_bytes"
     private const val PATH_CLEAR_ANSWERS = "/clear_answers"
     private const val PATH_DECKS = "/decks"
@@ -61,11 +67,18 @@ class WearSyncService : WearableListenerService() {
         Log.d(TAG, "Data changed on path: $path")
 
         if (path != null && path.startsWith(PATH_DUE_BATCH)) {
-          val dataMapItem = DataMapItem.fromDataItem(event.dataItem)
-          val bytes = dataMapItem.dataMap.getByteArray(KEY_BATCH_BYTES)
-
-          if (bytes != null) {
-            scope.launch { saveBatchCache(gunzip(bytes)) }
+          val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
+          val asset = dataMap.getAsset(KEY_BATCH_ASSET)
+          if (asset != null) {
+            scope.launch {
+              val gz = readAssetBytes(asset)
+              if (gz != null) saveBatchCache(gunzip(gz))
+            }
+          } else {
+            val bytes = dataMap.getByteArray(KEY_BATCH_BYTES)
+            if (bytes != null) {
+              scope.launch { saveBatchCache(gunzip(bytes)) }
+            }
           }
         } else if (path == PATH_DECKS) {
           val dataMapItem = DataMapItem.fromDataItem(event.dataItem)
@@ -118,6 +131,17 @@ class WearSyncService : WearableListenerService() {
           }
         }
       }
+    }
+  }
+
+  /** Pull an Asset's bytes over the data-layer side channel. Returns null on failure. */
+  private suspend fun readAssetBytes(asset: Asset): ByteArray? {
+    return try {
+      val fd = Wearable.getDataClient(this).getFdForAsset(asset).await()
+      fd.inputStream.use { it.readBytes() }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to read batch asset: ${e.message}", e)
+      null
     }
   }
 

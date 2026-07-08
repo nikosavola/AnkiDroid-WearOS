@@ -2,6 +2,7 @@ package com.ichi2.anki.wearos.phone
 
 import android.content.Context
 import android.util.Log
+import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -29,7 +30,10 @@ class WearSyncService : WearableListenerService() {
     private const val PATH_DECKS = "/decks"
     private const val KEY_DECKS_BYTES = "decks_bytes"
     private const val PATH_DUE_BATCH = "/due_batch"
-    private const val KEY_BATCH_BYTES = "batch_bytes"
+    // Batch is sent as an Asset (streamed over a side channel) rather than a DataMap byte array:
+    // a putByteArray counts against the ~100KB DataItem limit and dense decks overflow it
+    // (DATA_ITEM_TOO_LARGE). Assets have no such cap. Still gzipped to cut BT transfer time.
+    private const val KEY_BATCH_ASSET = "batch_asset"
   }
 
   private val job = SupervisorJob()
@@ -85,14 +89,24 @@ class WearSyncService : WearableListenerService() {
             val batch = bridge.fetchDueBatch(deckId = deckId, limit = 20)
             Log.d(TAG, "Fetched ${batch.cards.size} due cards dynamically.")
 
-            // 2. Serialize via Rust
-            val bytes = serializeDueBatch(batch)
+            // 2. Serialize via Rust using lightweight metadata
+            val cleanedCards =
+              batch.cards.map { card ->
+                card.copy(
+                  front = AnkiDroidBridge.stripBase64Images(card.front),
+                  back = AnkiDroidBridge.stripBase64Images(card.back),
+                )
+              }
+            val cleanedBatch = batch.copy(cards = cleanedCards)
+            val bytes = serializeDueBatch(cleanedBatch)
 
             // 3. Broadcast back to Watch
             val dataClient = Wearable.getDataClient(this@WearSyncService)
             val putDataMapReq =
               PutDataMapRequest.create(PATH_DUE_BATCH).apply {
-                dataMap.putByteArray(KEY_BATCH_BYTES, gzip(bytes))
+                dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(gzip(bytes)))
+                // Vary the item so an identical re-request still propagates to the watch.
+                dataMap.putLong("synced_at", System.currentTimeMillis())
                 setUrgent()
               }
             val putDataReq = putDataMapReq.asPutDataRequest()
@@ -148,12 +162,20 @@ class WearSyncService : WearableListenerService() {
           try {
             val batch = bridge.fetchNewCards(deckId = deckId, limit = count)
             Log.d(TAG, "Fetched ${batch.cards.size} new cards for '${batch.deckName}'.")
-            val bytes = serializeDueBatch(batch)
+            val cleanedCards =
+              batch.cards.map { card ->
+                card.copy(
+                  front = AnkiDroidBridge.stripBase64Images(card.front),
+                  back = AnkiDroidBridge.stripBase64Images(card.back),
+                )
+              }
+            val cleanedBatch = batch.copy(cards = cleanedCards)
+            val bytes = serializeDueBatch(cleanedBatch)
 
             val dataClient = Wearable.getDataClient(this@WearSyncService)
             val putDataMapReq =
               PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId").apply {
-                dataMap.putByteArray(KEY_BATCH_BYTES, gzip(bytes))
+                dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(gzip(bytes)))
                 dataMap.putLong("synced_at", System.currentTimeMillis())
                 setUrgent()
               }
