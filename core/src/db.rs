@@ -5,7 +5,10 @@ use rusqlite::{Connection, params};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
-static DB_CONN: Mutex<Option<String>> = Mutex::new(None);
+// pub(crate) purely so the crate-root tests can reset it to simulate an uninitialized process; it
+// is never part of the FFI surface.
+#[allow(clippy::redundant_pub_crate)]
+pub(crate) static DB_CONN: Mutex<Option<String>> = Mutex::new(None);
 
 #[uniffi::export]
 pub fn init_database(db_path: String) -> Result<(), CoreError> {
@@ -96,6 +99,18 @@ pub fn get_buffered_answers() -> Result<Vec<WearosAnswer>, CoreError> {
     }
 
     Ok(answers)
+}
+
+/// Mean answer time (ms) over the currently-buffered answers, or `None` when the buffer is empty.
+/// Lets the Tile replace its flat per-card estimate with the user's real observed pace.
+#[uniffi::export]
+pub fn average_answer_time_ms() -> Result<Option<i64>, CoreError> {
+    let conn = get_db_connection()?;
+    // AVG over no rows is SQL NULL, which maps cleanly to None via Option<f64>.
+    let avg: Option<f64> = conn
+        .query_row("SELECT AVG(time_taken_ms) FROM buffered_answers", [], |row| row.get(0))
+        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    Ok(avg.map(|a| a.round() as i64))
 }
 
 #[uniffi::export]
