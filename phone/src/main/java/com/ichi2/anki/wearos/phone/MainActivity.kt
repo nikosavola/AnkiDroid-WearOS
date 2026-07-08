@@ -1,17 +1,14 @@
 package com.ichi2.anki.wearos.phone
 
-import android.app.Activity
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Bundle
 import android.util.Log
 import android.view.View
 import android.widget.Button
-import android.widget.CheckBox
 import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.ScrollView
-import android.widget.Switch
 import android.widget.TextView
 import android.widget.Toast
 import com.google.android.gms.wearable.PutDataMapRequest
@@ -24,7 +21,7 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import uniffi.wearos_core.serializeDueBatch
 
-class MainActivity : Activity() {
+class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   companion object {
     private const val TAG = "PhoneMainActivity"
     private const val PERMISSION_ANKIDROID = "com.ichi2.anki.permission.READ_WRITE_DATABASE"
@@ -42,7 +39,7 @@ class MainActivity : Activity() {
   private lateinit var statusText: TextView
   private lateinit var syncButton: Button
   private lateinit var progressBar: ProgressBar
-  private lateinit var mockModeSwitch: Switch
+  private lateinit var mockModeSwitch: com.google.android.material.switchmaterial.SwitchMaterial
   private lateinit var deckListLayout: LinearLayout
   private var allDecks: List<Pair<Long, String>> = emptyList()
   private val scope = CoroutineScope(Dispatchers.Main)
@@ -59,7 +56,7 @@ class MainActivity : Activity() {
       }
 
     val titleText =
-      TextView(this).apply {
+      com.google.android.material.textview.MaterialTextView(this).apply {
         text = "AnkiDroid WearOS Companion"
         textSize = 24f
         setPadding(0, 0, 0, 32)
@@ -67,7 +64,7 @@ class MainActivity : Activity() {
     rootLayout.addView(titleText)
 
     statusText =
-      TextView(this).apply {
+      com.google.android.material.textview.MaterialTextView(this).apply {
         text = "Checking permissions..."
         textSize = 16f
         setPadding(0, 0, 0, 48)
@@ -76,7 +73,7 @@ class MainActivity : Activity() {
 
     // Switch to toggle Force Mock Mode for testing
     mockModeSwitch =
-      Switch(this).apply {
+      com.google.android.material.switchmaterial.SwitchMaterial(this).apply {
         text = "Force Mock Mode (Demo / Testing)"
         isChecked = !bridge.isAnkiDroidAvailable() // Default true if real app is missing
         setPadding(0, 0, 0, 48)
@@ -97,7 +94,7 @@ class MainActivity : Activity() {
 
     // Horizontal Progress Bar for sync visual feedback
     progressBar =
-      ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+      com.google.android.material.progressindicator.LinearProgressIndicator(this).apply {
         isIndeterminate = false
         max = 100
         progress = 0
@@ -107,7 +104,7 @@ class MainActivity : Activity() {
     rootLayout.addView(progressBar)
 
     syncButton =
-      Button(this).apply {
+      com.google.android.material.button.MaterialButton(this).apply {
         text = "Sync Due Cards to Watch"
         isEnabled = false
         setOnClickListener { triggerSyncToWatch() }
@@ -165,7 +162,7 @@ class MainActivity : Activity() {
   private fun renderDeckTree() {
     deckListLayout.removeAllViews()
     val title =
-      TextView(this).apply {
+      com.google.android.material.textview.MaterialTextView(this).apply {
         text = "Select Decks / Folders to Sync with Watch:"
         textSize = 16f
         setTypeface(null, android.graphics.Typeface.BOLD)
@@ -191,7 +188,7 @@ class MainActivity : Activity() {
       val deckIds = mutableListOf<Long>().also { collectDeckIds(node, it) }
       val allChecked = deckIds.isNotEmpty() && deckIds.all { prefs.getBoolean("deck_$it", true) }
       val folder =
-        CheckBox(this).apply {
+        com.google.android.material.checkbox.MaterialCheckBox(this).apply {
           text = "📁 ${node.name}"
           setTypeface(null, android.graphics.Typeface.BOLD)
           isChecked = allChecked
@@ -210,7 +207,7 @@ class MainActivity : Activity() {
     } else {
       val id = node.deckId ?: return
       val cb =
-        CheckBox(this).apply {
+        com.google.android.material.checkbox.MaterialCheckBox(this).apply {
           text = node.name
           isChecked = prefs.getBoolean("deck_$id", true)
           setPadding(indent, 8, 0, 8)
