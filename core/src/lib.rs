@@ -311,9 +311,12 @@ impl ReviewSession {
 
 #[uniffi::export]
 pub fn clean_html(raw_html: String) -> String {
-    // 1. Drop HTML comments (Anki templates hide fields like {{Pitch Accent}} in them) and
-    //    [sound:...] media refs before anything else, so their contents never leak as text.
-    let without_comments = strip_delimited(&raw_html, "<!--", "-->");
+    // 1. Drop <script>/<style> blocks, HTML comments (Anki templates hide fields like
+    //    {{Pitch Accent}} in them) and [sound:...] media refs before anything else, so none of
+    //    their raw source leaks as text (some note types embed a <script> for click behaviour).
+    let without_scripts = strip_tag_blocks(&raw_html, "script");
+    let without_styles = strip_tag_blocks(&without_scripts, "style");
+    let without_comments = strip_delimited(&without_styles, "<!--", "-->");
     let without_sound = strip_delimited(&without_comments, "[sound:", "]");
 
     // 2. Convert structural HTML blocks to newlines.
@@ -373,7 +376,9 @@ pub fn clean_html(raw_html: String) -> String {
 /// <ruby>base<rt>reading</rt></ruby> becomes base(reading).
 #[uniffi::export]
 pub fn html_for_display(raw_html: String) -> String {
-    let without_comments = strip_delimited(&raw_html, "<!--", "-->");
+    let without_scripts = strip_tag_blocks(&raw_html, "script");
+    let without_styles = strip_tag_blocks(&without_scripts, "style");
+    let without_comments = strip_delimited(&without_styles, "<!--", "-->");
     let without_sound = strip_delimited(&without_comments, "[sound:", "]");
     normalize_ruby(&without_sound).trim().to_string()
 }
@@ -417,6 +422,29 @@ fn normalize_ruby(s: &str) -> String {
             out.push(c);
         }
     }
+    out
+}
+
+/// Remove `<tag ...>...</tag>` blocks (inclusive, case-insensitive), e.g. `<script>`/`<style>`
+/// whose raw source must never render as card text. ASCII-lowercasing preserves byte offsets (only
+/// ASCII bytes change), so indices into `lower` map straight onto `s`.
+fn strip_tag_blocks(s: &str, tag: &str) -> String {
+    let lower = s.to_ascii_lowercase();
+    let open_lc = format!("<{}", tag.to_ascii_lowercase());
+    let close_lc = format!("</{}>", tag.to_ascii_lowercase());
+    let mut out = String::new();
+    let mut i = 0;
+    while let Some(rel) = lower[i..].find(&open_lc) {
+        let start = i + rel;
+        out.push_str(&s[i..start]);
+        if let Some(erel) = lower[start..].find(&close_lc) {
+            i = start + erel + close_lc.len();
+        } else {
+            i = s.len(); // unterminated block: drop the rest
+            break;
+        }
+    }
+    out.push_str(&s[i..]);
     out
 }
 
@@ -657,6 +685,25 @@ mod tests {
         assert_eq!(names, vec!["5. N2", "6. N1"]);
         assert!(level.children.iter().all(|c| !c.is_folder));
         assert_eq!(level.children[0].id, 4);
+    }
+
+    #[test]
+    fn test_strips_script_and_style() {
+        // A note type embeds a <script> for click behaviour and a <style> block; neither's source
+        // may leak as card text (this was showing "function ClickCard() {...}" on the watch).
+        let html = "想像<script>function ClickCard() { const x = document.getElementById(\"click\"); \
+                    }</script><style>.card { color: red; }</style><b>answer</b>"
+            .to_string();
+        let display = html_for_display(html.clone());
+        assert!(!display.contains("ClickCard"), "script leaked: {display}");
+        assert!(!display.contains("color: red"), "style leaked: {display}");
+        assert!(display.contains("<b>answer</b>"), "formatting dropped: {display}");
+        assert!(display.contains("想像"));
+
+        let clean = clean_html(html);
+        assert!(!clean.contains("ClickCard"), "script leaked into clean: {clean}");
+        assert!(!clean.contains("color: red"), "style leaked into clean: {clean}");
+        assert!(clean.contains("想像") && clean.contains("answer"));
     }
 
     #[test]
