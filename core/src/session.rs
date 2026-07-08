@@ -5,14 +5,27 @@ use crate::models::{CoreError, WearosAnswer, WearosCard, WearosDueBatch};
 use std::sync::Mutex;
 use std::time::SystemTime;
 
+/// End-of-session tally shown on the finished screen: how many cards were graded and how they broke
+/// down by ease, plus the total time spent.
+#[derive(uniffi::Record)]
+pub struct SessionSummary {
+    pub total: i32,
+    pub again: i32,
+    pub hard: i32,
+    pub good: i32,
+    pub easy: i32,
+    pub total_time_ms: i64,
+}
+
 #[derive(uniffi::Object)]
 pub struct ReviewSession {
     batch: WearosDueBatch,
     current_index: Mutex<usize>,
     is_revealed: Mutex<bool>,
-    // Buffer ids of the answers given so far, newest last — one per answered card. Lets undo pop the
-    // last one and delete it from the local buffer, so an accidental grade doesn't reach the phone.
-    answer_ids: Mutex<Vec<String>>,
+    // The answers given so far, newest last — one per graded card. Lets undo pop the last one (and
+    // delete it from the buffer so an accidental grade never reaches the phone) and backs the
+    // end-of-session summary.
+    graded: Mutex<Vec<WearosAnswer>>,
 }
 
 #[uniffi::export]
@@ -23,7 +36,7 @@ impl ReviewSession {
             batch,
             current_index: Mutex::new(0),
             is_revealed: Mutex::new(false),
-            answer_ids: Mutex::new(Vec::new()),
+            graded: Mutex::new(Vec::new()),
         }
     }
 
@@ -87,8 +100,8 @@ impl ReviewSession {
             let _ = save_answer(answer.clone());
         }
 
-        // Record the id so undo_last_answer can pop + delete it later.
-        self.answer_ids.lock().unwrap().push(answer.id.clone());
+        // Record the answer so undo can pop + delete it and the summary can aggregate it.
+        self.graded.lock().unwrap().push(answer.clone());
 
         {
             let mut revealed = self.is_revealed.lock().unwrap();
@@ -115,11 +128,11 @@ impl ReviewSession {
             *index -= 1;
         }
 
-        // Pop the id for the card we just stepped back onto and delete it from the buffer.
-        if let Some(id) = self.answer_ids.lock().unwrap().pop()
+        // Pop the answer for the card we just stepped back onto and delete it from the buffer.
+        if let Some(answer) = self.graded.lock().unwrap().pop()
             && get_db_connection().is_ok()
         {
-            let _ = remove_buffered_answers(vec![id]);
+            let _ = remove_buffered_answers(vec![answer.id]);
         }
 
         *self.is_revealed.lock().unwrap() = false;
@@ -129,5 +142,24 @@ impl ReviewSession {
     pub fn get_progress_string(&self) -> String {
         let index = *self.current_index.lock().unwrap();
         format!("{}/{}", index, self.batch.cards.len())
+    }
+
+    /// Tally of everything graded so far this session (after undo, reflects the current state).
+    pub fn get_summary(&self) -> SessionSummary {
+        let mut s =
+            SessionSummary { total: 0, again: 0, hard: 0, good: 0, easy: 0, total_time_ms: 0 };
+        let graded = self.graded.lock().unwrap();
+        s.total = graded.len() as i32;
+        for a in graded.iter() {
+            match a.ease {
+                1 => s.again += 1,
+                2 => s.hard += 1,
+                3 => s.good += 1,
+                _ => s.easy += 1, // ease 4 (and any out-of-range) counts as Easy
+            }
+            s.total_time_ms += a.time_taken_ms;
+        }
+        drop(graded); // release the lock before returning (clippy::significant_drop_tightening)
+        s
     }
 }

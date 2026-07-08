@@ -28,6 +28,11 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
     )
     .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
 
+    // Append-only activity log for the "N reviewed today" counter. Independent of buffered_answers
+    // so it survives sync-back clearing (buffered_answers is drained once the phone applies them).
+    conn.execute("CREATE TABLE IF NOT EXISTS review_log (answered_at INTEGER NOT NULL)", [])
+        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+
     {
         let mut db = DB_CONN.lock().unwrap();
         *db = Some(db_path);
@@ -71,7 +76,26 @@ pub fn save_answer(answer: WearosAnswer) -> Result<(), CoreError> {
     )
     .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
 
+    // Log the activity for the daily counter (append-only; not undone/cleared).
+    conn.execute("INSERT INTO review_log (answered_at) VALUES (?1)", params![now])
+        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+
     Ok(())
+}
+
+/// Number of reviews logged at or after `since_secs` (epoch seconds). The caller passes local
+/// midnight to get "reviewed today" — keeping timezone handling on the Kotlin side where it's known.
+#[uniffi::export]
+pub fn reviews_since(since_secs: i64) -> Result<i32, CoreError> {
+    let conn = get_db_connection()?;
+    let count: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM review_log WHERE answered_at >= ?1",
+            params![since_secs],
+            |r| r.get(0),
+        )
+        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    Ok(count as i32)
 }
 
 #[uniffi::export]

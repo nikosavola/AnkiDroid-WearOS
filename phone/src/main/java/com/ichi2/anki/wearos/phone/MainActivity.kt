@@ -51,6 +51,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   // Case-insensitive deck-name filter from the search box; blank shows the full tree.
   private var deckFilter: String = ""
   private lateinit var lastSyncText: TextView
+  private lateinit var sectionHeader: TextView
   // Best-effort per-deck due totals (deckId -> count); empty when AnkiDroid doesn't expose them.
   private var deckCounts: Map<Long, Int> = emptyMap()
 
@@ -195,7 +196,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     rootLayout.addView(statusText)
 
     // Bold section header for the deck list (M3 title role, primary color).
-    val sectionHeader =
+    sectionHeader =
       com.google.android.material.textview.MaterialTextView(this).apply {
         text = "Decks to sync"
         setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleLarge)
@@ -423,6 +424,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   private fun renderDeckTree() {
     deckListLayout.removeAllViews()
     val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
+    updateSelectedCountHeader()
     val decks =
       if (deckFilter.isBlank()) {
         allDecks
@@ -442,6 +444,14 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     for (child in root.children.values) {
       addDeckNodeViews(child, 0, child.name, prefs)
     }
+  }
+
+  /** Refresh the "Decks to sync (N/M)" header count without rebuilding the tree. */
+  private fun updateSelectedCountHeader() {
+    if (!::sectionHeader.isInitialized) return
+    val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
+    val selected = allDecks.count { prefs.getBoolean("deck_${it.first}", true) }
+    sectionHeader.text = "Decks to sync ($selected/${allDecks.size})"
   }
 
   /** Check or uncheck every deck at once (bulk select controls above the tree). */
@@ -558,6 +568,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
           isChecked = prefs.getBoolean("deck_$id", true)
           setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean("deck_$id", checked).apply()
+            updateSelectedCountHeader()
           }
         }
       row.addView(cb)

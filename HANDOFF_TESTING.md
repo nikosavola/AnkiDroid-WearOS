@@ -312,6 +312,22 @@ Genuine partial progress on the two big documented items.
   - A `@Preview` (`DeckSelectionTreePreview`) is included so the tree can be rendered in the IDE /
     screenshot-tested without wiring it into the app.
 
+## 1.17 Session summary, reviews-today streak, phone selected-count
+
+- **End-of-session summary** (Rust-verified + watch UI). `ReviewSession.get_summary()` returns
+  `SessionSummary { total, again, hard, good, easy, total_time_ms }` (the undo stack now holds full
+  answers so it also backs the tally and stays correct after undo). The watch Finished screen shows
+  "N cards · Mm Ss" + the ease split. Test: `test_session_summary`.
+- **"Reviewed today" counter** (Rust-verified + watch UI). A new append-only `review_log` table
+  (written on every `save_answer`, independent of the buffer so it survives sync-clearing) backs
+  `reviews_since(since_secs)`. The watch passes local midnight (`todayMidnightSecs`) and shows
+  "Reviewed today: N 🔥" on the deck + finished screens. Test: `test_reviews_since`.
+  - **Known caveat:** the log is append-only, so an *undo* does not decrement it — "reviewed today"
+    counts grading attempts, which slightly over-counts if you undo. Acceptable for a motivational
+    number; documented so it isn't mistaken for a bug.
+- **Phone "Decks to sync (N/M)"** — the header now shows selected vs total, updated on every toggle
+  (folder re-render and single-deck check) without rebuilding the tree.
+
 ---
 
 # Part 2 — Remaining backlog (not implemented here)
