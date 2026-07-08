@@ -545,9 +545,16 @@ class MainActivity : ComponentActivity() {
               CompactButton(
                 onClick = { deckFolderPath = parentFolder(deckFolderPath) },
                 colors = ButtonDefaults.filledTonalButtonColors(),
+                icon = {
+                  Icon(
+                    painter = painterResource(id = R.drawable.ic_arrow_up),
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                  )
+                },
                 modifier = Modifier.fillMaxWidth(0.7f),
               ) {
-                Text("⬆  Up")
+                Text("Up")
               }
             }
           }
@@ -563,18 +570,27 @@ class MainActivity : ComponentActivity() {
                 onClick = { deckFolderPath = node.path },
                 modifier = Modifier.fillMaxWidth(0.95f),
               ) {
-                Column {
-                  Text(
-                    text = "📁  ${node.name}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    maxLines = 2,
-                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                  Icon(
+                    painter = painterResource(id = R.drawable.ic_folder),
+                    contentDescription = null,
+                    modifier = Modifier.size(22.dp),
+                    tint = MaterialTheme.colorScheme.primary,
                   )
-                  Text(
-                    text = "Folder",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  )
+                  Spacer(modifier = Modifier.width(10.dp))
+                  Column {
+                    Text(
+                      text = node.name,
+                      style = MaterialTheme.typography.bodyMedium,
+                      maxLines = 2,
+                      overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                    )
+                    Text(
+                      text = "Folder",
+                      style = MaterialTheme.typography.labelSmall,
+                      color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                  }
                 }
               }
             } else {
