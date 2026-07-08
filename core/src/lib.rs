@@ -10,6 +10,7 @@ mod html;
 mod models;
 mod session;
 mod sync;
+mod tile;
 
 // Flatten the crate's Rust surface so tests and any internal callers see everything at the root.
 // (UniFFI records each #[uniffi::export] at its definition site, so the module layout doesn't
@@ -20,10 +21,19 @@ pub use html::*;
 pub use models::*;
 pub use session::*;
 pub use sync::*;
+pub use tile::*;
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    // The buffer tests all drive the single global DB_CONN, so serialize them; cargo runs tests in
+    // parallel by default. Recover from poisoning so one failing test doesn't cascade into the rest.
+    static DB_TEST_LOCK: Mutex<()> = Mutex::new(());
+    fn db_test_guard() -> MutexGuard<'static, ()> {
+        DB_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
 
     #[test]
     fn test_clean_html() {
@@ -221,6 +231,8 @@ mod tests {
 
     #[test]
     fn test_review_session_state_machine() {
+        // answer_card buffers into DB_CONN when a DB is configured; serialize with the buffer tests.
+        let _guard = db_test_guard();
         let card1 = WearosCard {
             id: 1,
             note_id: 10,
@@ -282,7 +294,169 @@ mod tests {
     }
 
     #[test]
+    fn test_format_queue_eta() {
+        // Empty queue.
+        assert_eq!(format_queue_eta(0, None), "All caught up 🎉");
+        assert_eq!(format_queue_eta(-3, Some(5000)), "All caught up 🎉");
+
+        // No observed pace: flat 10s/card fallback.
+        assert_eq!(format_queue_eta(3, None), "~30s to finish");
+        assert_eq!(format_queue_eta(6, None), "~1 min to finish");
+        // A zero/negative average is ignored in favour of the fallback.
+        assert_eq!(format_queue_eta(3, Some(0)), "~30s to finish");
+
+        // Real pace: 20 cards at 8s each = 160s -> rounds up to 3 min.
+        assert_eq!(format_queue_eta(20, Some(8000)), "~3 min to finish");
+        // 4 cards at 12.5s each = 50s.
+        assert_eq!(format_queue_eta(4, Some(12500)), "~50s to finish");
+        // 59s stays in seconds; 60s rolls over to a minute; 61s rounds up to two.
+        assert_eq!(format_queue_eta(59, Some(1000)), "~59s to finish");
+        assert_eq!(format_queue_eta(60, Some(1000)), "~1 min to finish");
+        assert_eq!(format_queue_eta(61, Some(1000)), "~2 min to finish");
+    }
+
+    #[test]
+    fn test_average_answer_time_ms() {
+        let _guard = db_test_guard();
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join("test_wearos_avg.db").to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&db_path);
+        init_database(db_path.clone()).unwrap();
+
+        // Empty buffer averages to None (queue-less days shouldn't skew the estimate).
+        assert_eq!(average_answer_time_ms().unwrap(), None);
+
+        for (i, ms) in [4000_i64, 6000, 8000].iter().enumerate() {
+            save_answer(WearosAnswer {
+                id: format!("avg_{i}"),
+                note_id: 100 + i as i64,
+                ord: 0,
+                ease: 3,
+                time_taken_ms: *ms,
+            })
+            .unwrap();
+        }
+        assert_eq!(average_answer_time_ms().unwrap(), Some(6000));
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn test_buffer_error_paths_without_init() {
+        let _guard = db_test_guard();
+        // Point the shared connection at nothing, mimicking a process that never called
+        // init_database. Every buffer op must surface a DatabaseError rather than panic.
+        *DB_CONN.lock().unwrap() = None;
+        assert!(matches!(save_answer(sample_answer()), Err(CoreError::DatabaseError { .. })));
+        assert!(matches!(get_buffered_answers(), Err(CoreError::DatabaseError { .. })));
+        assert!(matches!(average_answer_time_ms(), Err(CoreError::DatabaseError { .. })));
+        assert!(matches!(
+            remove_buffered_answers(vec!["x".to_string()]),
+            Err(CoreError::DatabaseError { .. })
+        ));
+    }
+
+    fn sample_answer() -> WearosAnswer {
+        WearosAnswer { id: "s".to_string(), note_id: 1, ord: 0, ease: 3, time_taken_ms: 1000 }
+    }
+
+    #[test]
+    fn test_clean_html_malformed_and_nested() {
+        // Unterminated tag: everything after the stray '<' is swallowed rather than leaking markup.
+        assert_eq!(clean_html("before <b broken".to_string()), "before");
+        // Unterminated <script> block drops the rest of the input (no source leak).
+        assert_eq!(clean_html("keep<script>secret".to_string()), "keep");
+        // Nested ruby with an inner formatting tag still yields base(reading).
+        assert_eq!(clean_html("<ruby><b>漢</b><rt>かん</rt></ruby>".to_string()), "漢(かん)");
+        // Multiple [sound:] refs are all removed.
+        assert_eq!(clean_html("a[sound:1.mp3]b[sound:2.mp3]c".to_string()), "abc");
+    }
+
+    #[test]
+    fn test_html_for_display_malformed() {
+        // A never-closed comment drops everything after it (the {{Pitch Accent}} field can't leak).
+        let out = html_for_display("<b>hi</b><!-- {{Pitch Accent}} unterminated".to_string());
+        assert!(out.contains("<b>hi</b>"));
+        assert!(!out.contains("Pitch Accent"));
+        // Case-insensitive <STYLE> blocks are stripped too.
+        let styled = html_for_display("keep<STYLE>.c color is red</STYLE>text".to_string());
+        assert!(!styled.contains("color is red"));
+        assert!(styled.contains("keep") && styled.contains("text"));
+    }
+
+    #[test]
+    fn test_deck_children_deep_tree() {
+        // Four levels deep: descending resolves the right own_deck and single child at each level.
+        let decks = vec![
+            DeckInfo { id: 1, full_name: "A".to_string() },
+            DeckInfo { id: 2, full_name: "A::B".to_string() },
+            DeckInfo { id: 3, full_name: "A::B::C".to_string() },
+            DeckInfo { id: 4, full_name: "A::B::C::D".to_string() },
+        ];
+        let level = deck_children(decks.clone(), "A::B".to_string());
+        assert_eq!(level.own_deck.as_ref().unwrap().id, 2);
+        assert_eq!(level.children.len(), 1);
+        let c = &level.children[0];
+        assert_eq!(c.name, "C");
+        assert!(c.is_folder, "C has D below it");
+        assert_eq!(c.path, "A::B::C");
+
+        // The deepest node is a leaf.
+        let deepest = deck_children(decks, "A::B::C".to_string());
+        assert!(!deepest.children[0].is_folder);
+        assert_eq!(deepest.children[0].id, 4);
+    }
+
+    #[test]
+    fn test_deck_children_folder_without_own_deck() {
+        // "A" is only ever a prefix (no flat deck named exactly "A"), so it's a folder with id -1.
+        let decks = vec![
+            DeckInfo { id: 1, full_name: "A::B".to_string() },
+            DeckInfo { id: 2, full_name: "A::C".to_string() },
+        ];
+        let root = deck_children(decks.clone(), String::new());
+        let a = &root.children[0];
+        assert_eq!(a.name, "A");
+        assert!(a.is_folder);
+        assert_eq!(a.id, -1, "no studyable deck sits exactly at 'A'");
+
+        // Descending into A shows no own_deck, just the two leaves.
+        let level = deck_children(decks, "A".to_string());
+        assert!(level.own_deck.is_none());
+        let names: Vec<_> = level.children.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["B", "C"]);
+    }
+
+    #[test]
+    fn test_deck_children_duplicate_leaf_names() {
+        // The same leaf name under two different folders must stay distinct by path.
+        let decks = vec![
+            DeckInfo { id: 1, full_name: "A::Grammar".to_string() },
+            DeckInfo { id: 2, full_name: "B::Grammar".to_string() },
+        ];
+        let a = deck_children(decks.clone(), "A".to_string());
+        assert_eq!(a.children[0].path, "A::Grammar");
+        assert_eq!(a.children[0].id, 1);
+        let b = deck_children(decks, "B".to_string());
+        assert_eq!(b.children[0].path, "B::Grammar");
+        assert_eq!(b.children[0].id, 2);
+    }
+
+    #[test]
+    fn test_answer_html_no_false_marker() {
+        // A literal "id=answer" appearing inside text (not a tag) still splits at the next '>',
+        // documenting the current behaviour so a future change is a conscious one.
+        assert_eq!(answer_html("front<hr id=answer>".to_string()), "");
+        // Multiple markers: split at the first.
+        assert_eq!(
+            answer_html("Q<hr id=answer>A1<hr id=answer>A2".to_string()),
+            "A1<hr id=answer>A2"
+        );
+    }
+
+    #[test]
     fn test_local_sqlite_buffering() {
+        let _guard = db_test_guard();
         let temp_dir = std::env::temp_dir();
         let db_path = temp_dir.join("test_wearos_buffer.db").to_string_lossy().to_string();
 

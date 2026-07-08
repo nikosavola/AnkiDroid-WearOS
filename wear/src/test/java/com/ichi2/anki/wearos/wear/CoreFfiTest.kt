@@ -12,6 +12,7 @@ import uniffi.wearos_core.answerHtml
 import uniffi.wearos_core.cleanHtml
 import uniffi.wearos_core.deckChildren
 import uniffi.wearos_core.deserializeDueBatch
+import uniffi.wearos_core.formatQueueEta
 import uniffi.wearos_core.htmlForDisplay
 import uniffi.wearos_core.parseReviewTimes
 import uniffi.wearos_core.serializeDueBatch
@@ -90,5 +91,15 @@ class CoreFfiTest {
     assertEquals(1, restored.cards.size)
     assertEquals("Q", restored.cards[0].front)
     assertEquals(listOf("1m", "10m"), restored.cards[0].nextReviewTimes)
+  }
+
+  @Test
+  fun formatQueueEta_usesPaceWhenKnownElseFallback() {
+    // An empty/clear queue reads as caught up regardless of pace.
+    assertEquals("All caught up 🎉", formatQueueEta(0, null))
+    // No observed pace -> flat 10s/card estimate (Long? maps Rust Option<i64>).
+    assertEquals("~30s to finish", formatQueueEta(3, null))
+    // Real average answer time (8s/card) drives the estimate: 20 cards -> 160s -> ~3 min.
+    assertEquals("~3 min to finish", formatQueueEta(20, 8000L))
   }
 }

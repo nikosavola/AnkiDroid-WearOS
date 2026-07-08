@@ -13,8 +13,12 @@ import androidx.wear.tiles.RequestBuilders.TileRequest
 import androidx.wear.tiles.TileBuilders.Tile
 import androidx.wear.tiles.TileService
 import com.google.common.util.concurrent.ListenableFuture
+import java.io.File
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
+import uniffi.wearos_core.averageAnswerTimeMs
+import uniffi.wearos_core.formatQueueEta
+import uniffi.wearos_core.initDatabase
 
 class AnkiTileService : TileService() {
   override fun onTileRequest(requestParams: TileRequest): ListenableFuture<Tile> {
@@ -36,7 +40,7 @@ class AnkiTileService : TileService() {
             .build()
         )
         .addContent(
-          Text.Builder(this, etaText(count))
+          Text.Builder(this, etaText(this, count))
             .setTypography(Typography.TYPOGRAPHY_CAPTION2)
             .setColor(argb(0xFF9E9E9E.toInt()))
             .build()
@@ -95,15 +99,26 @@ class AnkiTileService : TileService() {
     }
   }
 
-  /** Rough estimated time to clear the queue, assuming ~10s per card. */
-  private fun etaText(count: Int): String {
-    if (count == 0) return "All caught up 🎉"
-    val seconds = count * SECONDS_PER_CARD
-    return if (seconds < 60) "~${seconds}s to finish" else "~${seconds / 60} min to finish"
+  /**
+   * Estimated time to clear the queue. The Rust core formats it from the user's real average answer
+   * time (the mean of the locally-buffered reviews) when we have any, and falls back to a flat
+   * per-card estimate otherwise. Reading the buffer requires the Rust DB be initialized; the Tile
+   * process may not have gone through MainActivity, so point the core at the shared buffer first.
+   */
+  private fun etaText(context: Context, count: Int): String {
+    val avgMs =
+      try {
+        initDatabase(File(context.filesDir, BUFFER_DB_NAME).absolutePath)
+        averageAnswerTimeMs()
+      } catch (e: Exception) {
+        null
+      }
+    return formatQueueEta(count, avgMs)
   }
 
   companion object {
-    private const val SECONDS_PER_CARD = 10
+    // Must match the buffer file MainActivity initializes, so both read the same answer history.
+    private const val BUFFER_DB_NAME = "wearos_buffer.db"
   }
 
   private fun argb(color: Int): androidx.wear.protolayout.ColorBuilders.ColorProp {
