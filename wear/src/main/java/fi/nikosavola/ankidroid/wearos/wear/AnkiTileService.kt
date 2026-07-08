@@ -1,8 +1,10 @@
 package fi.nikosavola.ankidroid.wearos.wear
 
 import android.content.Context
+import androidx.wear.protolayout.ActionBuilders
 import androidx.wear.protolayout.DeviceParametersBuilders
 import androidx.wear.protolayout.LayoutElementBuilders
+import androidx.wear.protolayout.ModifiersBuilders
 import androidx.wear.protolayout.ResourceBuilders
 import androidx.wear.protolayout.TimelineBuilders
 import androidx.wear.protolayout.material.Text
@@ -25,8 +27,25 @@ class AnkiTileService : TileService() {
     val count = getDueCount(this)
     val caughtUp = count == 0
 
+    // Make the whole tile tappable: open the app straight into the review flow.
+    val launchApp =
+      ModifiersBuilders.Clickable.Builder()
+        .setId("open_ankidroid_wear")
+        .setOnClick(
+          ActionBuilders.LaunchAction.Builder()
+            .setAndroidActivity(
+              ActionBuilders.AndroidActivity.Builder()
+                .setPackageName(packageName)
+                .setClassName(MainActivity::class.java.name)
+                .build()
+            )
+            .build()
+        )
+        .build()
+
     val content =
       LayoutElementBuilders.Column.Builder()
+        .setModifiers(ModifiersBuilders.Modifiers.Builder().setClickable(launchApp).build())
         .addContent(
           Text.Builder(this, count.toString())
             .setTypography(Typography.TYPOGRAPHY_DISPLAY2)
@@ -70,6 +89,9 @@ class AnkiTileService : TileService() {
     val tile =
       Tile.Builder()
         .setResourcesVersion("1")
+        // Ask the system to re-request the tile periodically so the due count/ETA don't go stale
+        // while the tile sits on the carousel (it otherwise only rebuilds on explicit refresh).
+        .setFreshnessIntervalMillis(TimeUnit.MINUTES.toMillis(30))
         .setTileTimeline(
           TimelineBuilders.Timeline.Builder()
             .addTimelineEntry(
