@@ -4,6 +4,11 @@
     <!-- Permission required to access AnkiDroid ContentProvider -->
     <uses-permission android:name="com.ichi2.anki.permission.READ_WRITE_DATABASE" />
 
+    <!-- Foreground service + notification for background sync to the watch -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <queries>
         <package android:name="com.ichi2.anki" />
     </queries>
@@ -23,6 +28,12 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <!-- Foreground service that pushes decks to the watch with a progress notification -->
+        <service
+            android:name=".SyncService"
+            android:exported="false"
+            android:foregroundServiceType="dataSync" />
 
         <!-- Passively runs in background to receive reviews and deck requests from the watch -->
         <service

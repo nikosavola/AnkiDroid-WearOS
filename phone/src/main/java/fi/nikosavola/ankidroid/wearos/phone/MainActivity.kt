@@ -1,9 +1,11 @@
 package fi.nikosavola.ankidroid.wearos.phone
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Bundle
-import android.util.Log
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
@@ -11,31 +13,20 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
-import com.google.android.gms.wearable.Asset
-import com.google.android.gms.wearable.PutDataMapRequest
-import com.google.android.gms.wearable.Wearable
-import kotlinx.coroutines.CoroutineScope
+import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
-import uniffi.wearos_core.serializeDueBatch
 
 class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   companion object {
-    private const val TAG = "PhoneMainActivity"
     private const val PERMISSION_ANKIDROID = "com.ichi2.anki.permission.READ_WRITE_DATABASE"
     private const val PERMISSION_REQUEST_CODE = 420
-    private const val PATH_DUE_BATCH = "/due_batch"
-    // See WearSyncService: batch goes over an Asset to dodge the ~100KB DataItem cap.
-    private const val KEY_BATCH_ASSET = "batch_asset"
+    private const val NOTIF_PERMISSION_REQUEST_CODE = 421
 
-    // Pre-push at most this many non-empty decks on a manual sync (default; overridable in
-    // Settings); scan at most this many looking for them so a large collection doesn't make Sync
-    // crawl. The rest download on demand.
+    // Default pre-push cap shown in Settings; the sync itself lives in SyncService now.
     private const val DEFAULT_PREPUSH_DECKS = 15
-    private const val MAX_SCAN_DECKS = 60
 
     // User settings, persisted across launches.
     private const val SETTINGS_PREFS = "settings_prefs"
@@ -47,6 +38,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
   private lateinit var bridge: AnkiDroidBridge
   private lateinit var statusText: TextView
+  private lateinit var syncStatusText: TextView
   private lateinit var syncButton: Button
   private lateinit var progressBar: ProgressBar
   private lateinit var deckListLayout: LinearLayout
@@ -54,7 +46,40 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   // Folder paths currently expanded in the deck selector. Empty = everything collapsed, so the
   // list opens compact (just the top-level folders) and the user drills in with [+].
   private val expandedFolders = mutableSetOf<String>()
-  private val scope = CoroutineScope(Dispatchers.Main)
+
+  // Mirrors SyncService progress into the in-app status line + bar while the Activity is alive.
+  private val syncProgressReceiver =
+    object : BroadcastReceiver() {
+      override fun onReceive(context: Context?, intent: Intent?) {
+        if (intent?.action != SyncService.ACTION_PROGRESS) return
+        val text = intent.getStringExtra(SyncService.EXTRA_TEXT).orEmpty()
+        val percent = intent.getIntExtra(SyncService.EXTRA_PERCENT, 0)
+        val done = intent.getBooleanExtra(SyncService.EXTRA_DONE, false)
+        val error = intent.getBooleanExtra(SyncService.EXTRA_ERROR, false)
+
+        syncStatusText.visibility = View.VISIBLE
+        syncStatusText.text = text
+        progressBar.visibility = View.VISIBLE
+        progressBar.isIndeterminate = false
+        progressBar.progress = percent
+
+        if (done) {
+          syncButton.isEnabled = true
+          if (error) {
+            progressBar.visibility = View.GONE
+          } else {
+            // Hold the "Done" state briefly, then clear.
+            syncStatusText.postDelayed(
+              {
+                progressBar.visibility = View.GONE
+                syncStatusText.visibility = View.GONE
+              },
+              1500,
+            )
+          }
+        }
+      }
+    }
 
   private val settings by lazy { getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE) }
 
@@ -76,8 +101,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     // targetSdk 35 draws edge-to-edge on Android 15, so keep content (incl. the gear) clear of the
     // status/nav bars by adding the system-bar insets on top of the base padding.
     androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { v, insets ->
-      val bars =
-        insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
+      val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
       v.setPadding(64, 64 + bars.top, 64, 64 + bars.bottom)
       insets
     }
@@ -92,17 +116,17 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     val titleText =
       com.google.android.material.textview.MaterialTextView(this).apply {
         text = "AnkiDroid WearOS Companion"
-        textSize = 24f
-        layoutParams =
-          LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+        setTextAppearance(
+          com.google.android.material.R.style.TextAppearance_Material3_HeadlineSmall
+        )
+        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
       }
     topBar.addView(titleText)
     val settingsButton =
       android.widget.ImageButton(this).apply {
         setImageResource(R.drawable.ic_settings)
         contentDescription = "Settings"
-        background =
-          resolveAttrDrawable(android.R.attr.selectableItemBackgroundBorderless)
+        background = resolveAttrDrawable(android.R.attr.selectableItemBackgroundBorderless)
         setOnClickListener { showSettingsDialog() }
       }
     topBar.addView(settingsButton)
@@ -110,23 +134,61 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
     statusText =
       com.google.android.material.textview.MaterialTextView(this).apply {
-        text = "Checking permissions..."
-        textSize = 16f
-        setPadding(0, 0, 0, 48)
+        text = "Checking permissions…"
+        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+        // Clickable: a trailing info icon + ripple signal that tapping shows connection details.
+        setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, R.drawable.ic_info, 0)
+        compoundDrawablePadding = 12
+        isClickable = true
+        isFocusable = true
+        background = resolveAttrDrawable(android.R.attr.selectableItemBackground)
+        setPadding(8, 16, 8, 32)
+        setOnClickListener { showConnectionInfoDialog() }
       }
     rootLayout.addView(statusText)
+
+    // Bold section header for the deck list (M3 title role, primary color).
+    val sectionHeader =
+      com.google.android.material.textview.MaterialTextView(this).apply {
+        text = "Decks to sync"
+        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleLarge)
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+        setTextColor(
+          com.google.android.material.color.MaterialColors.getColor(
+            this,
+            com.google.android.material.R.attr.colorPrimary,
+          )
+        )
+        setPadding(0, 0, 0, 12)
+      }
+    rootLayout.addView(sectionHeader)
 
     // Scrollable container for the checkboxes for our decks list
     val scrollView =
       ScrollView(this).apply {
         layoutParams =
           LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply {
-            setMargins(0, 0, 0, 48)
+            setMargins(0, 0, 0, 16)
           }
       }
     deckListLayout = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
     scrollView.addView(deckListLayout)
     rootLayout.addView(scrollView)
+
+    // One-line live sync status, shown right above the progress bar while a sync runs.
+    syncStatusText =
+      com.google.android.material.textview.MaterialTextView(this).apply {
+        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
+        setTextColor(
+          com.google.android.material.color.MaterialColors.getColor(
+            this,
+            com.google.android.material.R.attr.colorOnSurfaceVariant,
+          )
+        )
+        visibility = View.GONE
+        setPadding(0, 0, 0, 8)
+      }
+    rootLayout.addView(syncStatusText)
 
     // Horizontal Progress Bar for sync visual feedback
     progressBar =
@@ -135,7 +197,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         max = 100
         progress = 0
         visibility = View.GONE
-        setPadding(0, 0, 0, 48)
+        setPadding(0, 0, 0, 32)
       }
     rootLayout.addView(progressBar)
 
@@ -149,14 +211,37 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
     setContentView(rootLayout)
 
+    androidx.core.content.ContextCompat.registerReceiver(
+      this,
+      syncProgressReceiver,
+      IntentFilter(SyncService.ACTION_PROGRESS),
+      androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+    )
+
     checkPermissions()
+  }
+
+  override fun onDestroy() {
+    super.onDestroy()
+    unregisterReceiver(syncProgressReceiver)
+  }
+
+  /** Set the top status line concisely, colored by the theme attribute for the current state. */
+  private fun setStatus(text: String, colorAttr: Int) {
+    statusText.text = text
+    statusText.setTextColor(
+      com.google.android.material.color.MaterialColors.getColor(statusText, colorAttr)
+    )
   }
 
   private fun checkPermissions() {
     if (checkSelfPermission(PERMISSION_ANKIDROID) == PackageManager.PERMISSION_GRANTED) {
       onPermissionsGranted()
     } else {
-      statusText.text = "Permission required to query AnkiDroid cards."
+      setStatus(
+        "Waiting for card access permission…",
+        com.google.android.material.R.attr.colorOnSurfaceVariant,
+      )
       requestPermissions(arrayOf(PERMISSION_ANKIDROID), PERMISSION_REQUEST_CODE)
     }
   }
@@ -170,42 +255,37 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
         onPermissionsGranted()
       } else {
-        statusText.text = "Permission Denied. Cannot sync cards."
+        setStatus(
+          "Permission denied — can't read cards",
+          com.google.android.material.R.attr.colorError,
+        )
         Toast.makeText(this, "Permission required to access cards!", Toast.LENGTH_LONG).show()
       }
     }
   }
 
   private fun onPermissionsGranted() {
-    val available = bridge.isAnkiDroidAvailable()
-    val providerStatus =
-      if (available) {
-        "AnkiDroid App connected successfully."
-      } else {
-        "AnkiDroid not found. Running in standalone Mock Mode."
-      }
-    statusText.text = "Permissions granted.\nStatus: $providerStatus"
     syncButton.isEnabled = true
-    populateDeckSelector()
-  }
-
-  private fun populateDeckSelector() {
-    allDecks = bridge.fetchAllDecks()
-    renderDeckTree()
+    // The availability probe and the (potentially large) deck query are ContentProvider I/O; keep
+    // them off the main thread so launch doesn't jank, then update the UI on the main thread.
+    lifecycleScope.launch {
+      val available = withContext(Dispatchers.IO) { bridge.isAnkiDroidAvailable() }
+      if (available) {
+        setStatus("Connected to AnkiDroid", com.google.android.material.R.attr.colorPrimary)
+      } else {
+        setStatus(
+          "Standalone mock mode — AnkiDroid not found",
+          com.google.android.material.R.attr.colorOnSurfaceVariant,
+        )
+      }
+      allDecks = withContext(Dispatchers.IO) { bridge.fetchAllDecks() }
+      renderDeckTree()
+    }
   }
 
   /** (Re)draw the deck selector as a folder tree built from the Anki `::` deck-name hierarchy. */
   private fun renderDeckTree() {
     deckListLayout.removeAllViews()
-    val title =
-      com.google.android.material.textview.MaterialTextView(this).apply {
-        text = "Select Decks / Folders to Sync with Watch:"
-        textSize = 16f
-        setTypeface(null, android.graphics.Typeface.BOLD)
-        setPadding(0, 16, 0, 16)
-      }
-    deckListLayout.addView(title)
-
     val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
     val root = buildDeckTree(allDecks)
     for (child in root.children.values) {
@@ -239,13 +319,11 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       // M3 expand affordance: a standard icon button with the expand_more chevron, rotated to
       // point up when the folder is open (the Material 3 idiom, rather than a +/- glyph).
       val expander =
-        com.google.android.material.button.MaterialButton(
-            this,
-            null,
-            com.google.android.material.R.attr.materialIconButtonStyle,
-          )
+        com.google.android.material.button
+          .MaterialButton(this, null, com.google.android.material.R.attr.materialIconButtonStyle)
           .apply {
-            icon = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_expand_more)
+            icon =
+              androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_expand_more)
             iconGravity = com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START
             iconPadding = 0
             rotation = if (expanded) 180f else 0f
@@ -305,103 +383,34 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     }
   }
 
+  /**
+   * Kick off the sync in [SyncService] (a foreground service) so it keeps running with a progress
+   * notification even if the app is backgrounded. Progress is mirrored back into the in-app bar via
+   * [syncProgressReceiver] while the Activity is alive.
+   */
   private fun triggerSyncToWatch() {
-    scope.launch {
-      try {
-        syncButton.isEnabled = false
-        progressBar.visibility = View.VISIBLE
-        progressBar.progress = 10
-        statusText.text = "Syncing available decks list..."
-        delay(200)
-
-        // 1. Fetch all decks and sync to watch (filtering based on checked deck preferences)
-        val decks = bridge.fetchAllDecks()
-        val sharedPrefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-        val filteredDecks = decks.filter { sharedPrefs.getBoolean("deck_${it.first}", true) }
-        val decksStr = filteredDecks.joinToString("\n") { "${it.first}:${it.second}" }
-        val deckBytes = decksStr.toByteArray(Charsets.UTF_8)
-
-        val dataClient = Wearable.getDataClient(this@MainActivity)
-        val putDecksReq =
-          PutDataMapRequest.create("/decks")
-            .apply {
-              dataMap.putByteArray("decks_bytes", deckBytes)
-              setUrgent()
-            }
-            .asPutDataRequest()
-        dataClient.putDataItem(putDecksReq).await()
-
-        progressBar.progress = 30
-        statusText.text = "Fetching due cards..."
-        delay(200)
-
-        // 2. Pre-push the due batches for selected decks so switching to them is instant and works
-        //    offline. Only decks that actually have due cards are pushed; the rest download on
-        //    demand when tapped on the watch. Capped so a large collection keeps sync responsive.
-        val isForced = forceMock()
-        val prePushCap = prePushCap()
-        val renderer = CardBitmapRenderer(this@MainActivity)
-        var pushed = 0
-        var totalCards = 0
-        var scanned = 0
-        for ((deckId, deckName) in filteredDecks) {
-          if (pushed >= prePushCap || scanned >= MAX_SCAN_DECKS) break
-          scanned++
-          val batch =
-            withContext(Dispatchers.IO) {
-              bridge.fetchDueBatch(deckId = deckId, limit = 20, forceMock = isForced)
-            }
-          if (batch.cards.isEmpty()) continue
-
-          val cleanedCards =
-            batch.cards.map { card ->
-              card.copy(
-                front = AnkiDroidBridge.stripBase64Images(card.front),
-                back = AnkiDroidBridge.stripBase64Images(card.back),
-              )
-            }
-          val cleanedBatch = batch.copy(cards = cleanedCards)
-          val bytes = serializeDueBatch(cleanedBatch)
-          val putDataReq =
-            PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId")
-              .apply {
-                dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(gzip(bytes)))
-                // Vary the item so the watch always re-receives it on a manual sync.
-                dataMap.putLong("synced_at", System.currentTimeMillis())
-                setUrgent()
-              }
-              .asPutDataRequest()
-          dataClient.putDataItem(putDataReq).await()
-
-          // Pre-render and sync bitmaps independently to avoid exceeding the 100 KB limit
-          renderer.syncBitmapsForBatch(batch)
-
-          pushed++
-          totalCards += batch.cards.size
-          progressBar.progress = 30 + 65 * pushed / prePushCap
-          statusText.text = "Pushed $pushed decks ($totalCards cards)..."
-          Log.d(TAG, "Pushed deck $deckId ('$deckName') with ${batch.cards.size} cards.")
-        }
-
-        progressBar.progress = 100
-        val remaining = filteredDecks.size - scanned
-        val extra = if (remaining > 0) " Others download on demand." else ""
-        statusText.text = "Sync Complete! Pushed $pushed decks ($totalCards cards).$extra"
-        Log.i(TAG, "Synced $pushed decks / $totalCards cards to watch.$extra")
-
-        // Maintain success visual before hiding
-        delay(1500)
-        progressBar.visibility = View.GONE
-        progressBar.progress = 0
-      } catch (e: Exception) {
-        Log.e(TAG, "Sync failed: ${e.message}", e)
-        statusText.text = "Sync Failed: ${e.message}"
-        progressBar.visibility = View.GONE
-        Toast.makeText(this@MainActivity, "Sync failed: ${e.message}", Toast.LENGTH_LONG).show()
-      } finally {
-        syncButton.isEnabled = true
-      }
+    // Notification permission is runtime-gated on API 33+; ask so the background progress shows.
+    if (
+      android.os.Build.VERSION.SDK_INT >= 33 &&
+        checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) !=
+          PackageManager.PERMISSION_GRANTED
+    ) {
+      requestPermissions(
+        arrayOf(android.Manifest.permission.POST_NOTIFICATIONS),
+        NOTIF_PERMISSION_REQUEST_CODE,
+      )
     }
+
+    syncButton.isEnabled = false
+    syncStatusText.visibility = View.VISIBLE
+    syncStatusText.text = "Starting sync…"
+    progressBar.visibility = View.VISIBLE
+    progressBar.isIndeterminate = true
+
+    androidx.core.content.ContextCompat.startForegroundService(
+      this,
+      Intent(this, SyncService::class.java),
+    )
   }
 
   /** Material 3 settings dialog opened from the top-bar gear. */
@@ -434,6 +443,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         stepSize = 5f
         value = prePushCap().coerceIn(PREPUSH_MIN, PREPUSH_MAX).toFloat()
       }
+
     fun updateCapLabel(v: Int) {
       capLabel.text = "Decks to pre-push on sync: $v"
     }
@@ -441,7 +451,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     capSlider.addOnChangeListener { _, value, _ -> updateCapLabel(value.toInt()) }
     content.addView(capSlider)
 
-    com.google.android.material.dialog.MaterialAlertDialogBuilder(this)
+    com.google.android.material.dialog
+      .MaterialAlertDialogBuilder(this)
       .setTitle("Settings")
       .setView(content)
       .setPositiveButton("Done") { _, _ ->
@@ -453,6 +464,55 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       }
       .setNegativeButton("Cancel", null)
       .show()
+  }
+
+  /**
+   * Debug info about the AnkiDroid connection + watch link, shown when the status line is tapped.
+   */
+  private fun showConnectionInfoDialog() {
+    val available = bridge.isAnkiDroidAvailable()
+    val permGranted = checkSelfPermission(PERMISSION_ANKIDROID) == PackageManager.PERMISSION_GRANTED
+    val version =
+      try {
+        packageManager.getPackageInfo(packageName, 0).versionName
+      } catch (e: Exception) {
+        "?"
+      }
+    val lines =
+      mutableListOf(
+        "AnkiDroid provider: ${if (available) "connected" else "not found"}",
+        "Authority: com.ichi2.anki.flashcards",
+        "Read/write permission: ${if (permGranted) "granted" else "denied"}",
+        "Force mock mode: ${if (forceMock()) "on" else "off"}",
+        "Decks visible: ${allDecks.size}",
+        "Pre-push cap: ${prePushCap()}",
+        "Connected watches: checking…",
+        "App version: $version",
+      )
+
+    val dialog =
+      com.google.android.material.dialog
+        .MaterialAlertDialogBuilder(this)
+        .setTitle("Connection info")
+        .setMessage(lines.joinToString("\n"))
+        .setPositiveButton("Close", null)
+        .show()
+
+    // The connected-watch list needs an async Wearable call; fill it in when it returns.
+    lifecycleScope.launch {
+      val watches =
+        try {
+          com.google.android.gms.wearable.Wearable.getNodeClient(this@MainActivity)
+            .connectedNodes
+            .await()
+            .joinToString(", ") { it.displayName }
+            .ifEmpty { "none" }
+        } catch (e: Exception) {
+          "error: ${e.message}"
+        }
+      lines[6] = "Connected watches: $watches"
+      dialog.setMessage(lines.joinToString("\n"))
+    }
   }
 
   /** Resolve a theme attribute that points at a drawable (e.g. a ripple background). */
