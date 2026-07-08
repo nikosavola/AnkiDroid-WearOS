@@ -11,38 +11,23 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
-import com.google.android.gms.wearable.Asset
-import com.google.android.gms.wearable.PutDataMapRequest
-import com.google.android.gms.wearable.Wearable
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
-import kotlinx.coroutines.withContext
-import uniffi.wearos_core.serializeDueBatch
 
 /**
- * Foreground service that pushes the selected decks to the watch. Runs independently of the
- * Activity (survives backgrounding) and reports progress both as a notification and via a local
- * broadcast the Activity listens to. The sync is user-initiated and short, so a foreground service
- * fits better than WorkManager.
+ * Foreground service for the *user-initiated* sync that pushes the selected decks to the watch.
+ * Runs independently of the Activity (survives backgrounding) and reports progress both as a
+ * notification and via a local broadcast the Activity listens to. The recurring background sync
+ * lives in [AutoSyncWorker] instead; both share the actual work in [DeckSync].
  */
 class SyncService : Service() {
   companion object {
     private const val TAG = "PhoneSyncService"
     private const val CHANNEL_ID = "sync"
     private const val NOTIF_ID = 1001
-
-    private const val PATH_DUE_BATCH = "/due_batch"
-    private const val KEY_BATCH_ASSET = "batch_asset"
-
-    private const val SETTINGS_PREFS = "settings_prefs"
-    private const val KEY_FORCE_MOCK = "force_mock"
-    private const val KEY_PREPUSH_CAP = "prepush_cap"
-    private const val DEFAULT_PREPUSH_DECKS = 15
-    private const val MAX_SCAN_DECKS = 60
 
     // Local broadcast the Activity uses to mirror progress in-app while it's alive.
     const val ACTION_PROGRESS = "fi.nikosavola.ankidroid.wearos.SYNC_PROGRESS"
@@ -97,83 +82,14 @@ class SyncService : Service() {
   }
 
   private suspend fun runSync() {
-    val bridge = AnkiDroidBridge(applicationContext)
-    val renderer = CardBitmapRenderer(applicationContext)
-    val settings = getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
-    val deckPrefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-    val isForced = settings.getBoolean(KEY_FORCE_MOCK, !bridge.isAnkiDroidAvailable())
-    val prePushCap = settings.getInt(KEY_PREPUSH_CAP, DEFAULT_PREPUSH_DECKS)
-    val dataClient = Wearable.getDataClient(this)
-
-    progress("Syncing deck list…", 5)
-
-    val decks = bridge.fetchAllDecks()
-    val filteredDecks = decks.filter { deckPrefs.getBoolean("deck_${it.first}", true) }
-    val decksStr = filteredDecks.joinToString("\n") { "${it.first}:${it.second}" }
-    dataClient
-      .putDataItem(
-        PutDataMapRequest.create("/decks")
-          .apply {
-            dataMap.putByteArray("decks_bytes", decksStr.toByteArray(Charsets.UTF_8))
-            setUrgent()
-          }
-          .asPutDataRequest()
-      )
-      .await()
-
-    progress("Fetching due cards…", 15)
-
-    var pushed = 0
-    var totalCards = 0
-    var scanned = 0
-    for ((deckId, deckName) in filteredDecks) {
-      if (pushed >= prePushCap || scanned >= MAX_SCAN_DECKS) break
-      scanned++
-      val batch = bridge.fetchDueBatch(deckId = deckId, limit = 20, forceMock = isForced)
-      if (batch.cards.isEmpty()) continue
-
-      val cleanedBatch =
-        batch.copy(
-          cards =
-            batch.cards.map {
-              it.copy(
-                front = AnkiDroidBridge.stripBase64Images(it.front),
-                back = AnkiDroidBridge.stripBase64Images(it.back),
-              )
-            }
-        )
-      val bytes = serializeDueBatch(cleanedBatch)
-      dataClient
-        .putDataItem(
-          PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId")
-            .apply {
-              // serializeDueBatch already gzips; ship the bytes straight into the Asset.
-              dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(bytes))
-              dataMap.putLong("synced_at", System.currentTimeMillis())
-              setUrgent()
-            }
-            .asPutDataRequest()
-        )
-        .await()
-
-      // WebView-backed rendering needs the main thread.
-      withContext(Dispatchers.Main) { renderer.syncBitmapsForBatch(batch) }
-
-      pushed++
-      totalCards += batch.cards.size
-      progress(
-        "Copying $deckName… ($pushed decks, $totalCards cards)",
-        syncProgressPercent(pushed, prePushCap),
-      )
-      Log.d(TAG, "Pushed deck $deckId ('$deckName') with ${batch.cards.size} cards.")
-    }
-
-    val remaining = filteredDecks.size - scanned
-    val extra = if (remaining > 0) " Others download on demand." else ""
-    val summary = "Done — $pushed decks, $totalCards cards.$extra"
-    publish(summary, 100, done = true, error = false)
-    notify(buildNotification(summary, 100, indeterminate = false, ongoing = false))
-    Log.i(TAG, "Synced $pushed decks / $totalCards cards to watch.$extra")
+    // The actual push lives in DeckSync (shared with the background AutoSyncWorker); this service
+    // just surfaces its progress as a notification + in-app broadcast.
+    val summary = DeckSync.run(applicationContext) { text, percent -> progress(text, percent) }
+    val summaryText =
+      summary?.message() ?: "Nothing to sync — AnkiDroid not reachable and mock mode off."
+    publish(summaryText, 100, done = true, error = false)
+    notify(buildNotification(summaryText, 100, indeterminate = false, ongoing = false))
+    Log.i(TAG, summaryText)
   }
 
   /** Update both the notification and the in-app broadcast for a mid-sync step. */
