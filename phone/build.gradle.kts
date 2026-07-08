@@ -29,9 +29,10 @@ android {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
   }
-  kotlinOptions { jvmTarget = "21" }
   sourceSets { getByName("main") { java.srcDirs("src/main/java", "../bindings") } }
 }
+
+kotlin { jvmToolchain(21) }
 
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
   dependsOn(":generateBindings")

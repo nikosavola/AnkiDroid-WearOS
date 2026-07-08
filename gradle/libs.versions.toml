@@ -1,7 +1,7 @@
 [versions]
-agp = "8.7.3"
-kotlin = "2.0.0"
-compose-compiler = "2.0.0"
+agp = "8.13.2"
+kotlin = "2.4.0"
+compose-compiler = "2.4.0"
 wear-compose = "1.6.2"
 jna = "5.14.0"
 coroutines = "1.8.1"
