@@ -13,12 +13,14 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
@@ -29,6 +31,8 @@ import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
 import androidx.wear.compose.foundation.lazy.ScalingLazyListScope
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
+import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.material.*
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
@@ -409,6 +413,21 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /**
+   * Route rotary bezel/crown input into [state] with animated scrolling and haptic detents (the
+   * built-in Wear behavior). Grabs focus when composed; only one screen shows at a time so they
+   * don't fight over focus.
+   */
+  @Composable
+  private fun Modifier.rotaryScroll(state: ScrollableState): Modifier {
+    val focusRequester = remember { FocusRequester() }
+    LaunchedEffect(Unit) { focusRequester.requestFocus() }
+    return this.rotaryScrollable(
+      RotaryScrollableDefaults.behavior(scrollableState = state),
+      focusRequester = focusRequester,
+    )
+  }
+
   @Composable
   fun WearAppScreen() {
     MaterialTheme {
@@ -447,7 +466,7 @@ class MainActivity : ComponentActivity() {
     val entries = deckEntries()
     ScalingLazyColumn(
       state = listState,
-      modifier = Modifier.fillMaxSize(),
+      modifier = Modifier.fillMaxSize().rotaryScroll(listState),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(4.dp),
     ) {
@@ -527,7 +546,7 @@ class MainActivity : ComponentActivity() {
     var pickingNewCount by remember { mutableStateOf(false) }
     ScalingLazyColumn(
       state = listState,
-      modifier = Modifier.fillMaxSize(),
+      modifier = Modifier.fillMaxSize().rotaryScroll(listState),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -619,6 +638,7 @@ class MainActivity : ComponentActivity() {
       remember(card.id, card.ord) { mutableLongStateOf(System.currentTimeMillis()) }
     var isRevealed by remember(card.id, card.ord) { mutableStateOf(session.isRevealed()) }
     var isAnswering by remember(card.id, card.ord) { mutableStateOf(false) }
+    val scrollState = rememberScrollState()
 
     // Anki answers usually embed the question followed by <hr id=answer>; show only the part after
     // it so the answer view doesn't duplicate the front. Falls back to the whole back if no marker.
@@ -666,7 +686,8 @@ class MainActivity : ComponentActivity() {
         modifier =
           Modifier.weight(1f)
             .fillMaxWidth()
-            .verticalScroll(rememberScrollState())
+            .verticalScroll(scrollState)
+            .rotaryScroll(scrollState)
             .padding(vertical = 6.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -695,11 +716,11 @@ class MainActivity : ComponentActivity() {
         }
       }
 
-      // Grading grid is fixed at the bottom (so it stays reachable while the answer scrolls),
-      // lifted off the round bezel.
+      // Grading grid sits in the lower-middle band (not flush to the bottom) so both rows stay
+      // clear of the narrow round edges while the answer scrolls above it.
       if (isRevealed) {
         Box(
-          modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
+          modifier = Modifier.fillMaxWidth().padding(bottom = 34.dp),
           contentAlignment = Alignment.Center,
         ) {
           val duration = System.currentTimeMillis() - cardStartTime
@@ -753,21 +774,28 @@ class MainActivity : ComponentActivity() {
       }
     Column(
       horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.spacedBy(4.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
       grades.chunked(2).forEach { row ->
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
           row.forEach { g ->
-            Chip(
+            // Short single-line compact chips so the 2x2 grid stays clear of the round edges.
+            CompactChip(
               onClick = { if (enabled) onGrade(g.ease, g.autoSync) },
-              label = { Text(g.text, maxLines = 1) },
-              secondaryLabel = { Text(g.time, maxLines = 1) },
+              label = {
+                Text(
+                  "${g.text} ${g.time}",
+                  maxLines = 1,
+                  overflow = androidx.compose.ui.text.style.TextOverflow.Clip,
+                  style = MaterialTheme.typography.caption2,
+                )
+              },
               colors =
                 ChipDefaults.chipColors(
                   backgroundColor = g.color.copy(alpha = 0.30f),
                   contentColor = g.color,
                 ),
-              modifier = Modifier.width(90.dp),
+              modifier = Modifier.width(82.dp),
             )
           }
         }
@@ -848,7 +876,7 @@ class MainActivity : ComponentActivity() {
     var pickingNewCount by remember { mutableStateOf(false) }
     ScalingLazyColumn(
       state = listState,
-      modifier = Modifier.fillMaxSize(),
+      modifier = Modifier.fillMaxSize().rotaryScroll(listState),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Center,
     ) {
