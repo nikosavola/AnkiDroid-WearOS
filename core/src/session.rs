@@ -2,8 +2,8 @@
 
 use crate::db::{get_db_connection, remove_buffered_answers, save_answer};
 use crate::models::{CoreError, WearosAnswer, WearosCard, WearosDueBatch};
+use crate::util::unix_millis;
 use std::sync::Mutex;
-use std::time::SystemTime;
 
 /// End-of-session tally shown on the finished screen: how many cards were graded and how they broke
 /// down by ease, plus the total time spent.
@@ -81,12 +81,7 @@ impl ReviewSession {
             }
 
             let card = &self.batch.cards[*index];
-            let id = format!(
-                "{}_{}_{}",
-                card.id,
-                card.ord,
-                SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap().as_millis()
-            );
+            let id = format!("{}_{}_{}", card.id, card.ord, unix_millis());
             let card_clone = card.clone();
             *index += 1;
             drop(index);

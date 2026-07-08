@@ -482,8 +482,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
   /** " · N due" for a node's subtree, or "" when we have no count data for it (never shows 0). */
   private fun dueSuffix(node: DeckNode): String {
-    val ids = mutableListOf<Long>().also { collectDeckIds(node, it) }
-    val known = ids.mapNotNull { deckCounts[it] }
+    val known = node.deckIds().mapNotNull { deckCounts[it] }
     return if (known.isEmpty()) "" else " · ${known.sum()} due"
   }
 
@@ -499,7 +498,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       // path (itself included). Children only render when the folder is expanded. While a search
       // filter is active, every folder is forced open so matches are visible.
       val expanded = deckFilter.isNotBlank() || expandedFolders.contains(path)
-      val deckIds = mutableListOf<Long>().also { collectDeckIds(node, it) }
+      val deckIds = node.deckIds()
       val allChecked = deckIds.isNotEmpty() && deckIds.all { prefs.getBoolean("deck_$it", true) }
 
       val row =
@@ -854,3 +853,6 @@ internal fun collectDeckIds(node: DeckNode, out: MutableList<Long>) {
   node.deckId?.let { out.add(it) }
   for (child in node.children.values) collectDeckIds(child, out)
 }
+
+/** Every real deck id at or below this node — an idiomatic `buildList` wrapper. */
+internal fun DeckNode.deckIds(): List<Long> = buildList { collectDeckIds(this@deckIds, this) }

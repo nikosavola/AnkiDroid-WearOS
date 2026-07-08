@@ -90,7 +90,7 @@ private fun DeckNodeRow(
         animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
         label = "chevron",
       )
-    val deckIds = remember(node) { mutableListOf<Long>().also { collectDeckIds(node, it) } }
+    val deckIds = remember(node) { node.deckIds() }
     val allChecked = deckIds.isNotEmpty() && deckIds.all { checkedOf(it) }
 
     Surface(
@@ -173,9 +173,7 @@ private fun DeckSelectionTreePreview() {
       root = root,
       checkedOf = { checked[it] ?: false },
       onDeckChecked = { id, c -> checked[id] = c },
-      onFolderChecked = { node, c ->
-        mutableListOf<Long>().also { collectDeckIds(node, it) }.forEach { checked[it] = c }
-      },
+      onFolderChecked = { node, c -> node.deckIds().forEach { checked[it] = c } },
       dueCountOf = { null },
     )
   }
