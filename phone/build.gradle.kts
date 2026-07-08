@@ -30,6 +30,18 @@ android {
     targetCompatibility = JavaVersion.VERSION_21
   }
   sourceSets { getByName("main") { java.srcDirs("src/main/java", "../bindings") } }
+
+  testOptions {
+    unitTests {
+      isIncludeAndroidResources = true
+      all {
+        // Point JNA at the host-built libwearos_core.so so the Rust core is callable from JVM
+        // tests.
+        it.systemProperty("jna.library.path", rootProject.file("core/target/debug").absolutePath)
+        it.dependsOn(":compileRustHost")
+      }
+    }
+  }
 }
 
 kotlin { jvmToolchain(21) }
@@ -48,4 +60,12 @@ dependencies {
   implementation("net.java.dev.jna:jna:5.14.0@aar")
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.play.services)
+
+  testImplementation(libs.junit)
+  testImplementation(libs.robolectric)
+  testImplementation(libs.mockk)
+  testImplementation(libs.androidx.test.core)
+  testImplementation(libs.androidx.test.ext.junit)
+  // Plain desktop JNA jar so uniffi's Native.load works under the host test JVM.
+  testImplementation(libs.jna.jvm)
 }

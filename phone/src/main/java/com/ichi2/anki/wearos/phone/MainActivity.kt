@@ -530,7 +530,7 @@ class DeckNode(val name: String) {
 }
 
 /** Build a folder tree from flat `parent::child` deck names. */
-private fun buildDeckTree(decks: List<Pair<Long, String>>): DeckNode {
+internal fun buildDeckTree(decks: List<Pair<Long, String>>): DeckNode {
   val root = DeckNode("")
   for ((id, fullName) in decks) {
     var node = root
@@ -543,7 +543,7 @@ private fun buildDeckTree(decks: List<Pair<Long, String>>): DeckNode {
 }
 
 /** Collect every real deck id at or below [node]. */
-private fun collectDeckIds(node: DeckNode, out: MutableList<Long>) {
+internal fun collectDeckIds(node: DeckNode, out: MutableList<Long>) {
   node.deckId?.let { out.add(it) }
   for (child in node.children.values) collectDeckIds(child, out)
 }
