@@ -2,6 +2,7 @@ package fi.nikosavola.ankidroid.wearos.phone
 
 import android.content.Context
 import android.util.Log
+import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
@@ -14,6 +15,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import uniffi.wearos_core.WearosDueBatch
 import uniffi.wearos_core.deserializeAnswers
 import uniffi.wearos_core.serializeDueBatch
 
@@ -35,10 +37,12 @@ class WearSyncService : WearableListenerService() {
   private val job = SupervisorJob()
   private val scope = CoroutineScope(Dispatchers.IO + job)
   private lateinit var bridge: AnkiDroidBridge
+  private lateinit var renderer: CardBitmapRenderer
 
   override fun onCreate() {
     super.onCreate()
     bridge = AnkiDroidBridge(applicationContext)
+    renderer = CardBitmapRenderer(applicationContext)
     Log.d(TAG, "WearSyncService created on Phone Companion.")
   }
 
@@ -88,13 +92,13 @@ class WearSyncService : WearableListenerService() {
 
             // 3. Broadcast back to Watch
             val dataClient = Wearable.getDataClient(this@WearSyncService)
-            val putDataReq =
-              PutDataMapRequest.create(PATH_DUE_BATCH)
-                .apply {
-                  dataMap.putByteArray(KEY_BATCH_BYTES, gzip(bytes))
-                  setUrgent()
-                }
-                .asPutDataRequest()
+            val putDataMapReq =
+              PutDataMapRequest.create(PATH_DUE_BATCH).apply {
+                dataMap.putByteArray(KEY_BATCH_BYTES, gzip(bytes))
+                setUrgent()
+              }
+            populateDataMapWithBitmaps(putDataMapReq, batch)
+            val putDataReq = putDataMapReq.asPutDataRequest()
 
             dataClient.putDataItem(putDataReq).await()
             Log.i(TAG, "Successfully synced requested deck $deckId back to watch!")
@@ -148,14 +152,14 @@ class WearSyncService : WearableListenerService() {
             val bytes = serializeDueBatch(batch)
 
             val dataClient = Wearable.getDataClient(this@WearSyncService)
-            val putDataReq =
-              PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId")
-                .apply {
-                  dataMap.putByteArray(KEY_BATCH_BYTES, gzip(bytes))
-                  dataMap.putLong("synced_at", System.currentTimeMillis())
-                  setUrgent()
-                }
-                .asPutDataRequest()
+            val putDataMapReq =
+              PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId").apply {
+                dataMap.putByteArray(KEY_BATCH_BYTES, gzip(bytes))
+                dataMap.putLong("synced_at", System.currentTimeMillis())
+                setUrgent()
+              }
+            populateDataMapWithBitmaps(putDataMapReq, batch)
+            val putDataReq = putDataMapReq.asPutDataRequest()
             dataClient.putDataItem(putDataReq).await()
             Log.i(TAG, "Synced ${batch.cards.size} new cards for deck $deckId back to watch.")
           } catch (e: Exception) {
@@ -200,6 +204,33 @@ class WearSyncService : WearableListenerService() {
       }
     } catch (e: Exception) {
       Log.e(TAG, "Failed to process answers: ${e.message}", e)
+    }
+  }
+
+  private suspend fun populateDataMapWithBitmaps(
+    putDataMapReq: PutDataMapRequest,
+    batch: WearosDueBatch,
+  ) {
+    for (card in batch.cards) {
+      if (renderer.needsRichRendering(card.front)) {
+        Log.d(TAG, "Card ${card.id} (front) needs rich rendering. Rendering offscreen...")
+        val frontBytes = renderer.render(card.front)
+        if (frontBytes != null) {
+          val asset = Asset.createFromBytes(frontBytes)
+          putDataMapReq.dataMap.putAsset("img_${card.id}_front", asset)
+          Log.d(TAG, "Successfully attached front image asset for card ${card.id}")
+        }
+      }
+
+      if (renderer.needsRichRendering(card.back)) {
+        Log.d(TAG, "Card ${card.id} (back) needs rich rendering. Rendering offscreen...")
+        val backBytes = renderer.render(card.back)
+        if (backBytes != null) {
+          val asset = Asset.createFromBytes(backBytes)
+          putDataMapReq.dataMap.putAsset("img_${card.id}_back", asset)
+          Log.d(TAG, "Successfully attached back image asset for card ${card.id}")
+        }
+      }
     }
   }
 }

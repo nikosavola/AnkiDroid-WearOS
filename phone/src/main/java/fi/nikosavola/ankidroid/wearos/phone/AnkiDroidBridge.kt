@@ -210,6 +210,7 @@ class AnkiDroidBridge(private val context: Context) {
    * (a single-card note matched by `is:new` is provably the new card); multi-card notes are skipped
    * since the Card projection doesn't expose per-card queue state.
    */
+  @Suppress("LongMethod", "CyclomaticComplexMethod")
   fun fetchNewCards(deckId: Long, limit: Int, forceMock: Boolean = false): WearosDueBatch {
     if (forceMock || !isAnkiDroidAvailable()) {
       return getMockDueBatch(deckId).let { it.copy(deckName = "${it.deckName} (new)") }

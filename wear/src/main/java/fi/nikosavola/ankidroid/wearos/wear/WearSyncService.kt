@@ -65,7 +65,7 @@ class WearSyncService : WearableListenerService() {
           val bytes = dataMapItem.dataMap.getByteArray(KEY_BATCH_BYTES)
 
           if (bytes != null) {
-            scope.launch { saveBatchCache(gunzip(bytes)) }
+            scope.launch { saveBatchCache(gunzip(bytes), dataMapItem) }
           }
         } else if (path == PATH_DECKS) {
           val dataMapItem = DataMapItem.fromDataItem(event.dataItem)
@@ -104,7 +104,7 @@ class WearSyncService : WearableListenerService() {
     }
   }
 
-  private fun saveBatchCache(bytes: ByteArray) {
+  private suspend fun saveBatchCache(bytes: ByteArray, dataMapItem: DataMapItem) {
     try {
       Log.d(TAG, "Validating received batch bytes via Rust FFI...")
       // 1. Validate the byte array by deserializing it (takes ByteArray directly)
@@ -114,11 +114,29 @@ class WearSyncService : WearableListenerService() {
         "Successfully validated batch: '${batch.deckName}' with ${batch.cards.size} cards.",
       )
 
-      // 2. Persist per-deck so multiple decks can be cached and switched offline
+      // 2. Extract and save associated image assets for each card
+      val dataMap = dataMapItem.dataMap
+      for (card in batch.cards) {
+        val frontAssetKey = "img_${card.id}_front"
+        val frontAsset = dataMap.getAsset(frontAssetKey)
+        if (frontAsset != null) {
+          Log.d(TAG, "Found front image asset for card ${card.id}. Saving...")
+          CardImageCache.saveImage(this, card.id, "front", frontAsset)
+        }
+
+        val backAssetKey = "img_${card.id}_back"
+        val backAsset = dataMap.getAsset(backAssetKey)
+        if (backAsset != null) {
+          Log.d(TAG, "Found back image asset for card ${card.id}. Saving...")
+          CardImageCache.saveImage(this, card.id, "back", backAsset)
+        }
+      }
+
+      // 3. Persist per-deck so multiple decks can be cached and switched offline
       DeckCache.saveBatch(this, batch.deckId, bytes)
       Log.i(TAG, "Saved deck ${batch.deckId} ('${batch.deckName}') to local cache.")
 
-      // 3. Broadcast to the MainActivity UI that new cards are ready, tagged with the deck id
+      // 4. Broadcast to the MainActivity UI that new cards are ready, tagged with the deck id
       val intent =
         Intent(ACTION_BATCH_UPDATED).apply {
           setPackage(packageName)
