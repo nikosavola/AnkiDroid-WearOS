@@ -34,6 +34,9 @@ class AnkiDroidBridge(private val context: Context) {
     private val DECKS_URI = Uri.parse("content://$AUTHORITY/decks")
     private const val COL_DECK_ID = "deck_id"
     private const val COL_DECK_NAME = "deck_name"
+
+    // Notes search endpoint: the selection string is an Anki browser query (col.findNotes).
+    private val NOTES_URI = Uri.parse("content://$AUTHORITY/notes")
   }
 
   /** Check if the AnkiDroid provider is installed and accessible. */
@@ -194,6 +197,99 @@ class AnkiDroidBridge(private val context: Context) {
     } catch (e: Exception) {
       Log.e(TAG, "Failed to query AnkiDroid ContentProvider: ${e.message}. Using mocks.", e)
       return getMockDueBatch(deckId)
+    }
+  }
+
+  /**
+   * Fetch up to [limit] NEW cards from a deck so the user can study ahead from the watch, bypassing
+   * the scheduler's daily new-card queue limit. Answering these later via ReviewInfo graduates
+   * them.
+   *
+   * To avoid rescheduling a card the user didn't intend, only notes with a single card are included
+   * (a single-card note matched by `is:new` is provably the new card); multi-card notes are skipped
+   * since the Card projection doesn't expose per-card queue state.
+   */
+  fun fetchNewCards(deckId: Long, limit: Int, forceMock: Boolean = false): WearosDueBatch {
+    if (forceMock || !isAnkiDroidAvailable()) {
+      return getMockDueBatch(deckId).let { it.copy(deckName = "${it.deckName} (new)") }
+    }
+    try {
+      val allDecks = fetchAllDecks()
+      val (resolvedDeckId, resolvedDeckName) =
+        allDecks.find { it.first == deckId } ?: getSelectedDeck()
+
+      val escaped = resolvedDeckName.replace("\"", "\\\"")
+      val search = "deck:\"$escaped\" is:new"
+      Log.i(TAG, "Searching new cards: $search")
+
+      val cr = context.contentResolver
+      val noteIds = mutableListOf<Long>()
+      cr.query(NOTES_URI, arrayOf("_id"), search, null, null)?.use { cursor ->
+        val idIdx = cursor.getColumnIndex("_id")
+        while (cursor.moveToNext() && noteIds.size < limit) {
+          if (idIdx != -1) noteIds.add(cursor.getLong(idIdx))
+        }
+      }
+      Log.d(TAG, "Found ${noteIds.size} new-card notes (capped at $limit).")
+
+      val cards = mutableListOf<WearosCard>()
+      var skippedMulti = 0
+      for (noteId in noteIds) {
+        val ords = mutableListOf<Int>()
+        cr
+          .query(Uri.parse("content://$AUTHORITY/notes/$noteId/cards"), null, null, null, null)
+          ?.use { c ->
+            val ordIdx = c.getColumnIndex(COL_CARD_ORD)
+            while (c.moveToNext()) if (ordIdx != -1) ords.add(c.getInt(ordIdx))
+          }
+        // Only single-card notes are guaranteed to be the new card matched by the search.
+        if (ords.size != 1) {
+          skippedMulti++
+          continue
+        }
+        val ord = ords[0]
+        var front = "No Front Text"
+        var back = "No Back Text"
+        var cardId = 0L
+        cr
+          .query(
+            Uri.parse("content://$AUTHORITY/notes/$noteId/cards/$ord"),
+            arrayOf("_id", "question", "answer"),
+            null,
+            null,
+            null,
+          )
+          ?.use { cc ->
+            if (cc.moveToFirst()) {
+              cc.getColumnIndex("_id").let { if (it != -1) cardId = cc.getLong(it) }
+              cc.getColumnIndex("question").let { if (it != -1) front = cc.getString(it) }
+              cc.getColumnIndex("answer").let { if (it != -1) back = cc.getString(it) }
+            }
+          }
+        cards.add(
+          WearosCard(
+            id = cardId,
+            noteId = noteId,
+            ord = ord,
+            front = front,
+            back = back,
+            buttonCount = 4,
+            // New cards aren't in the scheduler queue, so we don't have per-ease previews.
+            nextReviewTimes = listOf("1m", "10m", "1d", "4d"),
+          )
+        )
+      }
+      if (skippedMulti > 0) {
+        Log.i(TAG, "Skipped $skippedMulti multi-card notes to avoid rescheduling non-new cards.")
+      }
+      return WearosDueBatch(
+        deckId = resolvedDeckId,
+        deckName = "$resolvedDeckName (new)",
+        cards = cards,
+      )
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to fetch new cards: ${e.message}", e)
+      return WearosDueBatch(deckId = deckId, deckName = "New cards", cards = emptyList())
     }
   }
 

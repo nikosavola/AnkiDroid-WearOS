@@ -25,6 +25,7 @@ class WearSyncService : WearableListenerService() {
     private const val PATH_CLEAR_ANSWERS = "/clear_answers"
     private const val PATH_REQUEST_DECK = "/request_deck"
     private const val PATH_REQUEST_DECKS = "/request_decks"
+    private const val PATH_REQUEST_NEW = "/request_new"
     private const val PATH_DECKS = "/decks"
     private const val KEY_DECKS_BYTES = "decks_bytes"
     private const val PATH_DUE_BATCH = "/due_batch"
@@ -129,6 +130,40 @@ class WearSyncService : WearableListenerService() {
         } catch (e: Exception) {
           Log.e(TAG, "Failed to refresh and sync decks list to watch: ${e.message}", e)
         }
+      }
+    }
+
+    if (messageEvent.path == PATH_REQUEST_NEW) {
+      // Payload is "deckId:count" — study N new cards ahead of the daily queue limit.
+      val parts = String(messageEvent.data).split(":")
+      try {
+        val deckId = parts[0].toLong()
+        val count = parts.getOrNull(1)?.toIntOrNull() ?: 10
+        Log.i(TAG, "Smartwatch requested $count new cards for deck ID: $deckId")
+
+        scope.launch {
+          try {
+            val batch = bridge.fetchNewCards(deckId = deckId, limit = count)
+            Log.d(TAG, "Fetched ${batch.cards.size} new cards for '${batch.deckName}'.")
+            val bytes = serializeDueBatch(batch)
+
+            val dataClient = Wearable.getDataClient(this@WearSyncService)
+            val putDataReq =
+              PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId")
+                .apply {
+                  dataMap.putByteArray(KEY_BATCH_BYTES, bytes)
+                  dataMap.putLong("synced_at", System.currentTimeMillis())
+                  setUrgent()
+                }
+                .asPutDataRequest()
+            dataClient.putDataItem(putDataReq).await()
+            Log.i(TAG, "Synced ${batch.cards.size} new cards for deck $deckId back to watch.")
+          } catch (e: Exception) {
+            Log.e(TAG, "Failed to fetch/sync new cards for deck $deckId: ${e.message}", e)
+          }
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Malformed request_new payload: ${e.message}")
       }
     }
   }

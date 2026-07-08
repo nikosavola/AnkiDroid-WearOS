@@ -31,6 +31,7 @@
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/answers" />
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/request_deck" />
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/request_decks" />
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/request_new" />
             </intent-filter>
         </service>
         
