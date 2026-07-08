@@ -40,9 +40,19 @@ import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
-import androidx.wear.compose.material.*
+import androidx.wear.compose.material3.AppScaffold
+import androidx.wear.compose.material3.Button
+import androidx.wear.compose.material3.ButtonDefaults
+import androidx.wear.compose.material3.Card
+import androidx.wear.compose.material3.ChildButton
+import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.EdgeButton
 import androidx.wear.compose.material3.EdgeButtonSize
+import androidx.wear.compose.material3.Icon
+import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.SwitchButton
+import androidx.wear.compose.material3.Text
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import java.io.File
@@ -440,8 +450,6 @@ class MainActivity : ComponentActivity() {
   @Composable
   fun WearAppScreen() {
     MaterialTheme {
-      val listState = rememberScalingLazyListState()
-
       // Safe, native physical Back Button navigation logic
       val session = reviewSession
       if (isReviewing) {
@@ -450,18 +458,18 @@ class MainActivity : ComponentActivity() {
         androidx.activity.compose.BackHandler { reviewSession = null }
       }
 
-      Scaffold(positionIndicator = { PositionIndicator(scalingLazyListState = listState) }) {
+      AppScaffold {
         @Suppress("UNUSED_VARIABLE")
         val trigger =
           cardCompletedTrigger // Subscribes this composable context to our recomposition trigger!
         if (session == null) {
-          WelcomeScreen(listState)
+          WelcomeScreen()
         } else {
           val currentCard = session.getCurrentCard()
           if (currentCard == null) {
-            FinishedScreen(listState)
+            FinishedScreen()
           } else if (!isReviewing) {
-            DeckScreen(listState, session)
+            DeckScreen(session)
           } else {
             ReviewCardScreen(session, currentCard)
           }
@@ -471,10 +479,18 @@ class MainActivity : ComponentActivity() {
   }
 
   @Composable
-  fun WelcomeScreen(listState: androidx.wear.compose.foundation.lazy.ScalingLazyListState) {
+  fun WelcomeScreen() {
+    val listState = rememberScalingLazyListState()
     val entries = deckEntries()
+    ScreenScaffold(scrollState = listState) { contentPadding ->
     ScalingLazyColumn(
       state = listState,
+      contentPadding = contentPadding,
+      // ScreenScaffold's contentPadding already reserves exactly the space needed at each end
+      // (including room for the trailing EdgeButton); auto-centering would additionally pad the
+      // list so the last item can reach the screen's vertical center, letting it be over-scrolled
+      // well past its resting spot at the bezel.
+      autoCentering = null,
       modifier = Modifier.fillMaxSize().rotaryScroll(listState),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -482,7 +498,7 @@ class MainActivity : ComponentActivity() {
       item {
         Text(
           text = "AnkiDroid Wear",
-          style = MaterialTheme.typography.title3,
+          style = MaterialTheme.typography.titleMedium,
           modifier = Modifier.padding(bottom = 6.dp),
         )
       }
@@ -491,7 +507,7 @@ class MainActivity : ComponentActivity() {
         item {
           Text(
             text = "Tap Refresh to load your decks, or open the phone app and press Sync.",
-            style = MaterialTheme.typography.body2,
+            style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
             textAlign = TextAlign.Center,
           )
@@ -500,8 +516,8 @@ class MainActivity : ComponentActivity() {
         item {
           Text(
             text = "Select a Deck:",
-            style = MaterialTheme.typography.caption1,
-            color = MaterialTheme.colors.secondary,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 4.dp),
           )
         }
@@ -510,7 +526,7 @@ class MainActivity : ComponentActivity() {
             Column {
               Text(
                 text = entry.name,
-                style = MaterialTheme.typography.body2,
+                style = MaterialTheme.typography.bodyMedium,
                 maxLines = 2,
                 overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
               )
@@ -521,9 +537,10 @@ class MainActivity : ComponentActivity() {
                   } else {
                     "Tap to download"
                   },
-                style = MaterialTheme.typography.caption3,
+                style = MaterialTheme.typography.labelSmall,
                 color =
-                  if (entry.cardCount != null) Color(0xFF66BB6A) else MaterialTheme.colors.secondary,
+                  if (entry.cardCount != null) Color(0xFF66BB6A)
+                  else MaterialTheme.colorScheme.onSurfaceVariant,
               )
             }
           }
@@ -532,11 +549,12 @@ class MainActivity : ComponentActivity() {
 
       item { Spacer(modifier = Modifier.height(8.dp)) }
       item {
-        Button(
+        EdgeButton(
           onClick = {
             requestDecksFromPhone()
             loadDecks()
-          }
+          },
+          buttonSize = EdgeButtonSize.Medium,
         ) {
           Icon(
             painter = painterResource(id = R.drawable.ic_refresh),
@@ -545,16 +563,19 @@ class MainActivity : ComponentActivity() {
         }
       }
     }
+    }
   }
 
   @Composable
-  fun DeckScreen(
-    listState: androidx.wear.compose.foundation.lazy.ScalingLazyListState,
-    session: ReviewSession,
-  ) {
+  fun DeckScreen(session: ReviewSession) {
     var pickingNewCount by remember { mutableStateOf(false) }
+    val listState = rememberScalingLazyListState()
+    ScreenScaffold(scrollState = listState) { contentPadding ->
     ScalingLazyColumn(
       state = listState,
+      contentPadding = contentPadding,
+      // See WelcomeScreen: avoid over-scrolling the list past its natural end.
+      autoCentering = null,
       modifier = Modifier.fillMaxSize().rotaryScroll(listState),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -562,15 +583,15 @@ class MainActivity : ComponentActivity() {
       item {
         Text(
           text = "📚 Deck Stats",
-          style = MaterialTheme.typography.caption1,
-          color = MaterialTheme.colors.secondary,
+          style = MaterialTheme.typography.labelMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.padding(bottom = 2.dp),
         )
       }
       item {
         Text(
           text = session.getDeckName(),
-          style = MaterialTheme.typography.title3,
+          style = MaterialTheme.typography.titleMedium,
           modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 4.dp),
         )
       }
@@ -579,65 +600,59 @@ class MainActivity : ComponentActivity() {
           Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Text(
               text = "Due Cards: ${session.getTotalCards()}",
-              style = MaterialTheme.typography.body2,
+              style = MaterialTheme.typography.bodyMedium,
             )
             Text(
               text = "Progress: ${session.getProgressString()}",
-              style = MaterialTheme.typography.caption2,
+              style = MaterialTheme.typography.labelSmall,
               color = Color.LightGray,
             )
           }
         }
       }
       item {
-        Chip(
-          label = { Text("Start Review") },
+        Button(
           onClick = { isReviewing = true },
-          colors = ChipDefaults.primaryChipColors(),
+          colors = ButtonDefaults.buttonColors(),
           modifier = Modifier.fillMaxWidth(0.9f),
-        )
+        ) {
+          Text("Start Review")
+        }
       }
       // Study new cards ahead of the daily queue limit. Only available when we know the deck id.
       if (activeDeckId != null) {
         newCardControlItems(pickingNewCount) { pickingNewCount = it }
       }
       item {
-        ToggleChip(
+        SwitchButton(
           checked = ttsEnabled,
           onCheckedChange = { ttsEnabled = it },
           label = { Text("Voice Reviews") },
           secondaryLabel = { Text(if (ttsEnabled) "Speaker On 🔊" else "Speaker Off 🔇") },
-          toggleControl = {
-            Icon(
-              imageVector = ToggleChipDefaults.switchIcon(checked = ttsEnabled),
-              contentDescription = "TTS Switch",
-            )
-          },
           modifier = Modifier.fillMaxWidth(0.9f),
         )
       }
       if (outstandingAnswersCount > 0) {
         item {
-          Chip(
-            label = { Text("Sync $outstandingAnswersCount Reviews") },
+          Button(
             onClick = { triggerAnswersSync() },
             colors =
-              ChipDefaults.secondaryChipColors(
-                backgroundColor = Color(0xFF66BB6A).copy(alpha = 0.2f),
+              ButtonDefaults.buttonColors(
+                containerColor = Color(0xFF66BB6A).copy(alpha = 0.2f),
                 contentColor = Color(0xFF66BB6A),
               ),
             modifier = Modifier.fillMaxWidth(0.9f),
-          )
+          ) {
+            Text("Sync $outstandingAnswersCount Reviews")
+          }
         }
       }
       item {
-        Chip(
-          label = { Text("Change Deck") },
-          onClick = { reviewSession = null },
-          colors = ChipDefaults.chipColors(backgroundColor = Color.DarkGray.copy(alpha = 0.4f)),
-          modifier = Modifier.fillMaxWidth(0.9f),
-        )
+        ChildButton(onClick = { reviewSession = null }, modifier = Modifier.fillMaxWidth(0.9f)) {
+          Text("Change Deck")
+        }
       }
+    }
     }
   }
 
@@ -676,13 +691,13 @@ class MainActivity : ComponentActivity() {
       }
     }
 
-    if (!isRevealed) {
-      // Front: the whole card is tappable to reveal; a small grey hint says so.
-      Box(modifier = Modifier.fillMaxSize()) {
+    ScreenScaffold(scrollState = scrollState) {
+      if (!isRevealed) {
+        // Front: the whole card is tappable to reveal; a small grey hint says so.
         Text(
           text = session.getProgressString(),
-          style = MaterialTheme.typography.caption2,
-          color = MaterialTheme.colors.secondary,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
         )
         Column(
@@ -705,7 +720,7 @@ class MainActivity : ComponentActivity() {
         }
         Text(
           text = "Tap to show answer",
-          style = MaterialTheme.typography.caption3,
+          style = MaterialTheme.typography.labelSmall,
           color = Color.LightGray,
           modifier =
             Modifier.align(Alignment.BottomCenter)
@@ -713,16 +728,14 @@ class MainActivity : ComponentActivity() {
               .background(Color.DarkGray.copy(alpha = 0.55f), RoundedCornerShape(50))
               .padding(horizontal = 10.dp, vertical = 3.dp),
         )
-      }
-    } else {
-      // Answer: the card fills the screen and scrolls under the grade buttons, which overlay the
-      // lower bezel with some transparency so the card shows through.
-      val duration = System.currentTimeMillis() - cardStartTime
-      Box(modifier = Modifier.fillMaxSize()) {
+      } else {
+        // Answer: the card fills the screen and scrolls under the grade buttons, which overlay the
+        // lower bezel with some transparency so the card shows through.
+        val duration = System.currentTimeMillis() - cardStartTime
         Text(
           text = session.getProgressString(),
-          style = MaterialTheme.typography.caption2,
-          color = MaterialTheme.colors.secondary,
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
         )
         Column(
@@ -805,15 +818,16 @@ class MainActivity : ComponentActivity() {
           curvedComposable { Spacer(modifier = Modifier.size(2.dp)) }
         }
         curvedComposable {
-          CompactChip(
+          CompactButton(
             onClick = { if (enabled) onGrade(g.ease, g.autoSync) },
-            label = { Text(g.text, maxLines = 1, style = MaterialTheme.typography.caption3) },
             colors =
-              ChipDefaults.chipColors(
-                backgroundColor = g.color.copy(alpha = 0.32f),
+              ButtonDefaults.buttonColors(
+                containerColor = g.color.copy(alpha = 0.32f),
                 contentColor = g.color,
               ),
-          )
+          ) {
+            Text(g.text, maxLines = 1, style = MaterialTheme.typography.labelSmall)
+          }
         }
       }
     }
@@ -847,51 +861,60 @@ class MainActivity : ComponentActivity() {
     val purpleFg = Color(0xFFB39DDB)
     if (!picking) {
       item {
-        Chip(
-          label = { Text("Learn new cards") },
+        Button(
           onClick = { setPicking(true) },
-          colors = ChipDefaults.chipColors(backgroundColor = purpleBg, contentColor = purpleFg),
+          colors = ButtonDefaults.buttonColors(containerColor = purpleBg, contentColor = purpleFg),
           modifier = Modifier.fillMaxWidth(0.9f),
-        )
+        ) {
+          Text("Learn new cards")
+        }
       }
     } else {
       item {
         Text(
           text = "How many new?",
-          style = MaterialTheme.typography.caption1,
-          color = MaterialTheme.colors.secondary,
+          style = MaterialTheme.typography.labelMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
       item {
         Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
           listOf(5, 10, 20).forEach { n ->
-            CompactChip(
-              label = { Text("$n") },
+            CompactButton(
               onClick = {
                 setPicking(false)
                 activeDeckId?.let { requestNewCardsFromPhone(it, n) }
               },
-              colors = ChipDefaults.chipColors(backgroundColor = purpleBg, contentColor = purpleFg),
+              colors =
+                ButtonDefaults.buttonColors(containerColor = purpleBg, contentColor = purpleFg),
               modifier = Modifier.width(56.dp),
-            )
+            ) {
+              Text("$n")
+            }
           }
         }
       }
       item {
-        CompactChip(
-          label = { Text("Cancel") },
+        CompactButton(
           onClick = { setPicking(false) },
-          colors = ChipDefaults.chipColors(backgroundColor = Color.DarkGray.copy(alpha = 0.4f)),
-        )
+          colors = ButtonDefaults.filledTonalButtonColors(),
+        ) {
+          Text("Cancel")
+        }
       }
     }
   }
 
   @Composable
-  fun FinishedScreen(listState: androidx.wear.compose.foundation.lazy.ScalingLazyListState) {
+  fun FinishedScreen() {
     var pickingNewCount by remember { mutableStateOf(false) }
+    val listState = rememberScalingLazyListState()
+    ScreenScaffold(scrollState = listState) { contentPadding ->
     ScalingLazyColumn(
       state = listState,
+      contentPadding = contentPadding,
+      // See WelcomeScreen: avoid over-scrolling the list past its natural end.
+      autoCentering = null,
       modifier = Modifier.fillMaxSize().rotaryScroll(listState),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Center,
@@ -899,21 +922,21 @@ class MainActivity : ComponentActivity() {
       item {
         Text(
           text = "Nice Job! 🎉",
-          style = MaterialTheme.typography.title3,
+          style = MaterialTheme.typography.titleMedium,
           modifier = Modifier.padding(bottom = 8.dp),
         )
       }
       item {
         Text(
           text = "You finished your study queue for now.",
-          style = MaterialTheme.typography.body2,
+          style = MaterialTheme.typography.bodyMedium,
           modifier = Modifier.padding(horizontal = 16.dp),
         )
       }
       item {
         Text(
           text = "Outstanding reviews: $outstandingAnswersCount",
-          style = MaterialTheme.typography.caption2,
+          style = MaterialTheme.typography.labelSmall,
           color = Color.LightGray,
           modifier = Modifier.padding(vertical = 8.dp),
         )
@@ -938,6 +961,7 @@ class MainActivity : ComponentActivity() {
           )
         }
       }
+    }
     }
   }
 }
