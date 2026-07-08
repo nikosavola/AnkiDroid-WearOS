@@ -1,6 +1,6 @@
 //! In-progress review session: tracks the current card, reveal state, and buffers each answer.
 
-use crate::db::{get_db_connection, save_answer};
+use crate::db::{get_db_connection, remove_buffered_answers, save_answer};
 use crate::models::{CoreError, WearosAnswer, WearosCard, WearosDueBatch};
 use std::sync::Mutex;
 use std::time::SystemTime;
@@ -10,13 +10,21 @@ pub struct ReviewSession {
     batch: WearosDueBatch,
     current_index: Mutex<usize>,
     is_revealed: Mutex<bool>,
+    // Buffer ids of the answers given so far, newest last — one per answered card. Lets undo pop the
+    // last one and delete it from the local buffer, so an accidental grade doesn't reach the phone.
+    answer_ids: Mutex<Vec<String>>,
 }
 
 #[uniffi::export]
 impl ReviewSession {
     #[uniffi::constructor]
     pub fn new(batch: WearosDueBatch) -> Self {
-        Self { batch, current_index: Mutex::new(0), is_revealed: Mutex::new(false) }
+        Self {
+            batch,
+            current_index: Mutex::new(0),
+            is_revealed: Mutex::new(false),
+            answer_ids: Mutex::new(Vec::new()),
+        }
     }
 
     pub fn get_deck_name(&self) -> String {
@@ -79,12 +87,43 @@ impl ReviewSession {
             let _ = save_answer(answer.clone());
         }
 
+        // Record the id so undo_last_answer can pop + delete it later.
+        self.answer_ids.lock().unwrap().push(answer.id.clone());
+
         {
             let mut revealed = self.is_revealed.lock().unwrap();
             *revealed = false;
         }
 
         Ok(Some(answer))
+    }
+
+    /// Whether there's a graded card to step back to.
+    pub fn can_undo(&self) -> bool {
+        *self.current_index.lock().unwrap() > 0
+    }
+
+    /// Undo the most recent grade: step the queue back one card, drop that answer from the local
+    /// buffer (so it never reaches the phone), and re-show the card un-revealed. Returns the card
+    /// that is now current again, or `None` if there was nothing to undo.
+    pub fn undo_last_answer(&self) -> Result<Option<WearosCard>, CoreError> {
+        {
+            let mut index = self.current_index.lock().unwrap();
+            if *index == 0 {
+                return Ok(None);
+            }
+            *index -= 1;
+        }
+
+        // Pop the id for the card we just stepped back onto and delete it from the buffer.
+        if let Some(id) = self.answer_ids.lock().unwrap().pop()
+            && get_db_connection().is_ok()
+        {
+            let _ = remove_buffered_answers(vec![id]);
+        }
+
+        *self.is_revealed.lock().unwrap() = false;
+        Ok(self.get_current_card())
     }
 
     pub fn get_progress_string(&self) -> String {

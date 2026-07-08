@@ -34,6 +34,9 @@ object DeckSync {
   private const val PATH_DECKS = "/decks"
   private const val KEY_DECKS_BYTES = "decks_bytes"
 
+  /** Epoch-millis of the last completed sync (foreground or background); 0 if never. */
+  const val KEY_LAST_SYNC_MS = "last_sync_ms"
+
   private const val SETTINGS_PREFS = "settings_prefs"
   private const val DECK_PREFS = "deck_sync_prefs"
   private const val KEY_FORCE_MOCK = "force_mock"
@@ -120,6 +123,7 @@ object DeckSync {
       Log.d(TAG, "Pushed deck $deckId ('$deckName') with ${batch.cards.size} cards.")
     }
 
+    settings.edit().putLong(KEY_LAST_SYNC_MS, System.currentTimeMillis()).apply()
     val summary = SyncSummary(pushed, totalCards, filteredDecks.size - scanned)
     Log.i(TAG, "Sync complete: ${summary.message()}")
     return summary

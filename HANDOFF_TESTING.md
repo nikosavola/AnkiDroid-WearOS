@@ -254,6 +254,35 @@ Adds recurring background sync so the watch gets fresh due cards without the use
   **Test:** grade a card; feel one tick; ensure no double-fire when tapping fast (guarded by
   `isAnswering`).
 
+## 1.15 Undo, phone deck search/bulk-select, last-synced, keep-screen-on, per-deck counts
+
+Batch of the "other improvements" list.
+
+- **Undo last grade** (Rust-verified + watch UI). `ReviewSession` gained an answer-id stack:
+  `can_undo()` and `undo_last_answer()` step the queue back one card, pop + delete that answer from
+  the local buffer (so it never reaches the phone), and re-show the card un-revealed —
+  multi-level. Test: `test_review_session_undo`. Watch: a "↩" `CompactButton` (top-start of the
+  front view, shown when `canUndo()`) calls `undoLastAnswer`. **Verify** the button placement on a
+  round display (top corners clip) and that undo after an auto-synced grade still removes it locally
+  (it can't un-write one already applied on the phone — that's expected).
+- **Phone deck search** — a Material `TextInputLayout` search box filters the tree by deck name
+  (case-insensitive); folders force-open while filtering; an empty result shows a "No decks match"
+  hint. **Test** with the 164-deck collection.
+- **Phone bulk select** — "Select all" / "Select none" outlined buttons flip every `deck_<id>` pref.
+- **Last synced caption** — `DeckSync` records `KEY_LAST_SYNC_MS` on every successful run (foreground
+  or background); the phone shows "Last synced 5 minutes ago" (via `DateUtils`) under the header,
+  refreshed on sync-done and `onResume`. **Test** that a background auto-sync updates it too.
+- **Keep screen on during review** (watch, opt-in). `WatchSettings.keepScreenOn` (default off) +
+  a Settings switch; `ReviewCardScreen` holds `FLAG_KEEP_SCREEN_ON` via a `DisposableEffect` only
+  while reviewing. **Test** the flag clears when leaving the review (check it doesn't leak on).
+- **Per-deck due counts** (phone, best-effort, LOW confidence). `AnkiDroidBridge.fetchDeckCounts()`
+  reads the Deck provider's `deck_counts` column *if it exists*, summing its integers; rows show
+  " · N due" (folders sum their subtree). **Absence is treated as unknown → no annotation, never
+  0.** **VERIFY:** the column name/format against the installed AnkiDroid (this was written without
+  a device); if counts look wrong or missing, confirm the real column/semantics in
+  `FlashCardsContract.Deck`. Loaded off the main thread after the tree draws (the provider may
+  compute counts collection-wide, which can be slow).
+
 ---
 
 # Part 2 — Remaining backlog (not implemented here)

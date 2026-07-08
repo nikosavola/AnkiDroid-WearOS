@@ -13,6 +13,7 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.widget.addTextChangedListener
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -47,6 +48,11 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   // Folder paths currently expanded in the deck selector. Empty = everything collapsed, so the
   // list opens compact (just the top-level folders) and the user drills in with [+].
   private val expandedFolders = mutableSetOf<String>()
+  // Case-insensitive deck-name filter from the search box; blank shows the full tree.
+  private var deckFilter: String = ""
+  private lateinit var lastSyncText: TextView
+  // Best-effort per-deck due totals (deckId -> count); empty when AnkiDroid doesn't expose them.
+  private var deckCounts: Map<Long, Int> = emptyMap()
 
   // Mirrors SyncService progress into the in-app status line + bar while the Activity is alive.
   private val syncProgressReceiver =
@@ -69,6 +75,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
           if (error) {
             progressBar.visibility = View.GONE
           } else {
+            updateLastSyncLabel()
             // Hold the "Done" state briefly, then clear.
             syncStatusText.postDelayed(
               {
@@ -203,6 +210,74 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       }
     rootLayout.addView(sectionHeader)
 
+    // "Last synced …" caption (relative time), refreshed on launch and after each sync.
+    lastSyncText =
+      com.google.android.material.textview.MaterialTextView(this).apply {
+        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
+        setTextColor(
+          com.google.android.material.color.MaterialColors.getColor(
+            this,
+            com.google.android.material.R.attr.colorOnSurfaceVariant,
+          )
+        )
+        setPadding(0, 0, 0, 12)
+      }
+    rootLayout.addView(lastSyncText)
+    updateLastSyncLabel()
+
+    // Search box to filter the deck tree — a big help when the collection has many decks.
+    val searchLayout =
+      com.google.android.material.textfield.TextInputLayout(this).apply {
+        hint = "Search decks"
+        layoutParams =
+          LinearLayout.LayoutParams(
+              LinearLayout.LayoutParams.MATCH_PARENT,
+              LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            .apply { setMargins(0, 0, 0, (8 * density).toInt()) }
+      }
+    val searchEdit =
+      com.google.android.material.textfield.TextInputEditText(searchLayout.context).apply {
+        isSingleLine = true
+        imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+        addTextChangedListener { editable ->
+          deckFilter = editable?.toString().orEmpty().trim()
+          renderDeckTree()
+        }
+      }
+    searchLayout.addView(searchEdit)
+    rootLayout.addView(searchLayout)
+
+    // Bulk select controls, since toggling 100+ decks one by one is painful.
+    val bulkRow =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setPadding(0, 0, 0, (8 * density).toInt())
+      }
+    bulkRow.addView(
+      com.google.android.material.button
+        .MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
+        .apply {
+          text = "Select all"
+          setOnClickListener { setAllDecksSelected(true) }
+        }
+    )
+    bulkRow.addView(
+      com.google.android.material.button
+        .MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
+        .apply {
+          text = "Select none"
+          setOnClickListener { setAllDecksSelected(false) }
+          layoutParams =
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+              )
+              .apply { setMarginStart((8 * density).toInt()) }
+        }
+    )
+    rootLayout.addView(bulkRow)
+
     // Scrollable container for the checkboxes for our decks list
     val scrollView =
       ScrollView(this).apply {
@@ -272,6 +347,12 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     AutoSync.applyFromSettings(this)
   }
 
+  override fun onResume() {
+    super.onResume()
+    // A background auto-sync may have run while we were away; refresh the relative time.
+    if (::lastSyncText.isInitialized) updateLastSyncLabel()
+  }
+
   override fun onDestroy() {
     super.onDestroy()
     unregisterReceiver(syncProgressReceiver)
@@ -331,6 +412,10 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       }
       allDecks = withContext(Dispatchers.IO) { bridge.fetchAllDecks() }
       renderDeckTree()
+      // Due counts (if the provider exposes them) can be slow; load them after the tree is drawn
+      // and re-render to annotate rows.
+      deckCounts = withContext(Dispatchers.IO) { bridge.fetchDeckCounts() }
+      if (deckCounts.isNotEmpty()) renderDeckTree()
     }
   }
 
@@ -338,14 +423,59 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   private fun renderDeckTree() {
     deckListLayout.removeAllViews()
     val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-    val root = buildDeckTree(allDecks)
+    val decks =
+      if (deckFilter.isBlank()) {
+        allDecks
+      } else {
+        allDecks.filter { it.second.contains(deckFilter, ignoreCase = true) }
+      }
+    if (decks.isEmpty()) {
+      deckListLayout.addView(
+        com.google.android.material.textview.MaterialTextView(this).apply {
+          text = if (deckFilter.isBlank()) "No decks found." else "No decks match \"$deckFilter\"."
+          setPadding(0, (8 * resources.displayMetrics.density).toInt(), 0, 0)
+        }
+      )
+      return
+    }
+    val root = buildDeckTree(decks)
     for (child in root.children.values) {
       addDeckNodeViews(child, 0, child.name, prefs)
     }
   }
 
+  /** Check or uncheck every deck at once (bulk select controls above the tree). */
+  private fun setAllDecksSelected(selected: Boolean) {
+    val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
+    prefs.edit().apply { for ((id, _) in allDecks) putBoolean("deck_$id", selected) }.apply()
+    renderDeckTree()
+  }
+
+  /** Refresh the "Last synced …" caption from the stored timestamp. */
+  private fun updateLastSyncLabel() {
+    val ms = settings.getLong(DeckSync.KEY_LAST_SYNC_MS, 0L)
+    lastSyncText.text =
+      if (ms <= 0L) {
+        "Not synced yet"
+      } else {
+        "Last synced " +
+          android.text.format.DateUtils.getRelativeTimeSpanString(
+            ms,
+            System.currentTimeMillis(),
+            android.text.format.DateUtils.MINUTE_IN_MILLIS,
+          )
+      }
+  }
+
   // Fixed expander column width so leaf checkboxes line up under folder names at the same depth.
   private val expanderWidthPx by lazy { (48 * resources.displayMetrics.density).toInt() }
+
+  /** " · N due" for a node's subtree, or "" when we have no count data for it (never shows 0). */
+  private fun dueSuffix(node: DeckNode): String {
+    val ids = mutableListOf<Long>().also { collectDeckIds(node, it) }
+    val known = ids.mapNotNull { deckCounts[it] }
+    return if (known.isEmpty()) "" else " · ${known.sum()} due"
+  }
 
   private fun addDeckNodeViews(
     node: DeckNode,
@@ -356,8 +486,9 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     val indent = 32 + depth * 56
     if (node.children.isNotEmpty()) {
       // Folder row: a [+]/[-] expander plus a checkbox that toggles every deck nested under this
-      // path (itself included). Children only render when the folder is expanded.
-      val expanded = expandedFolders.contains(path)
+      // path (itself included). Children only render when the folder is expanded. While a search
+      // filter is active, every folder is forced open so matches are visible.
+      val expanded = deckFilter.isNotBlank() || expandedFolders.contains(path)
       val deckIds = mutableListOf<Long>().also { collectDeckIds(node, it) }
       val allChecked = deckIds.isNotEmpty() && deckIds.all { prefs.getBoolean("deck_$it", true) }
 
@@ -393,7 +524,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       row.addView(expander)
       val folder =
         com.google.android.material.checkbox.MaterialCheckBox(this).apply {
-          text = "📁 ${node.name}"
+          text = "📁 ${node.name}${dueSuffix(node)}"
           setTypeface(null, android.graphics.Typeface.BOLD)
           isChecked = allChecked
           setPadding(16, 0, 0, 0)
@@ -423,7 +554,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         }
       val cb =
         com.google.android.material.checkbox.MaterialCheckBox(this).apply {
-          text = node.name
+          text = "${node.name}${dueSuffix(node)}"
           isChecked = prefs.getBoolean("deck_$id", true)
           setOnCheckedChangeListener { _, checked ->
             prefs.edit().putBoolean("deck_$id", checked).apply()

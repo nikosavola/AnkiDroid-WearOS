@@ -12,6 +12,7 @@ object WatchSettings {
   private const val KEY_THEME = "theme_mode"
   private const val KEY_FONT_SCALE = "font_scale"
   private const val KEY_CARD_FONT = "card_font"
+  private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
 
   /** Theme selection. SYSTEM follows the OS light/dark setting where the platform reports one. */
   enum class ThemeMode {
@@ -54,5 +55,13 @@ object WatchSettings {
 
   fun setCardFont(context: Context, font: CardFont) {
     prefs(context).edit().putString(KEY_CARD_FONT, font.name).apply()
+  }
+
+  /** Keep the screen awake during a review (handy for hands-free TTS study; costs battery). */
+  fun keepScreenOn(context: Context): Boolean =
+    prefs(context).getBoolean(KEY_KEEP_SCREEN_ON, false)
+
+  fun setKeepScreenOn(context: Context, on: Boolean) {
+    prefs(context).edit().putBoolean(KEY_KEEP_SCREEN_ON, on).apply()
   }
 }
