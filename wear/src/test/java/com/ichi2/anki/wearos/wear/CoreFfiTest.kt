@@ -12,10 +12,12 @@ import uniffi.wearos_core.answerHtml
 import uniffi.wearos_core.cleanHtml
 import uniffi.wearos_core.deckChildren
 import uniffi.wearos_core.deserializeDueBatch
+import uniffi.wearos_core.deserializeDueBatchProto
 import uniffi.wearos_core.formatQueueEta
 import uniffi.wearos_core.htmlForDisplay
 import uniffi.wearos_core.parseReviewTimes
 import uniffi.wearos_core.serializeDueBatch
+import uniffi.wearos_core.serializeDueBatchProto
 
 /**
  * Exercises the Rust core through the generated Kotlin bindings (camelCase names, record mapping,
@@ -90,6 +92,32 @@ class CoreFfiTest {
     assertEquals("Deck", restored.deckName)
     assertEquals(1, restored.cards.size)
     assertEquals("Q", restored.cards[0].front)
+    assertEquals(listOf("1m", "10m"), restored.cards[0].nextReviewTimes)
+  }
+
+  @Test
+  fun serializeDueBatchProto_roundTrips() {
+    val batch =
+      WearosDueBatch(
+        deckId = 9,
+        deckName = "文法",
+        cards =
+          listOf(
+            WearosCard(
+              id = 1,
+              noteId = 2,
+              ord = 0,
+              front = "<b>Q</b>",
+              back = "A",
+              buttonCount = 4,
+              nextReviewTimes = listOf("1m", "10m"),
+            )
+          ),
+      )
+    val restored = deserializeDueBatchProto(serializeDueBatchProto(batch))
+    assertEquals(9L, restored.deckId)
+    assertEquals("文法", restored.deckName)
+    assertEquals("<b>Q</b>", restored.cards[0].front)
     assertEquals(listOf("1m", "10m"), restored.cards[0].nextReviewTimes)
   }
 

@@ -4,10 +4,12 @@
 
 uniffi::setup_scaffolding!();
 
+mod async_ops;
 mod db;
 mod decks;
 mod html;
 mod models;
+mod proto;
 mod session;
 mod sync;
 mod tile;
@@ -15,10 +17,12 @@ mod tile;
 // Flatten the crate's Rust surface so tests and any internal callers see everything at the root.
 // (UniFFI records each #[uniffi::export] at its definition site, so the module layout doesn't
 // affect the generated Kotlin API.)
+pub use async_ops::*;
 pub use db::*;
 pub use decks::*;
 pub use html::*;
 pub use models::*;
+pub use proto::*;
 pub use session::*;
 pub use sync::*;
 pub use tile::*;
@@ -281,6 +285,40 @@ mod tests {
         // Neither gzip nor JSON: a clear SerializationError, not a panic. (WearosDueBatch isn't
         // Debug, so match the result rather than unwrap_err.)
         let result = deserialize_due_batch(vec![b'n', b'o', b'p', b'e']);
+        assert!(matches!(result, Err(CoreError::SerializationError { .. })));
+    }
+
+    #[test]
+    fn test_due_batch_proto_round_trips() {
+        let batch = WearosDueBatch {
+            deck_id: 55,
+            deck_name: "文法".to_string(),
+            cards: vec![card_with_front("<b>Q</b>"), card_with_front("Q2")],
+        };
+        let bytes = serialize_due_batch_proto(batch);
+        let restored = deserialize_due_batch_proto(bytes).unwrap();
+        assert_eq!(restored.deck_id, 55);
+        assert_eq!(restored.deck_name, "文法");
+        assert_eq!(restored.cards.len(), 2);
+        assert_eq!(restored.cards[0].front, "<b>Q</b>");
+        assert_eq!(restored.cards[1].front, "Q2");
+        assert_eq!(restored.cards[0].next_review_times, vec!["1m".to_string()]);
+    }
+
+    #[test]
+    fn test_due_batch_proto_smaller_than_raw_json() {
+        // Protobuf drops the JSON field-name overhead; on a many-card batch it beats raw JSON.
+        let cards: Vec<WearosCard> = (0..50).map(|_| card_with_front("some front text")).collect();
+        let batch = WearosDueBatch { deck_id: 1, deck_name: "D".to_string(), cards };
+        let proto_len = serialize_due_batch_proto(batch.clone()).len();
+        let json_len = serde_json::to_vec(&batch).unwrap().len();
+        assert!(proto_len < json_len, "proto {proto_len} not smaller than json {json_len}");
+    }
+
+    #[test]
+    fn test_due_batch_proto_rejects_garbage() {
+        // Invalid protobuf wire bytes surface a SerializationError rather than panicking.
+        let result = deserialize_due_batch_proto(vec![0xff, 0xff, 0xff, 0xff]);
         assert!(matches!(result, Err(CoreError::SerializationError { .. })));
     }
 

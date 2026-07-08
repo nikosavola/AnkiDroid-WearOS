@@ -140,6 +140,54 @@ tags, multiple `[sound:]`, case-insensitive `<STYLE>`), `deck_children` (deep tr
 own deck, duplicate leaf names), buffer error paths when the DB was never initialized, and
 `answer_html` marker edge cases. Buffer tests are serialized with a lock (shared global `DB_CONN`).
 
+## 1.7 UniFFI async/suspend seed  ✅ Rust-verified (Kotlin consumption unverified)
+
+`core/src/async_ops.rs` exports `deserialize_due_batch_async` / `serialize_due_batch_async` as
+Rust `async fn`, which UniFFI maps to Kotlin `suspend fun deserializeDueBatchAsync(...)` etc. This
+is the migration seed for "do the work in Rust, consume with coroutines" instead of
+`withContext(Dispatchers.IO) { blockingFfi() }`.
+- **Important caveat (in the module doc too):** these bodies have no `.await`, so they don't yet
+  move CPU work off the caller's thread — they prove the binding shape. To *actually* offload,
+  add the `tokio` feature to the `uniffi` dep and use `#[uniffi::export(async_runtime = "tokio")]`
+  + `tokio::task::spawn_blocking`. Kept runtime-free so the crate still builds with no runtime.
+- **How to test:** after `generateBindings`, call `deserializeDueBatchAsync(bytes)` from a coroutine
+  in the watch's `loadDeckSession` instead of `withContext(Dispatchers.IO){ deserializeDueBatch }`;
+  confirm it suspends and returns correctly, and that cancellation behaves. A host-JVM
+  `runBlocking { }` test is possible but async-over-JNA under Robolectric wasn't validated here.
+
+## 1.8 Protobuf wire format (experimental, parallel to JSON)  ✅ Rust-verified
+
+`core/src/proto.rs` defines the due batch as `prost`-annotated structs (no `protoc`, no `build.rs`
+— derive macros only) and exports `serialize_due_batch_proto` / `deserialize_due_batch_proto`.
+Tests: round-trip, "smaller than raw JSON", and garbage-rejection. **Not wired into the Kotlin sync
+path** — it's a measurable A/B candidate. To adopt: swap `serde_json` for these inside
+`serialize_due_batch`/`deserialize_due_batch` (keep the gzip wrapper), regenerate, and confirm both
+apps still round-trip. Combined with gzip it should beat gzipped-JSON on dense decks — measure.
+
+## 1.9 Predictive back  ⚠️ manifest-only, verify on device
+
+Added `android:enableOnBackInvokedCallback="true"` to both `<application>` tags. The watch already
+uses Compose `BackHandler` and the phone uses the framework back; with the flag on, the OS can run
+ahead-of-time back animations. **How to test:** on Android 13+/Wear, the predictive-back gesture
+shows the peek/animation; all existing back behaviors (leave review, up-a-folder, close settings)
+still fire. For custom animated transitions, migrate specific `BackHandler`s to `PredictiveBackHandler`.
+
+## 1.10 Phone deck-tree motion (stopgap)  ⚠️ unverified
+
+`phone/.../MainActivity` sets `deckListLayout.layoutTransition = LayoutTransition()` so rows animate
+in/out on expand/collapse instead of snapping. This is a stopgap — a true M3 Expressive tree
+(spring chevron rotation, per-subtree animation, tonal emphasis) still wants the Compose migration
+(see 2.6). **How to test:** expand/collapse a folder; rows should animate rather than jump. If the
+full-list rebuild makes the whole list crossfade (janky), that confirms the rebuild architecture is
+the real blocker → do 2.6.
+
+## 1.11 New unit tests
+
+- Rust: proto round-trip / size / garbage (`test_due_batch_proto_*`).
+- Kotlin (phone): `SyncServiceTest` covers the extracted pure `SyncService.syncProgressPercent`
+  (ramp, ≤95 clamp, zero-cap guard) — no device/native needed.
+- Kotlin (wear): `CoreFfiTest.serializeDueBatchProto_roundTrips` exercises the new proto bindings.
+
 ---
 
 # Part 2 — Remaining backlog (not implemented here)
@@ -317,14 +365,16 @@ treatment.
 | Pitch-accent CSS + images (bitmaps) | ⏸ scaffolding exists; extend + verify |
 | HtmlCompat inline CSS sizes | ⏸ mitigated by global scale; else needs bitmaps |
 | Scrolling/card perf | ⏸ needs on-device profiling |
-| Phone M3 Expressive Compose + animated tree | ⏸ big migration |
+| Phone animated deck tree | ◐ LayoutTransition stopgap; full Expressive tree = Compose migration |
+| Phone M3 Expressive Compose migration | ⏸ big migration (deck-tree stopgap landed) |
 | Compose Tiles rebuild | ⏸ |
-| ProgressStyle notifications | ⏸ API 36 gated |
-| Edge-to-edge + predictive back | ⏸ audit |
+| ProgressStyle notifications | ⏸ API 36 gated (needs compileSdk 36 bump) |
+| Predictive back | ◐ manifest flag on; verify + optional PredictiveBackHandler |
+| Edge-to-edge | ⏸ audit (phone insets already applied) |
 | Rotary dial verification | ⏸ device-only |
 | Power checklist | ⏸ device-only |
 | AGP 9.2.1 migration | ⏸ blocked, dedicated task |
-| UniFFI async/suspend | ⏸ architectural |
-| Protobuf/FlatBuffers | ⏸ architectural |
+| UniFFI async/suspend | ◐ seed exports added (runtime-free); wire + tokio to offload |
+| Protobuf/FlatBuffers | ◐ prost path added + tested; not wired into sync yet |
 | binder code 10 / error -74 | ⏸ investigate |
 | Kotlin + instrumented/E2E tests | ⏸ largest remaining test gap |
