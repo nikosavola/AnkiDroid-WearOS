@@ -523,29 +523,52 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   }
 
   /**
-   * Debug info about the AnkiDroid connection + watch link, shown when the status line is tapped.
+   * Debug info about the app, the AnkiDroid connection, the current settings, and the watch link,
+   * shown when the status line is tapped. Grouped into sections and copyable for bug reports. The
+   * cheap facts are gathered synchronously; the selected-deck ContentProvider query and the
+   * connected-watch list are filled in asynchronously so the dialog opens instantly.
    */
   private fun showConnectionInfoDialog() {
     val available = bridge.isAnkiDroidAvailable()
     val permGranted = checkSelfPermission(PERMISSION_ANKIDROID) == PackageManager.PERMISSION_GRANTED
-    val version =
-      try {
-        packageManager.getPackageInfo(packageName, 0).versionName
-      } catch (e: Exception) {
-        "?"
-      }
+    val notifGranted =
+      android.os.Build.VERSION.SDK_INT < 33 ||
+        checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
+          PackageManager.PERMISSION_GRANTED
+    val deckPrefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
+    val selectedCount = allDecks.count { deckPrefs.getBoolean("deck_${it.first}", true) }
+
     val lines =
       mutableListOf(
-        "AnkiDroid provider: ${if (available) "connected" else "not found"}",
-        "Authority: com.ichi2.anki.flashcards",
-        "Read/write permission: ${if (permGranted) "granted" else "denied"}",
-        "Force mock mode: ${if (forceMock()) "on" else "off"}",
-        "Read-only mode: ${if (readOnly()) "on" else "off"}",
-        "Decks visible: ${allDecks.size}",
-        "Pre-push cap: ${prePushCap()}",
-        "Connected watches: checking…",
-        "App version: $version",
+        "▸ App",
+        "   Version: ${appVersionString(packageName)}",
+        "   Android: ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})",
+        "   Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+        "",
+        "▸ AnkiDroid",
+        "   Provider: ${if (available) "connected" else "not found"}",
+        "   App: ${appVersionString("com.ichi2.anki")}",
+        "   Authority: com.ichi2.anki.flashcards",
+        "   Read/write permission: ${if (permGranted) "granted" else "denied"}",
+        "   Selected deck: checking…",
+        "   Decks visible: ${allDecks.size}",
+        "   Decks selected to sync: $selectedCount / ${allDecks.size}",
+        "",
+        "▸ Settings",
+        "   Force mock mode: ${if (forceMock()) "on" else "off"}",
+        "   Read-only mode: ${if (readOnly()) "on" else "off"}",
+        "   Pre-push cap: ${prePushCap()} decks",
+        "   Notifications: ${if (notifGranted) "granted" else "denied"}",
+        "",
+        "▸ Watch link",
+        "   Connected watches: checking…",
       )
+
+    // Update the value on the "label:" line in place, preserving section grouping.
+    fun setLine(label: String, value: String) {
+      val i = lines.indexOfFirst { it.trimStart().startsWith(label) }
+      if (i >= 0) lines[i] = "   $label $value"
+    }
 
     val dialog =
       com.google.android.material.dialog
@@ -553,24 +576,62 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         .setTitle("Connection info")
         .setMessage(lines.joinToString("\n"))
         .setPositiveButton("Close", null)
+        // Copy reads the current lines, so it includes whatever the async fill-in has resolved.
+        .setNeutralButton("Copy") { _, _ -> copyDebugInfo(lines.joinToString("\n")) }
         .show()
 
-    // The connected-watch list needs an async Wearable call; fill it in when it returns.
+    // The selected deck (a ContentProvider query) and the connected-watch list are async; resolve
+    // them off the main thread, then refresh the dialog text once.
     lifecycleScope.launch {
+      val selectedDeck =
+        withContext(Dispatchers.IO) {
+          try {
+            if (available) bridge.getSelectedDeck().let { "${it.second} (${it.first})" } else "n/a"
+          } catch (e: Exception) {
+            "error"
+          }
+        }
       val watches =
         try {
           com.google.android.gms.wearable.Wearable.getNodeClient(this@MainActivity)
             .connectedNodes
             .await()
-            .joinToString(", ") { it.displayName }
+            .joinToString(", ") { node ->
+              node.displayName + if (node.isNearby) " (nearby)" else ""
+            }
             .ifEmpty { "none" }
         } catch (e: Exception) {
           "error: ${e.message}"
         }
-      val watchLine = lines.indexOfFirst { it.startsWith("Connected watches") }
-      if (watchLine >= 0) lines[watchLine] = "Connected watches: $watches"
+      setLine("Selected deck:", selectedDeck)
+      setLine("Connected watches:", watches)
       dialog.setMessage(lines.joinToString("\n"))
     }
+  }
+
+  /** "versionName (versionCode)" for [pkg], or "not installed" when it isn't present. */
+  private fun appVersionString(pkg: String): String =
+    try {
+      val info = packageManager.getPackageInfo(pkg, 0)
+      val code =
+        if (android.os.Build.VERSION.SDK_INT >= 28) {
+          info.longVersionCode
+        } else {
+          @Suppress("DEPRECATION") info.versionCode.toLong()
+        }
+      "${info.versionName} ($code)"
+    } catch (e: Exception) {
+      if (pkg == packageName) "?" else "not installed"
+    }
+
+  /** Copy the debug report to the clipboard so it can be pasted into a bug report. */
+  private fun copyDebugInfo(text: String) {
+    val clipboard =
+      getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    clipboard.setPrimaryClip(
+      android.content.ClipData.newPlainText("AnkiDroid Wear debug info", text)
+    )
+    Toast.makeText(this, "Copied debug info", Toast.LENGTH_SHORT).show()
   }
 
   /** Resolve a theme attribute that points at a drawable (e.g. a ripple background). */
