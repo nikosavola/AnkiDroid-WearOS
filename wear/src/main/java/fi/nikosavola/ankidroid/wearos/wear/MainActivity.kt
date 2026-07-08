@@ -26,6 +26,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.text.HtmlCompat
 import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
+import androidx.wear.compose.foundation.lazy.ScalingLazyListScope
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
 import androidx.wear.compose.material.*
@@ -61,6 +62,10 @@ class MainActivity : ComponentActivity() {
 
   // Deck the user tapped to download; loaded automatically once its batch arrives from the phone.
   private var pendingDeckId: Long? = null
+  // The deck currently open in a review session (for requesting more new cards of it).
+  private var activeDeckId by mutableStateOf<Long?>(null)
+  // Whether the pending request was for new cards, so we can report when none came back.
+  private var pendingIsNew = false
 
   private var tts: TextToSpeech? = null
   private val scope = CoroutineScope(Dispatchers.Main)
@@ -78,8 +83,18 @@ class MainActivity : ComponentActivity() {
               pending != null &&
                 (arrived == pending || DeckCache.deckFile(this@MainActivity, pending).exists())
             ) {
+              val wasNew = pendingIsNew
               pendingDeckId = null
+              pendingIsNew = false
               loadDeckSession(pending)
+              if (wasNew && (reviewSession?.getTotalCards() ?: 0) == 0) {
+                Toast.makeText(
+                    this@MainActivity,
+                    "No studyable new cards (multi-template notes are skipped).",
+                    Toast.LENGTH_LONG,
+                  )
+                  .show()
+              }
             }
           }
           WearSyncService.ACTION_ANSWERS_CLEARED -> {
@@ -186,6 +201,7 @@ class MainActivity : ComponentActivity() {
       val bytes = DeckCache.deckFile(this, deckId).readBytes()
       val batch = deserializeDueBatch(bytes)
       reviewSession = ReviewSession(batch)
+      activeDeckId = deckId
       isReviewing = false
       Log.i(TAG, "Loaded deck '${batch.deckName}' with ${batch.cards.size} cards from cache.")
     } catch (e: Exception) {
@@ -205,6 +221,7 @@ class MainActivity : ComponentActivity() {
 
   private fun requestDeckFromPhone(deckId: Long) {
     pendingDeckId = deckId
+    pendingIsNew = false
     scope.launch(Dispatchers.IO) {
       try {
         val messageClient = Wearable.getMessageClient(this@MainActivity)
@@ -242,6 +259,38 @@ class MainActivity : ComponentActivity() {
               Toast.LENGTH_SHORT,
             )
             .show()
+        }
+      }
+    }
+  }
+
+  /** Ask the phone for [count] new cards of [deckId] to study ahead; auto-loads when it arrives. */
+  private fun requestNewCardsFromPhone(deckId: Long, count: Int) {
+    pendingDeckId = deckId
+    pendingIsNew = true
+    scope.launch(Dispatchers.IO) {
+      try {
+        val messageClient = Wearable.getMessageClient(this@MainActivity)
+        val nodeClient = Wearable.getNodeClient(this@MainActivity)
+        val nodes = nodeClient.connectedNodes.await()
+        if (nodes.isEmpty()) {
+          launch(Dispatchers.Main) {
+            Toast.makeText(this@MainActivity, "Phone not connected!", Toast.LENGTH_SHORT).show()
+          }
+          return@launch
+        }
+        for (node in nodes) {
+          messageClient.sendMessage(node.id, "/request_new", "$deckId:$count".toByteArray()).await()
+          Log.d(TAG, "Sent request_new ($deckId:$count) to node: ${node.displayName}")
+        }
+        launch(Dispatchers.Main) {
+          Toast.makeText(this@MainActivity, "Fetching $count new cards...", Toast.LENGTH_SHORT)
+            .show()
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to request new cards: ${e.message}", e)
+        launch(Dispatchers.Main) {
+          Toast.makeText(this@MainActivity, "Failed to contact phone.", Toast.LENGTH_SHORT).show()
         }
       }
     }
@@ -475,6 +524,7 @@ class MainActivity : ComponentActivity() {
     listState: androidx.wear.compose.foundation.lazy.ScalingLazyListState,
     session: ReviewSession,
   ) {
+    var pickingNewCount by remember { mutableStateOf(false) }
     ScalingLazyColumn(
       state = listState,
       modifier = Modifier.fillMaxSize(),
@@ -518,6 +568,10 @@ class MainActivity : ComponentActivity() {
           colors = ChipDefaults.primaryChipColors(),
           modifier = Modifier.fillMaxWidth(0.9f),
         )
+      }
+      // Study new cards ahead of the daily queue limit. Only available when we know the deck id.
+      if (activeDeckId != null) {
+        newCardControlItems(pickingNewCount) { pickingNewCount = it }
       }
       item {
         ToggleChip(
@@ -737,8 +791,58 @@ class MainActivity : ComponentActivity() {
     )
   }
 
+  /** "Learn new cards" chip that expands into a 5/10/20 chooser; shared by Deck and Finished. */
+  private fun ScalingLazyListScope.newCardControlItems(
+    picking: Boolean,
+    setPicking: (Boolean) -> Unit,
+  ) {
+    val purpleBg = Color(0xFF7E57C2).copy(alpha = 0.3f)
+    val purpleFg = Color(0xFFB39DDB)
+    if (!picking) {
+      item {
+        Chip(
+          label = { Text("Learn new cards") },
+          onClick = { setPicking(true) },
+          colors = ChipDefaults.chipColors(backgroundColor = purpleBg, contentColor = purpleFg),
+          modifier = Modifier.fillMaxWidth(0.9f),
+        )
+      }
+    } else {
+      item {
+        Text(
+          text = "How many new?",
+          style = MaterialTheme.typography.caption1,
+          color = MaterialTheme.colors.secondary,
+        )
+      }
+      item {
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          listOf(5, 10, 20).forEach { n ->
+            CompactChip(
+              label = { Text("$n") },
+              onClick = {
+                setPicking(false)
+                activeDeckId?.let { requestNewCardsFromPhone(it, n) }
+              },
+              colors = ChipDefaults.chipColors(backgroundColor = purpleBg, contentColor = purpleFg),
+              modifier = Modifier.width(56.dp),
+            )
+          }
+        }
+      }
+      item {
+        CompactChip(
+          label = { Text("Cancel") },
+          onClick = { setPicking(false) },
+          colors = ChipDefaults.chipColors(backgroundColor = Color.DarkGray.copy(alpha = 0.4f)),
+        )
+      }
+    }
+  }
+
   @Composable
   fun FinishedScreen(listState: androidx.wear.compose.foundation.lazy.ScalingLazyListState) {
+    var pickingNewCount by remember { mutableStateOf(false) }
     ScalingLazyColumn(
       state = listState,
       modifier = Modifier.fillMaxSize(),
@@ -766,6 +870,10 @@ class MainActivity : ComponentActivity() {
           color = Color.LightGray,
           modifier = Modifier.padding(vertical = 8.dp),
         )
+      }
+      // Learn new cards right after finishing the due queue.
+      if (activeDeckId != null) {
+        newCardControlItems(pickingNewCount) { pickingNewCount = it }
       }
       item {
         Button(
