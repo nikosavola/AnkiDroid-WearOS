@@ -374,6 +374,7 @@ class MainActivity : ComponentActivity() {
       }
 
       Scaffold(positionIndicator = { PositionIndicator(scalingLazyListState = listState) }) {
+        @Suppress("UNUSED_VARIABLE")
         val trigger =
           cardCompletedTrigger // Subscribes this composable context to our recomposition trigger!
         if (session == null) {
@@ -385,7 +386,7 @@ class MainActivity : ComponentActivity() {
           } else if (!isReviewing) {
             DeckScreen(listState, session)
           } else {
-            ReviewCardScreen(listState, session, currentCard)
+            ReviewCardScreen(session, currentCard)
           }
         }
       }
@@ -559,11 +560,7 @@ class MainActivity : ComponentActivity() {
   }
 
   @Composable
-  fun ReviewCardScreen(
-    listState: androidx.wear.compose.foundation.lazy.ScalingLazyListState,
-    session: ReviewSession,
-    card: WearosCard,
-  ) {
+  fun ReviewCardScreen(session: ReviewSession, card: WearosCard) {
     var cardStartTime by
       remember(card.id, card.ord) { mutableLongStateOf(System.currentTimeMillis()) }
     var isRevealed by remember(card.id, card.ord) { mutableStateOf(session.isRevealed()) }

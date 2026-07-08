@@ -7,6 +7,7 @@ jna = "5.14.0"
 coroutines = "1.8.1"
 ktlint = "12.1.1"
 ktfmt = "0.26.0"
+detekt = "1.23.6"
 
 [libraries]
 # Kotlin and Coroutines
@@ -39,3 +40,4 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }
 ktfmt = { id = "com.ncorti.ktfmt.gradle", version.ref = "ktfmt" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }

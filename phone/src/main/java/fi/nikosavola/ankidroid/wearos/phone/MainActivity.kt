@@ -31,6 +31,7 @@ class MainActivity : Activity() {
     private const val PERMISSION_REQUEST_CODE = 420
     private const val PATH_DUE_BATCH = "/due_batch"
     private const val KEY_BATCH_BYTES = "batch_bytes"
+
     // Pre-push at most this many non-empty decks on a manual sync; scan at most this many looking
     // for them so a large collection doesn't make Sync crawl. The rest download on demand.
     private const val MAX_PREPUSH_DECKS = 15

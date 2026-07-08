@@ -6,6 +6,7 @@ plugins {
     alias(libs.plugins.compose.compiler) apply false
     alias(libs.plugins.ktlint) apply false
     alias(libs.plugins.ktfmt) apply false
+    alias(libs.plugins.detekt) apply false
 }
 
 tasks.register("clean", Delete::class) {
@@ -77,6 +78,25 @@ tasks.register<Exec>("generateBindings") {
 subprojects {
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
     apply(plugin = "com.ncorti.ktfmt.gradle")
+    apply(plugin = "io.gitlab.arturbosch.detekt")
+
+    configure<io.gitlab.arturbosch.detekt.extensions.DetektExtension> {
+        buildUponDefaultConfig = true
+        allRules = false
+        parallel = true
+    }
+
+    tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
+        exclude("**/bindings/**")
+        exclude("**/jniLibs/**")
+        exclude("**/uniffi/**")
+        exclude("**/wearos_core.kt")
+        reports {
+            html.required.set(true)
+            xml.required.set(true)
+            sarif.required.set(true)
+        }
+    }
 
     configure<org.jlleitschuh.gradle.ktlint.KtlintExtension> {
         filter {
@@ -129,5 +149,13 @@ tasks.register("formatAll") {
 tasks.register("lintAll") {
     group = "verification"
     description = "Run linter checks on both Kotlin and Rust codebases"
-    dependsOn(":phone:ktfmtCheck", ":wear:ktfmtCheck", ":phone:ktlintCheck", ":wear:ktlintCheck", "rustLint")
+    dependsOn(
+        ":phone:ktfmtCheck",
+        ":wear:ktfmtCheck",
+        ":phone:ktlintCheck",
+        ":wear:ktlintCheck",
+        ":phone:detekt",
+        ":wear:detekt",
+        "rustLint"
+    )
 }

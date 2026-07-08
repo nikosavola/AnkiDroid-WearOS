@@ -1,0 +1,5 @@
+# Rust formatting configuration adhering to stable compiler best practices.
+
+edition = "2024"
+use_small_heuristics = "Max"
+newline_style = "Unix"
