@@ -137,7 +137,8 @@ class SyncService : Service() {
         .putDataItem(
           PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId")
             .apply {
-              dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(gzip(bytes)))
+              // serializeDueBatch already gzips; ship the bytes straight into the Asset.
+              dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(bytes))
               dataMap.putLong("synced_at", System.currentTimeMillis())
               setUrgent()
             }

@@ -25,6 +25,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -80,6 +81,13 @@ class MainActivity : ComponentActivity() {
   private var outstandingAnswersCount by mutableStateOf(0)
   private var isReviewing by mutableStateOf(false)
   private var ttsEnabled by mutableStateOf(false)
+
+  // User settings mirrored into Compose state (persisted via WatchSettings). Changing any of these
+  // recomposes the theme / card text immediately.
+  private var themeMode by mutableStateOf(WatchSettings.ThemeMode.DARK)
+  private var fontScale by mutableFloatStateOf(1.0f)
+  private var cardFont by mutableStateOf(WatchSettings.CardFont.DEFAULT)
+  private var showSettings by mutableStateOf(false)
 
   // Current folder in the deck picker's `::` hierarchy ("" = root). Descending sets it to a child
   // path; the physical back button and the up row pop it one level.
@@ -152,11 +160,16 @@ class MainActivity : ComponentActivity() {
         }
       }
 
-    // 3. Load the list of decks (cached locally + known from the phone). Start on the picker.
+    // 3. Load persisted user settings (theme, card font) into Compose state.
+    themeMode = WatchSettings.themeMode(this)
+    fontScale = WatchSettings.fontScale(this)
+    cardFont = WatchSettings.cardFont(this)
+
+    // 4. Load the list of decks (cached locally + known from the phone). Start on the picker.
     loadDecks()
     updateOutstandingCount()
 
-    // 4. Register Receiver
+    // 5. Register Receiver
     val filter =
       IntentFilter().apply {
         addAction(WearSyncService.ACTION_BATCH_UPDATED)
@@ -173,6 +186,15 @@ class MainActivity : ComponentActivity() {
     unregisterReceiver(syncReceiver)
     tts?.stop()
     tts?.shutdown()
+    // ReviewSession is a UniFFI Object backed by a Rust handle the JVM GC can't size; free it
+    // explicitly rather than leaking the native allocation until a GC eventually runs.
+    clearSession()
+  }
+
+  /** Free the native [ReviewSession] before dropping the reference (see onDestroy). */
+  private fun clearSession() {
+    reviewSession?.destroy()
+    reviewSession = null
   }
 
   /**
@@ -247,6 +269,8 @@ class MainActivity : ComponentActivity() {
             deserializeDueBatch(DeckCache.deckFile(this@MainActivity, deckId).readBytes())
           }
         val session = ReviewSession(batch)
+        // Free any previous native session before replacing it.
+        reviewSession?.destroy()
         reviewSession = session
         activeDeckId = deckId
         isReviewing = false
@@ -482,13 +506,15 @@ class MainActivity : ComponentActivity() {
 
   @Composable
   fun WearAppScreen() {
-    MaterialTheme {
+    AnkiWearTheme(themeMode) {
       // Safe, native physical Back Button navigation logic
       val session = reviewSession
-      if (isReviewing) {
+      if (showSettings) {
+        androidx.activity.compose.BackHandler { showSettings = false }
+      } else if (isReviewing) {
         androidx.activity.compose.BackHandler { isReviewing = false }
       } else if (session != null) {
-        androidx.activity.compose.BackHandler { reviewSession = null }
+        androidx.activity.compose.BackHandler { clearSession() }
       } else if (deckFolderPath.isNotEmpty()) {
         // On the deck picker, back goes up one folder instead of leaving the app.
         androidx.activity.compose.BackHandler { deckFolderPath = parentFolder(deckFolderPath) }
@@ -498,7 +524,9 @@ class MainActivity : ComponentActivity() {
         @Suppress("UNUSED_VARIABLE")
         val trigger =
           cardCompletedTrigger // Subscribes this composable context to our recomposition trigger!
-        if (session == null) {
+        if (showSettings) {
+          SettingsScreen()
+        } else if (session == null) {
           WelcomeScreen()
         } else {
           val currentCard = session.getCurrentCard()
@@ -620,6 +648,16 @@ class MainActivity : ComponentActivity() {
             } else {
               DeckCard(id = node.id, label = node.name, cardCount = countById[node.id])
             }
+          }
+        }
+
+        item {
+          CompactButton(
+            onClick = { showSettings = true },
+            colors = ButtonDefaults.filledTonalButtonColors(),
+            modifier = Modifier.fillMaxWidth(0.7f),
+          ) {
+            Text("Settings")
           }
         }
 
@@ -746,7 +784,7 @@ class MainActivity : ComponentActivity() {
         }
         item { Spacer(modifier = Modifier.height(8.dp)) }
         item {
-          EdgeButton(onClick = { reviewSession = null }, buttonSize = EdgeButtonSize.Medium) {
+          EdgeButton(onClick = { clearSession() }, buttonSize = EdgeButtonSize.Medium) {
             Text("Change Deck")
           }
         }
@@ -987,20 +1025,28 @@ class MainActivity : ComponentActivity() {
 
   /**
    * Renders sanitized card HTML (bold, colors, line breaks, etc.) via HtmlCompat in a TextView.
-   * Wear OS has no WebView, so this is the richest safe renderer available.
+   * Wear OS has no WebView, so this is the richest safe renderer available. Text color follows the
+   * active theme (so it stays legible in light mode) and size/typeface follow the user's settings.
    */
   @Composable
   fun HtmlText(html: String, modifier: Modifier = Modifier) {
+    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
+    val scale = fontScale
+    val font = cardFont
     AndroidView(
       modifier = modifier,
-      factory = { ctx ->
-        TextView(ctx).apply {
-          setTextColor(android.graphics.Color.WHITE)
-          textSize = 16f
-          gravity = Gravity.CENTER
-        }
+      factory = { ctx -> TextView(ctx).apply { gravity = Gravity.CENTER } },
+      update = { tv ->
+        tv.setTextColor(textColor)
+        tv.textSize = 16f * scale
+        tv.typeface =
+          when (font) {
+            WatchSettings.CardFont.SERIF -> android.graphics.Typeface.SERIF
+            WatchSettings.CardFont.MONOSPACE -> android.graphics.Typeface.MONOSPACE
+            WatchSettings.CardFont.DEFAULT -> android.graphics.Typeface.DEFAULT
+          }
+        tv.text = HtmlCompat.fromHtml(html, HtmlCompat.FROM_HTML_MODE_COMPACT)
       },
-      update = { it.text = HtmlCompat.fromHtml(html, HtmlCompat.FROM_HTML_MODE_COMPACT) },
     )
   }
 
@@ -1103,13 +1149,132 @@ class MainActivity : ComponentActivity() {
             onClick = {
               triggerAnswersSync()
               isReviewing = false
-              reviewSession = null // return to decks selector list
+              clearSession() // return to decks selector list
             },
             buttonSize = EdgeButtonSize.Medium,
           ) {
             Icon(
               painter = painterResource(id = R.drawable.ic_check),
               contentDescription = "Sync and back to decks",
+            )
+          }
+        }
+      }
+    }
+  }
+
+  /** A labelled row of mutually-exclusive choice chips; the active one is filled, the rest tonal. */
+  @Composable
+  private fun <T> settingChoiceRow(
+    label: String,
+    options: List<Pair<T, String>>,
+    selected: T,
+    onSelect: (T) -> Unit,
+  ) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+      Text(
+        text = label,
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(bottom = 2.dp),
+      )
+      Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        options.forEach { (value, text) ->
+          CompactButton(
+            onClick = { onSelect(value) },
+            colors =
+              if (value == selected) ButtonDefaults.buttonColors()
+              else ButtonDefaults.filledTonalButtonColors(),
+          ) {
+            Text(text, maxLines = 1, style = MaterialTheme.typography.labelSmall)
+          }
+        }
+      }
+    }
+  }
+
+  @Composable
+  fun SettingsScreen() {
+    val listState = rememberScalingLazyListState()
+    ScreenScaffold(scrollState = listState) { contentPadding ->
+      ScalingLazyColumn(
+        state = listState,
+        contentPadding = contentPadding,
+        autoCentering = null,
+        modifier = Modifier.fillMaxSize().rotaryScroll(listState),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        item {
+          Text(
+            text = "Settings",
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(vertical = 6.dp),
+          )
+        }
+        item {
+          settingChoiceRow(
+            label = "Theme",
+            options =
+              listOf(
+                WatchSettings.ThemeMode.SYSTEM to "Auto",
+                WatchSettings.ThemeMode.DARK to "Dark",
+                WatchSettings.ThemeMode.LIGHT to "Light",
+              ),
+            selected = themeMode,
+          ) { mode ->
+            themeMode = mode
+            WatchSettings.setThemeMode(this@MainActivity, mode)
+          }
+        }
+        item {
+          settingChoiceRow(
+            label = "Text size",
+            options = listOf(0.9f to "S", 1.0f to "M", 1.3f to "L", 1.6f to "XL"),
+            selected = fontScale,
+          ) { scale ->
+            fontScale = scale
+            WatchSettings.setFontScale(this@MainActivity, scale)
+          }
+        }
+        item {
+          // Live preview at the chosen size + font.
+          val previewTypeface =
+            when (cardFont) {
+              WatchSettings.CardFont.SERIF -> androidx.compose.ui.text.font.FontFamily.Serif
+              WatchSettings.CardFont.MONOSPACE -> androidx.compose.ui.text.font.FontFamily.Monospace
+              WatchSettings.CardFont.DEFAULT -> androidx.compose.ui.text.font.FontFamily.Default
+            }
+          Text(
+            text = "あア 漢字 Aa 12",
+            style =
+              MaterialTheme.typography.bodyMedium.copy(
+                fontSize = (16 * fontScale).sp,
+                fontFamily = previewTypeface,
+              ),
+          )
+        }
+        item {
+          settingChoiceRow(
+            label = "Card font",
+            options =
+              listOf(
+                WatchSettings.CardFont.DEFAULT to "Sans",
+                WatchSettings.CardFont.SERIF to "Serif",
+                WatchSettings.CardFont.MONOSPACE to "Mono",
+              ),
+            selected = cardFont,
+          ) { font ->
+            cardFont = font
+            WatchSettings.setCardFont(this@MainActivity, font)
+          }
+        }
+        item { Spacer(modifier = Modifier.height(8.dp)) }
+        item {
+          EdgeButton(onClick = { showSettings = false }, buttonSize = EdgeButtonSize.Medium) {
+            Icon(
+              painter = painterResource(id = R.drawable.ic_check),
+              contentDescription = "Done",
             )
           }
         }

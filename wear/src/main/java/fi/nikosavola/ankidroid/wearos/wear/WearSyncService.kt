@@ -71,13 +71,14 @@ class WearSyncService : WearableListenerService() {
           val asset = dataMap.getAsset(KEY_BATCH_ASSET)
           if (asset != null) {
             scope.launch {
-              val gz = readAssetBytes(asset)
-              if (gz != null) saveBatchCache(gunzip(gz))
+              // Bytes are gzipped; deserializeDueBatch (Rust) inflates them, so pass them through.
+              val raw = readAssetBytes(asset)
+              if (raw != null) saveBatchCache(raw)
             }
           } else {
             val bytes = dataMap.getByteArray(KEY_BATCH_BYTES)
             if (bytes != null) {
-              scope.launch { saveBatchCache(gunzip(bytes)) }
+              scope.launch { saveBatchCache(bytes) }
             }
           }
         } else if (path == PATH_DECKS) {

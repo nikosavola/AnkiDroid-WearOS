@@ -32,6 +32,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     private const val SETTINGS_PREFS = "settings_prefs"
     private const val KEY_FORCE_MOCK = "force_mock"
     private const val KEY_PREPUSH_CAP = "prepush_cap"
+    private const val KEY_READ_ONLY = "read_only"
     private const val PREPUSH_MIN = 5
     private const val PREPUSH_MAX = 30
   }
@@ -87,6 +88,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     settings.getBoolean(KEY_FORCE_MOCK, !bridge.isAnkiDroidAvailable())
 
   private fun prePushCap(): Int = settings.getInt(KEY_PREPUSH_CAP, DEFAULT_PREPUSH_DECKS)
+
+  private fun readOnly(): Boolean = settings.getBoolean(KEY_READ_ONLY, false)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
@@ -429,6 +432,14 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       }
     content.addView(mockSwitch)
 
+    val readOnlySwitch =
+      com.google.android.material.materialswitch.MaterialSwitch(this).apply {
+        text = "Read-only mode (don't write reviews back)"
+        isChecked = readOnly()
+        setPadding(0, pad / 2, 0, 0)
+      }
+    content.addView(readOnlySwitch)
+
     val capLabel =
       com.google.android.material.textview.MaterialTextView(this).apply {
         textSize = 16f
@@ -459,6 +470,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         settings
           .edit()
           .putBoolean(KEY_FORCE_MOCK, mockSwitch.isChecked)
+          .putBoolean(KEY_READ_ONLY, readOnlySwitch.isChecked)
           .putInt(KEY_PREPUSH_CAP, capSlider.value.toInt())
           .apply()
       }
@@ -484,6 +496,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         "Authority: com.ichi2.anki.flashcards",
         "Read/write permission: ${if (permGranted) "granted" else "denied"}",
         "Force mock mode: ${if (forceMock()) "on" else "off"}",
+        "Read-only mode: ${if (readOnly()) "on" else "off"}",
         "Decks visible: ${allDecks.size}",
         "Pre-push cap: ${prePushCap()}",
         "Connected watches: checking…",
@@ -510,7 +523,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         } catch (e: Exception) {
           "error: ${e.message}"
         }
-      lines[6] = "Connected watches: $watches"
+      val watchLine = lines.indexOfFirst { it.startsWith("Connected watches") }
+      if (watchLine >= 0) lines[watchLine] = "Connected watches: $watches"
       dialog.setMessage(lines.joinToString("\n"))
     }
   }
