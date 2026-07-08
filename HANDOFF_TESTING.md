@@ -283,6 +283,35 @@ Batch of the "other improvements" list.
   `FlashCardsContract.Deck`. Loaded off the main thread after the tree draws (the provider may
   compute counts collection-wide, which can be slow).
 
+## 1.16 Compose Tiles + phone Compose migration (partial)
+
+Genuine partial progress on the two big documented items.
+
+- **Interactive + auto-refreshing Tile** (`wear/.../AnkiTileService.kt`, unbuilt). The tile is now
+  tappable — a `ModifiersBuilders.Clickable` + `ActionBuilders.LaunchAction` opens `MainActivity` —
+  and sets `setFreshnessIntervalMillis(30 min)` so the due count/ETA refresh on their own. This uses
+  the protolayout APIs already on the classpath (low risk). **Test:** tap the tile → app opens;
+  leave it on the carousel and confirm it updates after review/sync. The *full* Compose-for-Tiles /
+  Glance rebuild (reading a StateFlow from the core) is still pending — this modernizes the existing
+  protolayout tile rather than replacing the builder stack.
+- **Phone Compose migration — phase 1** (`phone/.../DeckTreeCompose.kt` + build setup). Adds Jetpack
+  Compose Material 3 to the `:phone` module (compose compiler plugin, `buildFeatures.compose`,
+  material3/foundation/ui/animation deps) and a real **M3 Expressive animated deck tree**:
+  spring-rotating chevron (`animateFloatAsState` + `spring`), animated expand/collapse
+  (`AnimatedVisibility` height+fade), tonal folder surfaces. It reuses the pure
+  `buildDeckTree`/`collectDeckIds` helpers and hoists checked-state via callbacks, so it's drop-in.
+  **NOT yet hosted** — `MainActivity` still runs the Views tree (with the `LayoutTransition`
+  stopgap). To finish: host `DeckSelectionTree` in a `ComposeView`/`setContent` and retire
+  `renderDeckTree`/`addDeckNodeViews`.
+  - **HIGH RISK / top thing to verify:** the phone Compose dependency versions. I pinned
+    `androidx.compose.material3:material3` to **1.3.2** and rode foundation/ui/animation on the
+    repo's `compose = 1.9.0`. If Gradle can't resolve that combination against Kotlin 2.4.0's compose
+    compiler, adopt a **Compose BOM** (`platform("androidx.compose:compose-bom:<ver>")`) and drop the
+    explicit versions — that's the version-safe fix. This is the single most likely thing to break
+    `:phone` compilation on a real toolchain.
+  - A `@Preview` (`DeckSelectionTreePreview`) is included so the tree can be rendered in the IDE /
+    screenshot-tested without wiring it into the app.
+
 ---
 
 # Part 2 — Remaining backlog (not implemented here)
@@ -462,8 +491,8 @@ treatment.
 | HtmlCompat inline CSS sizes | ⏸ mitigated by global scale; else needs bitmaps |
 | Scrolling/card perf | ⏸ needs on-device profiling |
 | Phone animated deck tree | ◐ LayoutTransition stopgap; full Expressive tree = Compose migration |
-| Phone M3 Expressive Compose migration | ⏸ big migration (deck-tree stopgap landed) |
-| Compose Tiles rebuild | ⏸ |
+| Phone M3 Expressive Compose migration | ◐ Compose enabled + animated deck tree component landed; not yet hosted (verify deps) |
+| Compose Tiles rebuild | ◐ tile now interactive + auto-refreshing; full Glance/Compose rebuild pending |
 | ProgressStyle notifications | ⏸ API 36 gated (needs compileSdk 36 bump) |
 | Predictive back | ◐ manifest flag on; verify + optional PredictiveBackHandler |
 | Edge-to-edge | ⏸ audit (phone insets already applied) |

@@ -56,6 +56,14 @@ androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version
 compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4", version.ref = "compose" }
 compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest", version.ref = "compose" }
 
+# Phone (non-Wear) Compose — for the Material 3 Expressive UI migration (starting with the animated
+# deck tree). material3 tracks its own version; foundation/ui/animation ride the `compose` version.
+compose-foundation = { group = "androidx.compose.foundation", name = "foundation", version.ref = "compose" }
+compose-ui = { group = "androidx.compose.ui", name = "ui", version.ref = "compose" }
+compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview", version.ref = "compose" }
+compose-animation = { group = "androidx.compose.animation", name = "animation", version.ref = "compose" }
+compose-material3 = { group = "androidx.compose.material3", name = "material3", version = "1.3.2" }
+
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
