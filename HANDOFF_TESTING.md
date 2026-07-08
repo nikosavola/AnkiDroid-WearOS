@@ -212,13 +212,16 @@ Adds recurring background sync so the watch gets fresh due cards without the use
   the batch/deck constants live in `DeckSync`; `syncProgressPercent` stays on `SyncService`
   (referenced by both, still unit-tested).
 - **New files:** `AutoSyncWorker` (CoroutineWorker running `DeckSync.run`) and `AutoSync` (scheduling
-  — unique periodic work, 6h interval, `requiresBatteryNotLow`, linear backoff, `KEEP` policy).
+  — unique periodic work, **user-configurable interval** (default 6h, 1–24h), `requiresBatteryNotLow`,
+  linear backoff). Launch-time re-apply uses `KEEP` (doesn't reset the timer); a Settings change uses
+  `UPDATE` so a new interval takes effect immediately on the same unique job.
 - **Safety:** `DeckSync.run` returns `null` (no-op) when AnkiDroid isn't reachable and mock mode
   isn't forced, so background runs never silently push mock decks. `DataClient.putDataItem` is
   offline-first, so a sync while the watch is disconnected still queues and delivers later.
-- **UI:** a "Auto-sync decks in background" switch in the phone Settings dialog (default ON) toggles
-  `AutoSync.setEnabled`; `MainActivity.onCreate` calls `AutoSync.applyFromSettings`. Shown in the
-  debug dialog's Settings section.
+- **UI:** a "Auto-sync decks in background" switch (default ON) plus an "Auto-sync every: Nh"
+  interval slider (1–24h, disabled when the switch is off) in the phone Settings dialog; Done calls
+  `AutoSync.apply(enabled, hours)`. `MainActivity.onCreate` calls `AutoSync.applyFromSettings`. The
+  debug dialog shows "every Nh" / "off".
 - **How to test:**
   - Toggle the switch → `adb shell dumpsys jobscheduler | grep auto_deck_sync` (or WorkManager's
     `getWorkInfosForUniqueWork`) shows the job enqueued/cancelled.

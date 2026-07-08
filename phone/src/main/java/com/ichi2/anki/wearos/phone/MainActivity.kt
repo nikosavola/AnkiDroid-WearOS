@@ -496,6 +496,35 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       }
     content.addView(autoSyncSwitch)
 
+    val intervalLabel =
+      com.google.android.material.textview.MaterialTextView(this).apply {
+        textSize = 16f
+        setPadding(0, pad / 2, 0, 0)
+      }
+    content.addView(intervalLabel)
+
+    val intervalSlider =
+      com.google.android.material.slider.Slider(this).apply {
+        valueFrom = AutoSync.MIN_INTERVAL_HOURS.toFloat()
+        valueTo = AutoSync.MAX_INTERVAL_HOURS.toFloat()
+        stepSize = 1f
+        value = AutoSync.intervalHours(this@MainActivity).toFloat()
+      }
+
+    fun updateIntervalLabel(hours: Int) {
+      intervalLabel.text = "Auto-sync every: ${hours}h"
+    }
+    updateIntervalLabel(intervalSlider.value.toInt())
+    intervalSlider.addOnChangeListener { _, value, _ -> updateIntervalLabel(value.toInt()) }
+    // Dim the interval control when auto-sync is off, and keep it in sync with the toggle.
+    fun refreshIntervalEnabled(enabled: Boolean) {
+      intervalLabel.isEnabled = enabled
+      intervalSlider.isEnabled = enabled
+    }
+    refreshIntervalEnabled(autoSyncSwitch.isChecked)
+    autoSyncSwitch.setOnCheckedChangeListener { _, checked -> refreshIntervalEnabled(checked) }
+    content.addView(intervalSlider)
+
     val capLabel =
       com.google.android.material.textview.MaterialTextView(this).apply {
         textSize = 16f
@@ -529,8 +558,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
           .putBoolean(KEY_READ_ONLY, readOnlySwitch.isChecked)
           .putInt(KEY_PREPUSH_CAP, capSlider.value.toInt())
           .apply()
-        // Persists the flag and (un)schedules the WorkManager job.
-        AutoSync.setEnabled(this, autoSyncSwitch.isChecked)
+        // Persists the flag + interval and (re)schedules the WorkManager job.
+        AutoSync.apply(this, autoSyncSwitch.isChecked, intervalSlider.value.toInt())
       }
       .setNegativeButton("Cancel", null)
       .show()
@@ -571,7 +600,9 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         "▸ Settings",
         "   Force mock mode: ${if (forceMock()) "on" else "off"}",
         "   Read-only mode: ${if (readOnly()) "on" else "off"}",
-        "   Auto-sync (background): ${if (AutoSync.isEnabled(this)) "on" else "off"}",
+        "   Auto-sync (background): ${
+          if (AutoSync.isEnabled(this)) "every ${AutoSync.intervalHours(this)}h" else "off"
+        }",
         "   Pre-push cap: ${prePushCap()} decks",
         "   Notifications: ${if (notifGranted) "granted" else "denied"}",
         "",

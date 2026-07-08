@@ -23,42 +23,56 @@ object AutoSync {
   const val WORK_NAME = "auto_deck_sync"
   private const val SETTINGS_PREFS = "settings_prefs"
   private const val KEY_AUTO_SYNC = "auto_sync"
+  private const val KEY_INTERVAL_HOURS = "auto_sync_interval_hours"
   const val DEFAULT_ENABLED = true
 
-  // WorkManager clamps periodic intervals to a 15-minute minimum; 6h is a sensible review cadence.
-  private const val INTERVAL_HOURS = 6L
+  // WorkManager clamps periodic intervals to a 15-minute minimum; keep the user's choice comfortably
+  // above that. 6h is a sensible default review cadence.
+  const val DEFAULT_INTERVAL_HOURS = 6
+  const val MIN_INTERVAL_HOURS = 1
+  const val MAX_INTERVAL_HOURS = 24
 
-  fun isEnabled(context: Context): Boolean =
-    context
-      .getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
-      .getBoolean(KEY_AUTO_SYNC, DEFAULT_ENABLED)
+  private fun prefs(context: Context) =
+    context.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
 
-  /** Persist the preference and (un)schedule accordingly. */
-  fun setEnabled(context: Context, enabled: Boolean) {
-    context
-      .getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+  fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_AUTO_SYNC, DEFAULT_ENABLED)
+
+  fun intervalHours(context: Context): Int =
+    prefs(context)
+      .getInt(KEY_INTERVAL_HOURS, DEFAULT_INTERVAL_HOURS)
+      .coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS)
+
+  /**
+   * Persist the enabled flag + interval and reschedule so a changed interval takes effect
+   * immediately (UPDATE keeps the same unique job but swaps its spec). Call this from Settings.
+   */
+  fun apply(context: Context, enabled: Boolean, intervalHours: Int) {
+    prefs(context)
       .edit()
       .putBoolean(KEY_AUTO_SYNC, enabled)
+      .putInt(KEY_INTERVAL_HOURS, intervalHours.coerceIn(MIN_INTERVAL_HOURS, MAX_INTERVAL_HOURS))
       .apply()
-    if (enabled) schedule(context) else cancel(context)
+    if (enabled) schedule(context, ExistingPeriodicWorkPolicy.UPDATE) else cancel(context)
   }
 
-  /** Apply the persisted preference — call on app start. */
+  /**
+   * Apply the persisted preference on app start. Uses KEEP so relaunching doesn't reset the timer of
+   * an already-scheduled sync.
+   */
   fun applyFromSettings(context: Context) {
-    if (isEnabled(context)) schedule(context) else cancel(context)
+    if (isEnabled(context)) schedule(context, ExistingPeriodicWorkPolicy.KEEP) else cancel(context)
   }
 
-  private fun schedule(context: Context) {
+  private fun schedule(context: Context, policy: ExistingPeriodicWorkPolicy) {
     // Don't drain a low battery for a convenience sync; no network constraint since the Wearable
     // Data Layer rides Bluetooth/companion, not the internet.
     val constraints = Constraints.Builder().setRequiresBatteryNotLow(true).build()
     val request =
-      PeriodicWorkRequestBuilder<AutoSyncWorker>(INTERVAL_HOURS, TimeUnit.HOURS)
+      PeriodicWorkRequestBuilder<AutoSyncWorker>(intervalHours(context).toLong(), TimeUnit.HOURS)
         .setConstraints(constraints)
         .setBackoffCriteria(BackoffPolicy.LINEAR, 30L, TimeUnit.MINUTES)
         .build()
-    WorkManager.getInstance(context)
-      .enqueueUniquePeriodicWork(WORK_NAME, ExistingPeriodicWorkPolicy.KEEP, request)
+    WorkManager.getInstance(context).enqueueUniquePeriodicWork(WORK_NAME, policy, request)
   }
 
   private fun cancel(context: Context) {
