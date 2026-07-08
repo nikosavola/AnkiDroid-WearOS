@@ -36,6 +36,35 @@ pub struct WearosAnswer {
     pub time_taken_ms: i64,
 }
 
+/// A flat deck as AnkiDroid exposes it: an id plus a `::`-separated full name. Fed to
+/// [deck_children] to drive the watch's folder navigation.
+#[derive(uniffi::Record, Clone)]
+pub struct DeckInfo {
+    pub id: i64,
+    pub full_name: String,
+}
+
+/// One entry in a folder level: either a folder to descend into (`is_folder`) or a studyable deck.
+/// `id` is the deck id at this exact node, or -1 when a folder has no directly-studyable deck of its
+/// own. `path` is the full `::`-joined path (used as the key to descend).
+#[derive(uniffi::Record, Clone)]
+pub struct DeckNodeInfo {
+    pub id: i64,
+    pub name: String,
+    pub path: String,
+    pub is_folder: bool,
+}
+
+/// The contents of one folder level in the deck hierarchy.
+#[derive(uniffi::Record)]
+pub struct DeckLevel {
+    /// The deck sitting exactly at the current path, present when the folder itself is studyable
+    /// (Anki parent decks are real decks). Null at the root.
+    pub own_deck: Option<DeckNodeInfo>,
+    /// Immediate children, folders first then decks, each sorted by name.
+    pub children: Vec<DeckNodeInfo>,
+}
+
 // ==========================================
 // 2. Database & State Management
 // ==========================================
@@ -428,6 +457,67 @@ fn collapse_blank_lines(s: &str) -> String {
 }
 
 // ==========================================
+// 5b. Deck hierarchy (Anki `::` folders)
+// ==========================================
+
+/// Resolve one level of the deck folder tree parsed from Anki `::`-separated names.
+///
+/// `path` is the current folder ("" for the root, e.g. "Japani" or "Japani::文法" deeper in). A node
+/// can be both a folder and a studyable deck: entering it exposes an `own_deck` (study the folder
+/// itself) alongside its `children`. Folders are children that have anything nested below them; leaf
+/// decks are children with no descendants.
+#[uniffi::export]
+pub fn deck_children(decks: Vec<DeckInfo>, path: String) -> DeckLevel {
+    use std::collections::BTreeMap;
+
+    let prefix = if path.is_empty() { String::new() } else { format!("{path}::") };
+
+    let own_deck = decks.iter().find(|d| d.full_name == path).map(|d| DeckNodeInfo {
+        id: d.id,
+        name: path.rsplit("::").next().unwrap_or(&path).to_string(),
+        path: path.clone(),
+        is_folder: false,
+    });
+
+    // segment name -> (own deck id at that child path if any, has descendants)
+    let mut seen: BTreeMap<String, (i64, bool)> = BTreeMap::new();
+    for d in &decks {
+        // Only decks strictly below the current path are children; the own deck (== path) is skipped.
+        let rest = if path.is_empty() {
+            d.full_name.as_str()
+        } else if let Some(r) = d.full_name.strip_prefix(&prefix) {
+            r
+        } else {
+            continue;
+        };
+        if rest.is_empty() {
+            continue;
+        }
+        let child = rest.split("::").next().unwrap_or(rest).to_string();
+        let child_path = format!("{prefix}{child}");
+        let entry = seen.entry(child).or_insert((-1, false));
+        if rest.contains("::") {
+            entry.1 = true; // a deeper segment exists, so this child is a folder
+        }
+        if d.full_name == child_path {
+            entry.0 = d.id; // this child is itself a studyable deck
+        }
+    }
+
+    let mut children: Vec<DeckNodeInfo> = seen
+        .into_iter()
+        .map(|(name, (id, is_folder))| {
+            let child_path = format!("{prefix}{name}");
+            DeckNodeInfo { id, name, path: child_path, is_folder }
+        })
+        .collect();
+    // Folders first, then decks; alphabetical within each group (BTreeMap already sorted by name).
+    children.sort_by(|a, b| b.is_folder.cmp(&a.is_folder));
+
+    DeckLevel { own_deck, children }
+}
+
+// ==========================================
 // 6. Unit Tests
 // ==========================================
 
@@ -479,6 +569,77 @@ mod tests {
         assert!(!clean.contains("sound:"), "sound tag leaked: {clean}");
         assert!(clean.contains("答える"));
         assert!(clean.contains("to answer"));
+    }
+
+    fn sample_decks() -> Vec<DeckInfo> {
+        // Mirrors the user's real collection shape: 文法 is both a folder and a studyable deck.
+        [
+            (1, "Japani"),
+            (2, "Japani::Kaishi 1.5k"),
+            (3, "Japani::文法"),
+            (4, "Japani::文法::5. N2"),
+            (5, "Japani::文法::6. N1"),
+            (6, "Fysiikka::Electricity"),
+        ]
+        .iter()
+        .map(|(id, name)| DeckInfo { id: *id, full_name: name.to_string() })
+        .collect()
+    }
+
+    #[test]
+    fn test_deck_children_root() {
+        let level = deck_children(sample_decks(), String::new());
+        assert!(level.own_deck.is_none(), "root has no own deck");
+        // Two top-level folders, both with children; sorted folders-first.
+        let names: Vec<_> = level.children.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["Fysiikka", "Japani"]);
+        assert!(level.children.iter().all(|c| c.is_folder));
+        // Japani has its own deck id even though it's a folder.
+        let japani = level.children.iter().find(|c| c.name == "Japani").unwrap();
+        assert_eq!(japani.id, 1);
+        assert_eq!(japani.path, "Japani");
+    }
+
+    #[test]
+    fn test_deck_children_folder_and_deck() {
+        // Inside Japani: own deck present, Kaishi is a leaf, 文法 is a folder (and its own deck).
+        let level = deck_children(sample_decks(), "Japani".to_string());
+        assert_eq!(level.own_deck.as_ref().unwrap().id, 1);
+        assert_eq!(level.own_deck.as_ref().unwrap().name, "Japani");
+
+        let folder = level.children.iter().find(|c| c.name == "文法").unwrap();
+        assert!(folder.is_folder);
+        assert_eq!(folder.id, 3, "文法 folder is also a studyable deck");
+        assert_eq!(folder.path, "Japani::文法");
+
+        let leaf = level.children.iter().find(|c| c.name == "Kaishi 1.5k").unwrap();
+        assert!(!leaf.is_folder);
+        assert_eq!(leaf.id, 2);
+
+        // Folders sort before leaf decks.
+        assert!(level.children[0].is_folder);
+    }
+
+    #[test]
+    fn test_deck_children_leaf_level() {
+        let level = deck_children(sample_decks(), "Japani::文法".to_string());
+        assert_eq!(level.own_deck.as_ref().unwrap().id, 3);
+        let names: Vec<_> = level.children.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["5. N2", "6. N1"]);
+        assert!(level.children.iter().all(|c| !c.is_folder));
+        assert_eq!(level.children[0].id, 4);
+    }
+
+    #[test]
+    fn test_deck_children_no_partial_segment_match() {
+        // "Japan" must not match "Japani" as a child prefix.
+        let decks = vec![
+            DeckInfo { id: 1, full_name: "Japani::x".to_string() },
+            DeckInfo { id: 2, full_name: "Japanese".to_string() },
+        ];
+        let level = deck_children(decks, "Japani".to_string());
+        let names: Vec<_> = level.children.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, vec!["x"]);
     }
 
     #[test]
