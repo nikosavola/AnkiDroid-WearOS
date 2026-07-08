@@ -253,6 +253,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         //    offline. Only decks that actually have due cards are pushed; the rest download on
         //    demand when tapped on the watch. Capped so a large collection keeps sync responsive.
         val isForced = mockModeSwitch.isChecked
+        val renderer = CardBitmapRenderer(this@MainActivity)
         var pushed = 0
         var totalCards = 0
         var scanned = 0
@@ -276,6 +277,9 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
               }
               .asPutDataRequest()
           dataClient.putDataItem(putDataReq).await()
+
+          // Pre-render and sync bitmaps independently to avoid exceeding the 100 KB limit
+          renderer.syncBitmapsForBatch(batch)
 
           pushed++
           totalCards += batch.cards.size

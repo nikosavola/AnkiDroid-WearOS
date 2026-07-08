@@ -12,9 +12,13 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import com.google.android.gms.wearable.Asset
+import com.google.android.gms.wearable.PutDataMapRequest
+import com.google.android.gms.wearable.Wearable
 import java.io.ByteArrayOutputStream
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
 class CardBitmapRenderer(private val context: Context) {
@@ -183,5 +187,46 @@ class CardBitmapRenderer(private val context: Context) {
       lower.contains("border-top") ||
       lower.contains("text-decoration") ||
       lower.contains("style=")
+  }
+
+  suspend fun syncBitmapsForBatch(batch: uniffi.wearos_core.WearosDueBatch) {
+    val dataClient = Wearable.getDataClient(context)
+    for (card in batch.cards) {
+      if (needsRichRendering(card.front)) {
+        Log.d(TAG, "Card ${card.id} (front) needs rich rendering. Rendering offscreen...")
+        val frontBytes = render(card.front)
+        if (frontBytes != null) {
+          val asset = Asset.createFromBytes(frontBytes)
+          val imagePath = "/card_image/${card.id}/front"
+          val putImageReq =
+            PutDataMapRequest.create(imagePath)
+              .apply {
+                dataMap.putAsset("image_asset", asset)
+                setUrgent()
+              }
+              .asPutDataRequest()
+          dataClient.putDataItem(putImageReq).await()
+          Log.d(TAG, "Sent front image asset for card ${card.id} on path $imagePath")
+        }
+      }
+
+      if (needsRichRendering(card.back)) {
+        Log.d(TAG, "Card ${card.id} (back) needs rich rendering. Rendering offscreen...")
+        val backBytes = render(card.back)
+        if (backBytes != null) {
+          val asset = Asset.createFromBytes(backBytes)
+          val imagePath = "/card_image/${card.id}/back"
+          val putImageReq =
+            PutDataMapRequest.create(imagePath)
+              .apply {
+                dataMap.putAsset("image_asset", asset)
+                setUrgent()
+              }
+              .asPutDataRequest()
+          dataClient.putDataItem(putImageReq).await()
+          Log.d(TAG, "Sent back image asset for card ${card.id} on path $imagePath")
+        }
+      }
+    }
   }
 }

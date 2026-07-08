@@ -65,7 +65,7 @@ class WearSyncService : WearableListenerService() {
           val bytes = dataMapItem.dataMap.getByteArray(KEY_BATCH_BYTES)
 
           if (bytes != null) {
-            scope.launch { saveBatchCache(gunzip(bytes), dataMapItem) }
+            scope.launch { saveBatchCache(gunzip(bytes)) }
           }
         } else if (path == PATH_DECKS) {
           val dataMapItem = DataMapItem.fromDataItem(event.dataItem)
@@ -73,6 +73,23 @@ class WearSyncService : WearableListenerService() {
 
           if (bytes != null) {
             scope.launch { saveDecksCache(bytes) }
+          }
+        } else if (path != null && path.startsWith("/card_image/")) {
+          val parts = path.split("/")
+          if (parts.size >= 4) {
+            val cardIdStr = parts[2]
+            val side = parts[3]
+            val cardId = cardIdStr.toLongOrNull()
+            if (cardId != null) {
+              val dataMapItem = DataMapItem.fromDataItem(event.dataItem)
+              val asset = dataMapItem.dataMap.getAsset("image_asset")
+              if (asset != null) {
+                scope.launch {
+                  Log.d(TAG, "Received image asset for card $cardId ($side) on path: $path")
+                  CardImageCache.saveImage(this@WearSyncService, cardId, side, asset)
+                }
+              }
+            }
           }
         }
       }
@@ -104,7 +121,7 @@ class WearSyncService : WearableListenerService() {
     }
   }
 
-  private suspend fun saveBatchCache(bytes: ByteArray, dataMapItem: DataMapItem) {
+  private suspend fun saveBatchCache(bytes: ByteArray) {
     try {
       Log.d(TAG, "Validating received batch bytes via Rust FFI...")
       // 1. Validate the byte array by deserializing it (takes ByteArray directly)
@@ -113,24 +130,6 @@ class WearSyncService : WearableListenerService() {
         TAG,
         "Successfully validated batch: '${batch.deckName}' with ${batch.cards.size} cards.",
       )
-
-      // 2. Extract and save associated image assets for each card
-      val dataMap = dataMapItem.dataMap
-      for (card in batch.cards) {
-        val frontAssetKey = "img_${card.id}_front"
-        val frontAsset = dataMap.getAsset(frontAssetKey)
-        if (frontAsset != null) {
-          Log.d(TAG, "Found front image asset for card ${card.id}. Saving...")
-          CardImageCache.saveImage(this, card.id, "front", frontAsset)
-        }
-
-        val backAssetKey = "img_${card.id}_back"
-        val backAsset = dataMap.getAsset(backAssetKey)
-        if (backAsset != null) {
-          Log.d(TAG, "Found back image asset for card ${card.id}. Saving...")
-          CardImageCache.saveImage(this, card.id, "back", backAsset)
-        }
-      }
 
       // 3. Persist per-deck so multiple decks can be cached and switched offline
       DeckCache.saveBatch(this, batch.deckId, bytes)
