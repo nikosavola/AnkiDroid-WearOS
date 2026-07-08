@@ -30,9 +30,15 @@ class WearSyncService : WearableListenerService() {
     private const val PATH_DECKS = "/decks"
     private const val KEY_DECKS_BYTES = "decks_bytes"
     private const val PATH_DUE_BATCH = "/due_batch"
+
+    // Mirror of the phone MainActivity settings store; read-only mode skips write-back.
+    private const val SETTINGS_PREFS = "settings_prefs"
+    private const val KEY_READ_ONLY = "read_only"
+
     // Batch is sent as an Asset (streamed over a side channel) rather than a DataMap byte array:
     // a putByteArray counts against the ~100KB DataItem limit and dense decks overflow it
-    // (DATA_ITEM_TOO_LARGE). Assets have no such cap. Still gzipped to cut BT transfer time.
+    // (DATA_ITEM_TOO_LARGE). Assets have no such cap. The bytes are gzipped inside
+    // serializeDueBatch (Rust), so no compression happens here.
     private const val KEY_BATCH_ASSET = "batch_asset"
   }
 
@@ -104,7 +110,7 @@ class WearSyncService : WearableListenerService() {
             val dataClient = Wearable.getDataClient(this@WearSyncService)
             val putDataMapReq =
               PutDataMapRequest.create(PATH_DUE_BATCH).apply {
-                dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(gzip(bytes)))
+                dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(bytes))
                 // Vary the item so an identical re-request still propagates to the watch.
                 dataMap.putLong("synced_at", System.currentTimeMillis())
                 setUrgent()
@@ -175,7 +181,7 @@ class WearSyncService : WearableListenerService() {
             val dataClient = Wearable.getDataClient(this@WearSyncService)
             val putDataMapReq =
               PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId").apply {
-                dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(gzip(bytes)))
+                dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(bytes))
                 dataMap.putLong("synced_at", System.currentTimeMillis())
                 setUrgent()
               }
@@ -202,9 +208,12 @@ class WearSyncService : WearableListenerService() {
       Log.i(TAG, "Received ${answers.size} answers from Wear OS watch.")
 
       if (answers.isNotEmpty()) {
+        val readOnly =
+          getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+            .getBoolean(KEY_READ_ONLY, false)
         // Returns the ids that reached a terminal state (applied or no-matching-card); transient
         // failures are omitted so they stay buffered for a later retry. See writeAnswersBack.
-        val settledIds = bridge.writeAnswersBack(answers)
+        val settledIds = bridge.writeAnswersBack(answers, readOnly = readOnly)
 
         if (settledIds.isNotEmpty()) {
           val idsString = settledIds.joinToString(",")

@@ -229,6 +229,61 @@ mod tests {
         assert_eq!(deserialized.cards[0].front, "Q");
     }
 
+    fn card_with_front(front: &str) -> WearosCard {
+        WearosCard {
+            id: 1,
+            note_id: 2,
+            ord: 0,
+            front: front.to_string(),
+            back: "A".to_string(),
+            button_count: 4,
+            next_review_times: vec!["1m".to_string()],
+        }
+    }
+
+    #[test]
+    fn test_due_batch_is_gzipped_and_smaller() {
+        // A repetitive payload must come back gzip-framed and meaningfully smaller than the JSON.
+        let front = "<b>repeated content </b>".repeat(200);
+        let json_len = serde_json::to_vec(&card_with_front(&front)).unwrap().len();
+        let batch = WearosDueBatch {
+            deck_id: 1,
+            deck_name: "D".to_string(),
+            cards: vec![card_with_front(&front)],
+        };
+        let bytes = serialize_due_batch(batch).unwrap();
+        assert_eq!(&bytes[..2], &[0x1f, 0x8b], "payload is not gzip-framed");
+        assert!(
+            bytes.len() < json_len,
+            "gzip did not shrink the payload: {} vs {json_len}",
+            bytes.len()
+        );
+    }
+
+    #[test]
+    fn test_deserialize_due_batch_accepts_raw_json() {
+        // Backward compatibility: an item left by a pre-compression peer is uncompressed JSON and
+        // must still deserialize (maybe_gunzip passes non-gzip bytes straight through).
+        let batch = WearosDueBatch {
+            deck_id: 7,
+            deck_name: "Raw".to_string(),
+            cards: vec![card_with_front("Q")],
+        };
+        let raw_json = serde_json::to_vec(&batch).unwrap();
+        assert_ne!(&raw_json[..2], &[0x1f, 0x8b]);
+        let restored = deserialize_due_batch(raw_json).unwrap();
+        assert_eq!(restored.deck_id, 7);
+        assert_eq!(restored.cards[0].front, "Q");
+    }
+
+    #[test]
+    fn test_deserialize_due_batch_rejects_garbage() {
+        // Neither gzip nor JSON: a clear SerializationError, not a panic. (WearosDueBatch isn't
+        // Debug, so match the result rather than unwrap_err.)
+        let result = deserialize_due_batch(vec![b'n', b'o', b'p', b'e']);
+        assert!(matches!(result, Err(CoreError::SerializationError { .. })));
+    }
+
     #[test]
     fn test_review_session_state_machine() {
         // answer_card buffers into DB_CONN when a DB is configured; serialize with the buffer tests.

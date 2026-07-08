@@ -17,6 +17,9 @@ rusqlite = { version = "0.32.0", features = ["bundled"] }
 serde = { version = "1.0.204", features = ["derive"] }
 serde_json = "1.0.120"
 thiserror = "1.0.63"
+# Pure-Rust gzip backend (miniz_oxide) so the crate's `unsafe_code = forbid` still holds; used to
+# compress the due-batch payload inside the sync (de)serializers.
+flate2 = "1.0"
 
 [lints.rust]
 unsafe_code = "forbid"

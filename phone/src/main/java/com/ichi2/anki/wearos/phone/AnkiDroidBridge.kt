@@ -304,7 +304,18 @@ class AnkiDroidBridge(private val context: Context) {
    * Write answers back to AnkiDroid's schedule table. Returns the ids of the answers that were
    * actually applied, so only those get cleared from the watch buffer (failed ones stay for retry).
    */
-  fun writeAnswersBack(answers: List<WearosAnswer>): List<String> {
+  fun writeAnswersBack(answers: List<WearosAnswer>, readOnly: Boolean = false): List<String> {
+    if (readOnly) {
+      // Safe/read-only test mode: exercise the full sync round-trip (including the clear_answers
+      // handshake, which clears the watch buffer) without ever touching the real collection. The
+      // reviews are intentionally NOT applied, so they are discarded rather than scheduled.
+      Log.w(
+        TAG,
+        "Read-only mode ON: NOT writing ${answers.size} answers to AnkiDroid; reporting them " +
+          "settled so the watch buffer clears.",
+      )
+      return answers.map { it.id }
+    }
     if (!isAnkiDroidAvailable()) {
       Log.i(
         TAG,
