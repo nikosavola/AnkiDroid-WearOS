@@ -1,0 +1,3 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/google/yamlfmt/main/schema.json
+formatter:
+  type: basic

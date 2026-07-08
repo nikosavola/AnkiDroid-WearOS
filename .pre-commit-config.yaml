@@ -1,7 +1,6 @@
 # .pre-commit-config.yaml
 # Optimized pre-commit configuration utilizing prek parallel priority pipelines.
 # Ref: https://prek.j178.dev/proposals/concurrency/?h=parallel
-
 repos:
   - repo: local
     hooks:
@@ -13,7 +12,6 @@ repos:
         files: \.rs$
         pass_filenames: false
         priority: 10
-
       - id: kotlin-format
         name: Kotlin Codebases Auto-Format (ktfmt & ktlint)
         entry: ./gradlew :phone:ktfmtFormat :wear:ktfmtFormat :phone:ktlintMainSourceSetFormat :wear:ktlintMainSourceSetFormat --no-daemon
@@ -21,7 +19,6 @@ repos:
         files: \.kt$
         pass_filenames: false
         priority: 10
-
       # Priority 20: Strict validation stage. Runs concurrently after Priority 10 completes.
       - id: rust-clippy
         name: Rust Core Linter (cargo clippy)
@@ -30,11 +27,32 @@ repos:
         files: \.rs$
         pass_filenames: false
         priority: 20
-
       - id: kotlin-lint
         name: Kotlin Codebases Linter (ktfmt, ktlint & detekt)
         entry: ./gradlew :phone:ktfmtCheck :wear:ktfmtCheck :phone:ktlintMainSourceSetCheck :wear:ktlintMainSourceSetCheck :phone:detekt :wear:detekt --no-daemon
         language: system
         files: \.kt$
         pass_filenames: false
+        priority: 20
+  - repo: https://github.com/google/yamlfmt
+    rev: v0.21.0
+    hooks:
+      - id: yamlfmt
+        priority: 10
+        args: [-conf, ".github/.yamlfmt.yaml"]
+  - repo: https://github.com/adrienverge/yamllint.git
+    rev: v1.38.0
+    hooks:
+      - id: yamllint
+        priority: 20
+        args: [--strict, "-c=.github/.yamllint.yaml"]
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+        priority: 20
+  - repo: https://github.com/woodruffw/zizmor-pre-commit
+    rev: v1.26.1
+    hooks:
+      - id: zizmor
         priority: 20
