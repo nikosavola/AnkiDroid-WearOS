@@ -1,12 +1,30 @@
-//! In-progress review session: tracks the current card, reveal state, and buffers each answer.
+//! In-progress review session.
+//!
+//! The queue is Anki-faithful rather than a one-shot list: grading a card whose chosen button lands
+//! on a learning step (a sub-day interval like "1m"/"10m") sends the card back into the session so
+//! you have to relearn it before the deck is finished, instead of silently marching past a lapse.
+//! Cards whose chosen interval is a day or more graduate and leave the session.
+//!
+//! This is an offline-first approximation: every grade is still buffered and later written back to
+//! AnkiDroid, which owns the real SM-2/FSRS schedule. The in-session requeue only decides whether a
+//! card reappears now; it does not recompute intervals (we can't, offline), so a per-card cap forces
+//! graduation after a few learning-step reappearances to guarantee the session terminates.
 
 use crate::db::{get_db_connection, remove_buffered_answers, save_answer};
 use crate::models::{CoreError, WearosAnswer, WearosCard, WearosDueBatch};
 use crate::util::unix_millis;
+use std::collections::VecDeque;
 use std::sync::Mutex;
 
-/// End-of-session tally shown on the finished screen: how many cards were graded and how they broke
-/// down by ease, plus the total time spent.
+/// Force a card to graduate after this many learning-step reappearances (excluding Again, which the
+/// user is actively failing and may repeat freely). Bounds the session since we can't advance
+/// through Anki's real learning steps offline; the true schedule is reconciled on write-back.
+const MAX_LEARN_REQUEUES: u32 = 3;
+
+/// End-of-session tally shown on the finished screen.
+///
+/// Counts reviews rather than distinct cards, so a card relearned within the session contributes
+/// more than once. Breaks the total down by ease and sums the time spent.
 #[derive(uniffi::Record)]
 pub struct SessionSummary {
     pub total: i32,
@@ -17,39 +35,61 @@ pub struct SessionSummary {
     pub total_time_ms: i64,
 }
 
+/// A card in the queue plus how many learning-step requeues (not counting Again) it has taken, used
+/// to enforce [`MAX_LEARN_REQUEUES`].
+#[derive(Clone)]
+struct QueuedCard {
+    card: WearosCard,
+    learn_requeues: u32,
+}
+
+/// One graded review, kept so undo can reverse it (LIFO) and the summary can aggregate.
+struct GradeEvent {
+    answer: WearosAnswer,
+    /// The queue entry as it was at the front when graded, to push back on undo (restores the
+    /// pre-grade `learn_requeues`).
+    front_before: QueuedCard,
+    /// Whether the grade requeued the card (pushed to the back) vs graduated it out.
+    requeued: bool,
+}
+
 #[derive(uniffi::Object)]
 pub struct ReviewSession {
-    batch: WearosDueBatch,
-    current_index: Mutex<usize>,
+    deck_name: String,
+    /// Number of distinct due cards the session started with; the denominator of the progress string.
+    initial_total: usize,
+    /// Remaining cards, front = current. Learning-step grades push the card to the back.
+    queue: Mutex<VecDeque<QueuedCard>>,
     is_revealed: Mutex<bool>,
-    // The answers given so far, newest last — one per graded card. Lets undo pop the last one (and
-    // delete it from the buffer so an accidental grade never reaches the phone) and backs the
-    // end-of-session summary.
-    graded: Mutex<Vec<WearosAnswer>>,
+    /// Cards that have permanently left the queue; the numerator of the progress string.
+    graduated: Mutex<usize>,
+    /// Every grade so far, newest last. Backs undo and the end-of-session summary.
+    history: Mutex<Vec<GradeEvent>>,
 }
 
 #[uniffi::export]
 impl ReviewSession {
     #[uniffi::constructor]
     pub fn new(batch: WearosDueBatch) -> Self {
+        let queue: VecDeque<QueuedCard> =
+            batch.cards.into_iter().map(|card| QueuedCard { card, learn_requeues: 0 }).collect();
         Self {
-            batch,
-            current_index: Mutex::new(0),
+            deck_name: batch.deck_name,
+            initial_total: queue.len(),
+            queue: Mutex::new(queue),
             is_revealed: Mutex::new(false),
-            graded: Mutex::new(Vec::new()),
+            graduated: Mutex::new(0),
+            history: Mutex::new(Vec::new()),
         }
     }
 
     pub fn get_deck_name(&self) -> String {
-        self.batch.deck_name.clone()
+        self.deck_name.clone()
     }
 
+    /// The number of due cards the session started with (not the live remaining count).
     pub fn get_total_cards(&self) -> i32 {
-        self.batch.cards.len() as i32
-    }
-
-    pub fn get_current_index(&self) -> i32 {
-        *self.current_index.lock().unwrap() as i32
+        self.initial_total as i32
     }
 
     pub fn is_revealed(&self) -> bool {
@@ -57,13 +97,11 @@ impl ReviewSession {
     }
 
     pub fn get_current_card(&self) -> Option<WearosCard> {
-        let index = *self.current_index.lock().unwrap();
-        if index < self.batch.cards.len() { Some(self.batch.cards[index].clone()) } else { None }
+        self.queue.lock().unwrap().front().map(|qc| qc.card.clone())
     }
 
     pub fn reveal_answer(&self) {
-        let mut revealed = self.is_revealed.lock().unwrap();
-        *revealed = true;
+        *self.is_revealed.lock().unwrap() = true;
     }
 
     pub fn answer_card(
@@ -71,90 +109,143 @@ impl ReviewSession {
         ease: i32,
         time_taken_ms: i64,
     ) -> Result<Option<WearosAnswer>, CoreError> {
-        let (card, id) = {
-            let mut index = self.current_index.lock().unwrap();
-
-            if *index >= self.batch.cards.len() {
-                return Err(CoreError::StateError {
-                    error_message: "Session is already finished.".to_string(),
-                });
+        let front = {
+            let mut queue = self.queue.lock().unwrap();
+            match queue.pop_front() {
+                Some(front) => front,
+                None => {
+                    return Err(CoreError::StateError {
+                        error_message: "Session is already finished.".to_string(),
+                    });
+                }
             }
-
-            let card = &self.batch.cards[*index];
-            let id = format!("{}_{}_{}", card.id, card.ord, unix_millis());
-            let card_clone = card.clone();
-            *index += 1;
-            drop(index);
-            (card_clone, id)
         };
 
+        let card = &front.card;
+        let id = format!("{}_{}_{}", card.id, card.ord, unix_millis());
         let answer = WearosAnswer { id, note_id: card.note_id, ord: card.ord, ease, time_taken_ms };
 
-        // Attempt to buffer locally if database is configured
+        // Buffer locally if a DB is configured (the answer still reaches AnkiDroid on sync).
         if get_db_connection().is_ok() {
             let _ = save_answer(answer.clone());
         }
 
-        // Record the answer so undo can pop + delete it and the summary can aggregate it.
-        self.graded.lock().unwrap().push(answer.clone());
-
-        {
-            let mut revealed = self.is_revealed.lock().unwrap();
-            *revealed = false;
+        // Again is always a relearn step and may repeat freely; other buttons requeue only while the
+        // chosen interval is a learning step and the per-card cap hasn't been hit.
+        let is_again = ease == 1;
+        let requeue =
+            is_again || (is_learning_step(card, ease) && front.learn_requeues < MAX_LEARN_REQUEUES);
+        if requeue {
+            let learn_requeues = front.learn_requeues + u32::from(!is_again);
+            self.queue
+                .lock()
+                .unwrap()
+                .push_back(QueuedCard { card: front.card.clone(), learn_requeues });
+        } else {
+            *self.graduated.lock().unwrap() += 1;
         }
 
+        self.history.lock().unwrap().push(GradeEvent {
+            answer: answer.clone(),
+            front_before: front,
+            requeued: requeue,
+        });
+
+        *self.is_revealed.lock().unwrap() = false;
         Ok(Some(answer))
     }
 
-    /// Whether there's a graded card to step back to.
+    /// Whether there's a graded review to step back to.
     pub fn can_undo(&self) -> bool {
-        *self.current_index.lock().unwrap() > 0
+        !self.history.lock().unwrap().is_empty()
     }
 
-    /// Undo the most recent grade: step the queue back one card, drop that answer from the local
-    /// buffer (so it never reaches the phone), and re-show the card un-revealed. Returns the card
-    /// that is now current again, or `None` if there was nothing to undo.
+    /// Undo the most recent grade: reverse its queue effect (pull the requeued copy back off the tail
+    /// or un-graduate), restore the card to the front un-revealed, and drop its buffered answer so it
+    /// never reaches the phone. Returns the card that is current again, or `None` if nothing to undo.
     pub fn undo_last_answer(&self) -> Result<Option<WearosCard>, CoreError> {
+        let popped = self.history.lock().unwrap().pop();
+        let Some(event) = popped else {
+            return Ok(None);
+        };
+
         {
-            let mut index = self.current_index.lock().unwrap();
-            if *index == 0 {
-                return Ok(None);
+            let mut queue = self.queue.lock().unwrap();
+            if event.requeued {
+                // The copy we pushed on grade is the newest tail entry.
+                queue.pop_back();
             }
-            *index -= 1;
+            queue.push_front(event.front_before);
+        }
+        if !event.requeued {
+            let mut graduated = self.graduated.lock().unwrap();
+            *graduated = graduated.saturating_sub(1);
         }
 
-        // Pop the answer for the card we just stepped back onto and delete it from the buffer.
-        if let Some(answer) = self.graded.lock().unwrap().pop()
-            && get_db_connection().is_ok()
-        {
-            let _ = remove_buffered_answers(vec![answer.id]);
+        if get_db_connection().is_ok() {
+            let _ = remove_buffered_answers(vec![event.answer.id]);
         }
 
         *self.is_revealed.lock().unwrap() = false;
         Ok(self.get_current_card())
     }
 
+    /// Progress as graduated-of-initial. Because relearning cards stay in the queue, this only
+    /// reaches N/N once every lapse has actually been relearned out of the session.
     pub fn get_progress_string(&self) -> String {
-        let index = *self.current_index.lock().unwrap();
-        format!("{}/{}", index, self.batch.cards.len())
+        format!("{}/{}", *self.graduated.lock().unwrap(), self.initial_total)
     }
 
-    /// Tally of everything graded so far this session (after undo, reflects the current state).
+    /// Tally of every review graded so far this session (after undo, reflects the current state).
     pub fn get_summary(&self) -> SessionSummary {
         let mut s =
             SessionSummary { total: 0, again: 0, hard: 0, good: 0, easy: 0, total_time_ms: 0 };
-        let graded = self.graded.lock().unwrap();
-        s.total = graded.len() as i32;
-        for a in graded.iter() {
-            match a.ease {
+        let history = self.history.lock().unwrap();
+        s.total = history.len() as i32;
+        for e in history.iter() {
+            match e.answer.ease {
                 1 => s.again += 1,
                 2 => s.hard += 1,
                 3 => s.good += 1,
                 _ => s.easy += 1, // ease 4 (and any out-of-range) counts as Easy
             }
-            s.total_time_ms += a.time_taken_ms;
+            s.total_time_ms += e.answer.time_taken_ms;
         }
-        drop(graded); // release the lock before returning (clippy::significant_drop_tightening)
+        drop(history); // release the lock before returning (clippy::significant_drop_tightening)
         s
     }
+}
+
+/// The interval label AnkiDroid computed for the button `ease` selects, e.g. "10m" or "4d". Maps the
+/// Anki ease (1..=4) to the right slot for 3- and 4-button cards (3-button has no Hard: Again/Good/
+/// Easy), clamping defensively. `None` when the card carries no interval labels.
+fn interval_label(card: &WearosCard, ease: i32) -> Option<&str> {
+    if card.next_review_times.is_empty() {
+        return None;
+    }
+    let idx = match card.button_count {
+        n if n >= 4 => (ease - 1).max(0) as usize,
+        3 => match ease {
+            1 => 0, // Again
+            4 => 2, // Easy
+            _ => 1, // Good (ease 3), and any stray value
+        },
+        2 => usize::from(ease > 1),
+        _ => 0,
+    };
+    let idx = idx.min(card.next_review_times.len() - 1);
+    card.next_review_times.get(idx).map(String::as_str)
+}
+
+/// Whether the chosen button lands on a learning step (a sub-day interval), meaning the card should
+/// reappear this session rather than graduate out. With no interval data, only Again reappears.
+fn is_learning_step(card: &WearosCard, ease: i32) -> bool {
+    interval_label(card, ease).map_or(ease == 1, label_is_subday)
+}
+
+/// True for sub-day interval units (seconds/minutes/hours), false for day/month/year. Labels look
+/// like "45s", "1m", "2h", "4d", "3mo", "1y"; note "m" is minutes but "mo" is months.
+fn label_is_subday(label: &str) -> bool {
+    let unit: String = label.chars().filter(char::is_ascii_alphabetic).collect();
+    matches!(unit.as_str(), "s" | "m" | "h")
 }

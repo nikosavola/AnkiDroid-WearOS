@@ -1265,13 +1265,13 @@ class MainActivity : ComponentActivity() {
             modifier = Modifier.padding(horizontal = 16.dp),
           )
         }
-        // Session recap: how many cards, the ease split, and time spent.
+        // Session recap: how many reviews (relearned cards count more than once), ease split, time.
         if (summary.total > 0) {
           item {
             Card(onClick = {}, modifier = Modifier.fillMaxWidth(0.9f)) {
               Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                  text = "${summary.total} cards · ${formatDuration(summary.totalTimeMs)}",
+                  text = "${summary.total} reviews · ${formatDuration(summary.totalTimeMs)}",
                   style = MaterialTheme.typography.bodyMedium,
                 )
                 Text(

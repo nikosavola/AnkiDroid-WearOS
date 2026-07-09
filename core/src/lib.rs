@@ -328,32 +328,29 @@ mod tests {
 
         let session = ReviewSession::new(batch);
         assert_eq!(session.get_total_cards(), 2);
-        assert_eq!(session.get_current_index(), 0);
+        assert_eq!(session.get_progress_string(), "0/2");
         assert!(!session.is_revealed());
 
-        // Check first card
         let c1 = session.get_current_card().unwrap();
         assert_eq!(c1.front, "Q1");
 
         session.reveal_answer();
         assert!(session.is_revealed());
 
-        // Answer card
+        // Good on card1 lands on "4d" (a day+ interval), so it graduates out of the session.
         let ans1 = session.answer_card(3, 5000).unwrap().unwrap();
         assert_eq!(ans1.ord, 0);
         assert_eq!(ans1.ease, 3);
         assert_eq!(ans1.time_taken_ms, 5000);
-
-        // Check index advanced
-        assert_eq!(session.get_current_index(), 1);
+        assert_eq!(session.get_progress_string(), "1/2");
         assert!(!session.is_revealed());
 
-        // Check second card
         let c2 = session.get_current_card().unwrap();
         assert_eq!(c2.front, "Q2");
 
+        // Easy on the 3-button card2 is "4d" -> graduates; queue now empty.
         let _ = session.answer_card(4, 2000).unwrap();
-        assert_eq!(session.get_current_index(), 2);
+        assert_eq!(session.get_progress_string(), "2/2");
         assert!(session.get_current_card().is_none());
     }
 
@@ -365,6 +362,8 @@ mod tests {
         let _ = std::fs::remove_file(&db_path);
         init_database(db_path.clone()).unwrap();
 
+        // Day+ intervals on Good so each grade graduates, keeping this test's queue math simple; the
+        // requeue path is covered by test_undo_reverses_a_requeue.
         let mk = |id: i64, front: &str| WearosCard {
             id,
             note_id: id * 10,
@@ -372,7 +371,12 @@ mod tests {
             front: front.to_string(),
             back: "A".to_string(),
             button_count: 4,
-            next_review_times: vec!["1m".to_string()],
+            next_review_times: vec![
+                "1m".to_string(),
+                "10m".to_string(),
+                "4d".to_string(),
+                "7d".to_string(),
+            ],
         };
         let batch = WearosDueBatch {
             deck_id: 1,
@@ -384,25 +388,152 @@ mod tests {
         assert!(!session.can_undo(), "nothing answered yet");
         assert!(session.undo_last_answer().unwrap().is_none());
 
-        session.answer_card(3, 1000).unwrap();
-        session.answer_card(2, 2000).unwrap();
-        assert_eq!(session.get_current_index(), 2);
+        session.answer_card(3, 1000).unwrap(); // Good "4d" -> graduate c1
+        session.answer_card(3, 2000).unwrap(); // Good "4d" -> graduate c2
+        assert_eq!(session.get_progress_string(), "2/2");
+        assert!(session.get_current_card().is_none());
         assert_eq!(get_buffered_answers().unwrap().len(), 2);
 
         // Undo once: back to card 2, its buffered answer removed.
         assert!(session.can_undo());
         let back = session.undo_last_answer().unwrap().unwrap();
         assert_eq!(back.front, "Q2");
-        assert_eq!(session.get_current_index(), 1);
+        assert_eq!(session.get_progress_string(), "1/2");
         assert!(!session.is_revealed());
         assert_eq!(get_buffered_answers().unwrap().len(), 1);
 
         // Undo again: back to card 1, buffer empty.
         let back1 = session.undo_last_answer().unwrap().unwrap();
         assert_eq!(back1.front, "Q1");
-        assert_eq!(session.get_current_index(), 0);
+        assert_eq!(session.get_progress_string(), "0/2");
         assert_eq!(get_buffered_answers().unwrap().len(), 0);
         assert!(!session.can_undo());
+
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    /// A 4-button card whose learning-step buttons are sub-day and graduating buttons are day+.
+    fn learning_card(id: i64) -> WearosCard {
+        WearosCard {
+            id,
+            note_id: id * 10,
+            ord: 0,
+            front: "Q".to_string(),
+            back: "A".to_string(),
+            button_count: 4,
+            next_review_times: vec![
+                "1m".to_string(),  // Again
+                "10m".to_string(), // Hard
+                "4d".to_string(),  // Good
+                "7d".to_string(),  // Easy
+            ],
+        }
+    }
+
+    fn single_card_session(card: WearosCard) -> ReviewSession {
+        ReviewSession::new(WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![card],
+        })
+    }
+
+    #[test]
+    fn test_learning_step_requeues_until_graduated() {
+        let _guard = db_test_guard();
+        let session = single_card_session(learning_card(1));
+
+        // Hard lands on "10m" (sub-day): the single card comes straight back, nothing graduates.
+        session.answer_card(2, 1000).unwrap();
+        assert_eq!(session.get_progress_string(), "0/1");
+        assert_eq!(session.get_current_card().unwrap().front, "Q");
+
+        // Good lands on "4d" (day+): graduates, session finishes.
+        session.answer_card(3, 1000).unwrap();
+        assert_eq!(session.get_progress_string(), "1/1");
+        assert!(session.get_current_card().is_none());
+    }
+
+    #[test]
+    fn test_interval_index_maps_ease_for_3_and_4_buttons() {
+        let _guard = db_test_guard();
+
+        // 4-button: Good is slot 2 ("4d"), so Good must graduate rather than read Hard's "10m".
+        let s4 = single_card_session(learning_card(1));
+        s4.answer_card(3, 0).unwrap();
+        assert_eq!(s4.get_progress_string(), "1/1", "4-button Good must map to slot 2 (4d)");
+
+        // 3-button (Again/Good/Easy): Good is slot 1 ("4d") -> graduate; Easy slot 2 ("10m").
+        let three = WearosCard {
+            id: 2,
+            note_id: 2,
+            ord: 0,
+            front: "Q".to_string(),
+            back: "A".to_string(),
+            button_count: 3,
+            next_review_times: vec!["1m".to_string(), "4d".to_string(), "10m".to_string()],
+        };
+        let s3 = single_card_session(three.clone());
+        s3.answer_card(3, 0).unwrap();
+        assert_eq!(s3.get_progress_string(), "1/1", "3-button Good must map to slot 1 (4d)");
+
+        let s3b = single_card_session(three);
+        s3b.answer_card(4, 0).unwrap();
+        assert_eq!(s3b.get_progress_string(), "0/1", "3-button Easy must map to slot 2 (10m)");
+        assert!(s3b.get_current_card().is_some());
+    }
+
+    #[test]
+    fn test_learning_requeue_cap_forces_graduation() {
+        let _guard = db_test_guard();
+        let session = single_card_session(learning_card(1));
+
+        // The first few Hards ("10m") requeue; once the per-card cap is hit the card force-graduates
+        // so the session can't loop forever offline.
+        for _ in 0..3 {
+            session.answer_card(2, 0).unwrap();
+            assert!(session.get_current_card().is_some());
+            assert_eq!(session.get_progress_string(), "0/1");
+        }
+        session.answer_card(2, 0).unwrap();
+        assert!(session.get_current_card().is_none());
+        assert_eq!(session.get_progress_string(), "1/1");
+    }
+
+    #[test]
+    fn test_again_requeues_without_hitting_the_cap() {
+        let _guard = db_test_guard();
+        let session = single_card_session(learning_card(1));
+
+        // Again is a relearn step and may repeat freely: well past the cap, still not graduated.
+        for _ in 0..6 {
+            session.answer_card(1, 0).unwrap();
+            assert!(session.get_current_card().is_some());
+            assert_eq!(session.get_progress_string(), "0/1");
+        }
+    }
+
+    #[test]
+    fn test_undo_reverses_a_requeue() {
+        let _guard = db_test_guard();
+        let temp_dir = std::env::temp_dir();
+        let db_path = temp_dir.join("test_wearos_undo_requeue.db").to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&db_path);
+        init_database(db_path.clone()).unwrap();
+
+        let session = single_card_session(learning_card(1));
+
+        // Hard requeues the card ("10m"): one buffered answer, still 0/1, card still present.
+        session.answer_card(2, 1000).unwrap();
+        assert_eq!(get_buffered_answers().unwrap().len(), 1);
+        assert_eq!(session.get_progress_string(), "0/1");
+
+        // Undo pulls the requeued copy back off the tail and drops the buffered answer.
+        let back = session.undo_last_answer().unwrap().unwrap();
+        assert_eq!(back.front, "Q");
+        assert_eq!(session.get_progress_string(), "0/1");
+        assert!(!session.can_undo());
+        assert_eq!(get_buffered_answers().unwrap().len(), 0);
 
         let _ = std::fs::remove_file(&db_path);
     }
