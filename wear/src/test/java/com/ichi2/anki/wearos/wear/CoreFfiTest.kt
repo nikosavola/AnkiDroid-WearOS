@@ -12,12 +12,10 @@ import uniffi.wearos_core.answerHtml
 import uniffi.wearos_core.cleanHtml
 import uniffi.wearos_core.deckChildren
 import uniffi.wearos_core.deserializeDueBatch
-import uniffi.wearos_core.deserializeDueBatchProto
 import uniffi.wearos_core.formatQueueEta
 import uniffi.wearos_core.htmlForDisplay
 import uniffi.wearos_core.parseReviewTimes
 import uniffi.wearos_core.serializeDueBatch
-import uniffi.wearos_core.serializeDueBatchProto
 
 /**
  * Exercises the Rust core through the generated Kotlin bindings (camelCase names, record mapping,
@@ -96,7 +94,7 @@ class CoreFfiTest {
   }
 
   @Test
-  fun serializeDueBatchProto_roundTrips() {
+  fun serializeDueBatch_isZstdFramedAndRoundTripsCjkHtml() {
     val batch =
       WearosDueBatch(
         deckId = 9,
@@ -114,7 +112,12 @@ class CoreFfiTest {
             )
           ),
       )
-    val restored = deserializeDueBatchProto(serializeDueBatchProto(batch))
+    val bytes = serializeDueBatch(batch)
+    // The wire format must stay zstd(protobuf): if it silently reverts to raw JSON/gzip the phone
+    // and watch would talk past each other. zstd magic number = 28 B5 2F FD.
+    val magic = byteArrayOf(0x28, 0xB5.toByte(), 0x2F, 0xFD.toByte())
+    assertEquals(magic.toList(), bytes.take(4))
+    val restored = deserializeDueBatch(bytes)
     assertEquals(9L, restored.deckId)
     assertEquals("文法", restored.deckName)
     assertEquals("<b>Q</b>", restored.cards[0].front)
