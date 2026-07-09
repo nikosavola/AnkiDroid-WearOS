@@ -8,7 +8,6 @@
 build:
   maxIssues: 0
   excludeCorrectable: true
-
 comments:
   active: true
   # Public API is documented where it aids understanding, not exhaustively; don't require KDoc on
@@ -25,7 +24,6 @@ comments:
     active: false
   AbsentOrWrongFileLicense:
     active: false
-
 complexity:
   active: true
   LongMethod:
@@ -48,14 +46,12 @@ complexity:
     active: false
   TooManyFunctions:
     active: false
-
 naming:
   active: true
   # Composables are PascalCase, so allow an uppercase first letter.
   FunctionNaming:
     active: true
     functionPattern: '[a-zA-Z][a-zA-Z0-9]*'
-
 style:
   active: true
   MagicNumber:
@@ -69,7 +65,10 @@ style:
   # We use explanatory NOTE:/TODO-style comments deliberately (e.g. hand-off markers).
   ForbiddenComment:
     active: false
-
+  # @Preview composables are entry points for the IDE/screenshot tooling, not dead code.
+  UnusedPrivateMember:
+    active: true
+    ignoreAnnotated: ['Preview']
 exceptions:
   active: true
   # Android ContentProvider / Wearable Data Layer calls throw broad exceptions that we intentionally

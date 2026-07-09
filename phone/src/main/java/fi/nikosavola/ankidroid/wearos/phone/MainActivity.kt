@@ -117,68 +117,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       insets
     }
 
-    // Top bar (Material 3 large-top-app-bar feel): a primary-colored overline above a headline
-    // title on the left, and a Material icon button on the right that opens Settings. The gear is
-    // top-aligned so it sits in the corner like a real top-app-bar action when the title wraps.
     val density = resources.displayMetrics.density
-    val topBar =
-      LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = android.view.Gravity.TOP
-        setPadding(0, 0, 0, (24 * density).toInt())
-      }
-
-    val titleColumn =
-      LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-      }
-    val overline =
-      com.google.android.material.textview.MaterialTextView(this).apply {
-        text = "ANKIDROID"
-        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
-        setTextColor(
-          com.google.android.material.color.MaterialColors.getColor(
-            this,
-            com.google.android.material.R.attr.colorPrimary,
-          )
-        )
-        // Wide tracking + medium weight give the caps overline the polished M3 label look.
-        letterSpacing = 0.1f
-        setTypeface(typeface, android.graphics.Typeface.BOLD)
-      }
-    titleColumn.addView(overline)
-    val titleText =
-      com.google.android.material.textview.MaterialTextView(this).apply {
-        text = "WearOS Companion"
-        setTextAppearance(
-          com.google.android.material.R.style.TextAppearance_Material3_HeadlineMedium
-        )
-        setTextColor(
-          com.google.android.material.color.MaterialColors.getColor(
-            this,
-            com.google.android.material.R.attr.colorOnSurface,
-          )
-        )
-        setPadding(0, (2 * density).toInt(), 0, 0)
-        maxLines = 2
-        ellipsize = android.text.TextUtils.TruncateAt.END
-      }
-    titleColumn.addView(titleText)
-    topBar.addView(titleColumn)
-
-    val settingsButton =
-      com.google.android.material.button
-        .MaterialButton(this, null, com.google.android.material.R.attr.materialIconButtonStyle)
-        .apply {
-          icon = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_settings)
-          iconGravity = com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START
-          iconPadding = 0
-          contentDescription = "Settings"
-          setOnClickListener { showSettingsDialog() }
-        }
-    topBar.addView(settingsButton)
-    rootLayout.addView(topBar)
+    rootLayout.addView(buildTopBar(density))
 
     statusText =
       com.google.android.material.textview.MaterialTextView(this).apply {
@@ -226,58 +166,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     rootLayout.addView(lastSyncText)
     updateLastSyncLabel()
 
-    // Search box to filter the deck tree — a big help when the collection has many decks.
-    val searchLayout =
-      com.google.android.material.textfield.TextInputLayout(this).apply {
-        hint = "Search decks"
-        layoutParams =
-          LinearLayout.LayoutParams(
-              LinearLayout.LayoutParams.MATCH_PARENT,
-              LinearLayout.LayoutParams.WRAP_CONTENT,
-            )
-            .apply { setMargins(0, 0, 0, (8 * density).toInt()) }
-      }
-    val searchEdit =
-      com.google.android.material.textfield.TextInputEditText(searchLayout.context).apply {
-        isSingleLine = true
-        imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
-        addTextChangedListener { editable ->
-          deckFilter = editable?.toString().orEmpty().trim()
-          renderDeckTree()
-        }
-      }
-    searchLayout.addView(searchEdit)
-    rootLayout.addView(searchLayout)
-
-    // Bulk select controls, since toggling 100+ decks one by one is painful.
-    val bulkRow =
-      LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        setPadding(0, 0, 0, (8 * density).toInt())
-      }
-    bulkRow.addView(
-      com.google.android.material.button
-        .MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
-        .apply {
-          text = "Select all"
-          setOnClickListener { setAllDecksSelected(true) }
-        }
-    )
-    bulkRow.addView(
-      com.google.android.material.button
-        .MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
-        .apply {
-          text = "Select none"
-          setOnClickListener { setAllDecksSelected(false) }
-          layoutParams =
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-              )
-              .apply { setMarginStart((8 * density).toInt()) }
-        }
-    )
-    rootLayout.addView(bulkRow)
+    rootLayout.addView(buildDeckFilterControls(density))
 
     // Scrollable container for the checkboxes for our decks list
     val scrollView =
@@ -357,6 +246,129 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   override fun onDestroy() {
     super.onDestroy()
     unregisterReceiver(syncProgressReceiver)
+  }
+
+  /**
+   * Material 3 large-top-app-bar-style header: a primary-colored overline above a headline title on
+   * the left, with a Material icon button on the right that opens Settings (top-aligned so it sits
+   * in the corner like a real top-app-bar action when the title wraps).
+   */
+  private fun buildTopBar(density: Float): View {
+    val topBar =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        gravity = android.view.Gravity.TOP
+        setPadding(0, 0, 0, (24 * density).toInt())
+      }
+
+    val titleColumn =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+      }
+    titleColumn.addView(
+      com.google.android.material.textview.MaterialTextView(this).apply {
+        text = "ANKIDROID"
+        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
+        setTextColor(
+          com.google.android.material.color.MaterialColors.getColor(
+            this,
+            com.google.android.material.R.attr.colorPrimary,
+          )
+        )
+        // Wide tracking + medium weight give the caps overline the polished M3 label look.
+        letterSpacing = 0.1f
+        setTypeface(typeface, android.graphics.Typeface.BOLD)
+      }
+    )
+    titleColumn.addView(
+      com.google.android.material.textview.MaterialTextView(this).apply {
+        text = "WearOS Companion"
+        setTextAppearance(
+          com.google.android.material.R.style.TextAppearance_Material3_HeadlineMedium
+        )
+        setTextColor(
+          com.google.android.material.color.MaterialColors.getColor(
+            this,
+            com.google.android.material.R.attr.colorOnSurface,
+          )
+        )
+        setPadding(0, (2 * density).toInt(), 0, 0)
+        maxLines = 2
+        ellipsize = android.text.TextUtils.TruncateAt.END
+      }
+    )
+    topBar.addView(titleColumn)
+
+    topBar.addView(
+      com.google.android.material.button
+        .MaterialButton(this, null, com.google.android.material.R.attr.materialIconButtonStyle)
+        .apply {
+          icon = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_settings)
+          iconGravity = com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START
+          iconPadding = 0
+          contentDescription = "Settings"
+          setOnClickListener { showSettingsDialog() }
+        }
+    )
+    return topBar
+  }
+
+  /** Search box (filters the deck tree by name) plus "Select all/none" bulk controls. */
+  private fun buildDeckFilterControls(density: Float): View {
+    val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+    val searchLayout =
+      com.google.android.material.textfield.TextInputLayout(this).apply {
+        hint = "Search decks"
+        layoutParams =
+          LinearLayout.LayoutParams(
+              LinearLayout.LayoutParams.MATCH_PARENT,
+              LinearLayout.LayoutParams.WRAP_CONTENT,
+            )
+            .apply { setMargins(0, 0, 0, (8 * density).toInt()) }
+      }
+    searchLayout.addView(
+      com.google.android.material.textfield.TextInputEditText(searchLayout.context).apply {
+        isSingleLine = true
+        imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
+        addTextChangedListener { editable ->
+          deckFilter = editable?.toString().orEmpty().trim()
+          renderDeckTree()
+        }
+      }
+    )
+    container.addView(searchLayout)
+
+    val bulkRow =
+      LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL
+        setPadding(0, 0, 0, (8 * density).toInt())
+      }
+    bulkRow.addView(
+      com.google.android.material.button
+        .MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
+        .apply {
+          text = "Select all"
+          setOnClickListener { setAllDecksSelected(true) }
+        }
+    )
+    bulkRow.addView(
+      com.google.android.material.button
+        .MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
+        .apply {
+          text = "Select none"
+          setOnClickListener { setAllDecksSelected(false) }
+          layoutParams =
+            LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+              )
+              .apply { setMarginStart((8 * density).toInt()) }
+        }
+    )
+    container.addView(bulkRow)
+    return container
   }
 
   /** Set the top status line concisely, colored by the theme attribute for the current state. */
@@ -657,6 +669,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     }
     updateIntervalLabel(intervalSlider.value.toInt())
     intervalSlider.addOnChangeListener { _, value, _ -> updateIntervalLabel(value.toInt()) }
+
     // Dim the interval control when auto-sync is off, and keep it in sync with the toggle.
     fun refreshIntervalEnabled(enabled: Boolean) {
       intervalLabel.isEnabled = enabled
@@ -809,8 +822,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
   /** Copy the debug report to the clipboard so it can be pasted into a bug report. */
   private fun copyDebugInfo(text: String) {
-    val clipboard =
-      getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+    val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
     clipboard.setPrimaryClip(
       android.content.ClipData.newPlainText("AnkiDroid Wear debug info", text)
     )

@@ -40,9 +40,10 @@ class SyncService : Service() {
     private val running = AtomicBoolean(false)
 
     /**
-     * Progress percent while pushing decks: setup work occupies 0–15%, then each of the [prePushCap]
-     * decks advances the bar up to 95% (the final "done" step sets 100). Extracted as a pure
-     * function so it can be unit-tested without a running service. Guards a zero/negative cap.
+     * Progress percent while pushing decks: setup work occupies 0–15%, then each of the
+     * [prePushCap] decks advances the bar up to 95% (the final "done" step sets 100). Extracted as
+     * a pure function so it can be unit-tested without a running service. Guards a zero/negative
+     * cap.
      */
     fun syncProgressPercent(pushed: Int, prePushCap: Int): Int {
       if (prePushCap <= 0) return 95

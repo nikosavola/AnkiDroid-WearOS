@@ -39,10 +39,10 @@ import androidx.compose.ui.unit.dp
  * Material 3 **Expressive** deck tree for the phone — phase-1 of migrating the deck selector off
  * imperative Views. This is the piece the backlog specifically flagged as missing: real motion.
  *
- * Folder rows sit on a tonal surface and carry a chevron that *spring-rotates* on toggle; a folder's
- * children expand/collapse with an animated height + fade instead of the current full-list redraw.
- * State is hoisted (checked lookups + callbacks) so it's host-agnostic and testable; only the
- * per-folder expansion state is kept locally so a toggle animates just that subtree.
+ * Folder rows sit on a tonal surface and carry a chevron that *spring-rotates* on toggle; a
+ * folder's children expand/collapse with an animated height + fade instead of the current full-list
+ * redraw. State is hoisted (checked lookups + callbacks) so it's host-agnostic and testable; only
+ * the per-folder expansion state is kept locally so a toggle animates just that subtree.
  *
  * NOT yet hosted by [MainActivity] (which is still the Views implementation). To adopt: give
  * MainActivity a `ComposeView`/`setContent { AnkiPhoneTheme { DeckSelectionTree(...) } }` for the
@@ -61,7 +61,16 @@ fun DeckSelectionTree(
   val expanded = remember { mutableStateMapOf<String, Boolean>() }
   Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
     for (child in root.children.values) {
-      DeckNodeRow(child, child.name, 0, expanded, checkedOf, onDeckChecked, onFolderChecked, dueCountOf)
+      DeckNodeRow(
+        child,
+        child.name,
+        0,
+        expanded,
+        checkedOf,
+        onDeckChecked,
+        onFolderChecked,
+        dueCountOf,
+      )
     }
   }
 }
@@ -100,8 +109,7 @@ private fun DeckNodeRow(
     ) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier =
-          Modifier.fillMaxWidth().clickable { expanded[path] = !isExpanded }.padding(8.dp),
+        modifier = Modifier.fillMaxWidth().clickable { expanded[path] = !isExpanded }.padding(8.dp),
       ) {
         Icon(
           painter = painterResource(id = R.drawable.ic_expand_more),

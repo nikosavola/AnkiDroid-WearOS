@@ -26,7 +26,8 @@ object AutoSync {
   private const val KEY_INTERVAL_HOURS = "auto_sync_interval_hours"
   const val DEFAULT_ENABLED = true
 
-  // WorkManager clamps periodic intervals to a 15-minute minimum; keep the user's choice comfortably
+  // WorkManager clamps periodic intervals to a 15-minute minimum; keep the user's choice
+  // comfortably
   // above that. 6h is a sensible default review cadence.
   const val DEFAULT_INTERVAL_HOURS = 6
   const val MIN_INTERVAL_HOURS = 1
@@ -35,7 +36,8 @@ object AutoSync {
   private fun prefs(context: Context) =
     context.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
 
-  fun isEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_AUTO_SYNC, DEFAULT_ENABLED)
+  fun isEnabled(context: Context): Boolean =
+    prefs(context).getBoolean(KEY_AUTO_SYNC, DEFAULT_ENABLED)
 
   fun intervalHours(context: Context): Int =
     prefs(context)
@@ -56,8 +58,8 @@ object AutoSync {
   }
 
   /**
-   * Apply the persisted preference on app start. Uses KEEP so relaunching doesn't reset the timer of
-   * an already-scheduled sync.
+   * Apply the persisted preference on app start. Uses KEEP so relaunching doesn't reset the timer
+   * of an already-scheduled sync.
    */
   fun applyFromSettings(context: Context) {
     if (isEnabled(context)) schedule(context, ExistingPeriodicWorkPolicy.KEEP) else cancel(context)
