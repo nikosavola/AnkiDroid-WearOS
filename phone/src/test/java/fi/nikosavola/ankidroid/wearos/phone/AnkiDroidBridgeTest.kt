@@ -54,7 +54,7 @@ class AnkiDroidBridgeTest {
     val context = mockk<Context>(relaxed = true) { every { contentResolver } returns resolver }
 
     val decks = AnkiDroidBridge(context).fetchAllDecks()
-    assertEquals(listOf(10L to "Deck A", 20L to "Deck B"), decks)
+    assertEquals(listOf(DeckId(10L) to "Deck A", DeckId(20L) to "Deck B"), decks)
   }
 
   @Test
@@ -223,7 +223,7 @@ class AnkiDroidBridgeTest {
   fun fetchDueBatch_forceMock_neverTouchesProvider() {
     // Guards the safety path the user relies on to never grade real decks from a test build.
     val resolver = availableResolver {}
-    val batch = bridge(resolver).fetchDueBatch(deckId = 7L, limit = 10, forceMock = true)
+    val batch = bridge(resolver).fetchDueBatch(deckId = DeckId(7L), limit = 10, forceMock = true)
 
     verify(exactly = 0) { resolver.query(any(), any(), any(), any(), any()) }
     assertTrue("mock batch should carry cards", batch.cards.isNotEmpty())
@@ -250,7 +250,7 @@ class AnkiDroidBridgeTest {
         card = cardCursor(555L, "<b>Front</b>", "Back"),
       )
 
-    val batch = bridge(resolver).fetchDueBatch(deckId = 42L, limit = 10)
+    val batch = bridge(resolver).fetchDueBatch(deckId = DeckId(42L), limit = 10)
 
     assertEquals(42L, batch.deckId)
     assertEquals("Japani::文法", batch.deckName)
@@ -285,7 +285,7 @@ class AnkiDroidBridgeTest {
         card = cardCursor(555L, "Q", "A"),
       )
 
-    val card = bridge(resolver).fetchDueBatch(deckId = 42L, limit = 10).cards.single()
+    val card = bridge(resolver).fetchDueBatch(deckId = DeckId(42L), limit = 10).cards.single()
 
     assertEquals(4, card.buttonCount)
     assertEquals(listOf("1m", "10m", "4d", "7d"), card.nextReviewTimes)

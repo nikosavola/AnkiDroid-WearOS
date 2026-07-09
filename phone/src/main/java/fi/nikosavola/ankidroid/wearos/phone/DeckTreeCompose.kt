@@ -52,8 +52,8 @@ import androidx.compose.ui.unit.dp
 @Composable
 fun DeckSelectionTree(
   root: DeckNode,
-  checkedOf: (Long) -> Boolean,
-  onDeckChecked: (Long, Boolean) -> Unit,
+  checkedOf: (DeckId) -> Boolean,
+  onDeckChecked: (DeckId, Boolean) -> Unit,
   onFolderChecked: (DeckNode, Boolean) -> Unit,
   modifier: Modifier = Modifier,
   dueCountOf: (DeckNode) -> Int? = { null },
@@ -81,8 +81,8 @@ private fun DeckNodeRow(
   path: String,
   depth: Int,
   expanded: MutableMap<String, Boolean>,
-  checkedOf: (Long) -> Boolean,
-  onDeckChecked: (Long, Boolean) -> Unit,
+  checkedOf: (DeckId) -> Boolean,
+  onDeckChecked: (DeckId, Boolean) -> Unit,
   onFolderChecked: (DeckNode, Boolean) -> Unit,
   dueCountOf: (DeckNode) -> Int?,
 ) {
@@ -168,14 +168,14 @@ private fun DeckSelectionTreePreview() {
   val root =
     buildDeckTree(
       listOf(
-        1L to "Japani",
-        2L to "Japani::Kaishi 1.5k",
-        3L to "Japani::文法",
-        4L to "Japani::文法::N2",
-        5L to "Fysiikka::Electricity",
+        DeckId(1L) to "Japani",
+        DeckId(2L) to "Japani::Kaishi 1.5k",
+        DeckId(3L) to "Japani::文法",
+        DeckId(4L) to "Japani::文法::N2",
+        DeckId(5L) to "Fysiikka::Electricity",
       )
     )
-  val checked = remember { mutableStateMapOf(1L to true, 2L to true) }
+  val checked = remember { mutableStateMapOf(DeckId(1L) to true, DeckId(2L) to true) }
   MaterialTheme {
     DeckSelectionTree(
       root = root,

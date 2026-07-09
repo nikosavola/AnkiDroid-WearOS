@@ -64,8 +64,10 @@ object DeckSync {
     onProgress("Syncing deck list…", 5)
 
     val decks = bridge.fetchAllDecks()
-    val filteredDecks = decks.filter { deckPrefs.getBoolean("deck_${it.first}", true) }
-    val decksStr = filteredDecks.joinToString("\n") { "${it.first}:${it.second}" }
+    // .value everywhere: the prefs key ("deck_<id>") and the "id:name" wire format the watch parses
+    // must use the raw long, not DeckId.toString().
+    val filteredDecks = decks.filter { deckPrefs.getBoolean("deck_${it.first.value}", true) }
+    val decksStr = filteredDecks.joinToString("\n") { "${it.first.value}:${it.second}" }
     dataClient
       .putDataItem(
         PutDataMapRequest.create(PATH_DECKS)
@@ -102,7 +104,7 @@ object DeckSync {
       val bytes = serializeDueBatch(cleanedBatch)
       dataClient
         .putDataItem(
-          PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId")
+          PutDataMapRequest.create("$PATH_DUE_BATCH/${deckId.value}")
             .apply {
               // serializeDueBatch already gzips; ship the bytes straight into the Asset.
               dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(bytes))
