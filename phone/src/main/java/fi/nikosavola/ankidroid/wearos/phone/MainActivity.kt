@@ -300,6 +300,18 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     )
     topBar.addView(titleColumn)
 
+    // Help: explains how syncing works (what's synced + how watch reviews come back).
+    topBar.addView(
+      com.google.android.material.button
+        .MaterialButton(this, null, com.google.android.material.R.attr.materialIconButtonStyle)
+        .apply {
+          icon = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_info)
+          iconGravity = com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START
+          iconPadding = 0
+          contentDescription = "How syncing works"
+          setOnClickListener { showSyncHelpDialog() }
+        }
+    )
     topBar.addView(
       com.google.android.material.button
         .MaterialButton(this, null, com.google.android.material.R.attr.materialIconButtonStyle)
@@ -312,6 +324,35 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         }
     )
     return topBar
+  }
+
+  /**
+   * Explains the sync model: what's pushed to the watch and how watch reviews return to AnkiDroid.
+   */
+  private fun showSyncHelpDialog() {
+    val message =
+      """
+      Phone → Watch
+      • The phone reads your due cards from AnkiDroid and pushes the selected decks to the watch (compressed, over Bluetooth). Only the decks you check are synced.
+      • This happens when you tap "Sync Due Cards to Watch", automatically in the background (if enabled), and when the watch requests a deck.
+
+      Reviewing on the watch
+      • You review offline on the watch. Each grade is buffered locally on the watch — nothing is sent per-card.
+
+      Watch → Phone → AnkiDroid
+      • Buffered grades are sent back to the phone when a review session finishes, when you tap "Sync N reviews", or on the next background sync.
+      • The phone writes them into AnkiDroid's scheduler (the same as answering in AnkiDroid), then tells the watch to clear its buffer.
+
+      Read-only mode
+      • When enabled (Settings), the phone accepts the watch's reviews and clears the buffer but does NOT change AnkiDroid — useful for testing without affecting your scheduling.
+      """
+        .trimIndent()
+    com.google.android.material.dialog
+      .MaterialAlertDialogBuilder(this)
+      .setTitle("How syncing works")
+      .setMessage(message)
+      .setPositiveButton("Got it", null)
+      .show()
   }
 
   /** Search box (filters the deck tree by name) plus "Select all/none" bulk controls. */
