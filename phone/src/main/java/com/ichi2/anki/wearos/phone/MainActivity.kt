@@ -32,6 +32,12 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     private const val PERMISSION_REQUEST_CODE = 420
     private const val NOTIF_PERMISSION_REQUEST_CODE = 421
 
+    // Overflow menu item ids.
+    private const val MENU_HELP = 1
+    private const val MENU_SETTINGS = 2
+    private const val MENU_FORCE_SYNC = 3
+    private const val MENU_GRANT_PERMS = 4
+
     // Default pre-push cap shown in Settings; the sync itself lives in SyncService now.
     private const val DEFAULT_PREPUSH_DECKS = 15
 
@@ -306,30 +312,53 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     )
     topBar.addView(titleColumn)
 
-    // Help: explains how syncing works (what's synced + how watch reviews come back).
+    // One three-dot overflow instead of separate icons: folds settings, the sync-help dialog, a
+    // manual AnkiDroid re-query, and a permission re-request into a single uncluttered menu.
     topBar.addView(
       com.google.android.material.button
         .MaterialButton(this, null, com.google.android.material.R.attr.materialIconButtonStyle)
         .apply {
-          icon = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_info)
+          icon = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_more_vert)
           iconGravity = com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START
           iconPadding = 0
-          contentDescription = "How syncing works"
-          setOnClickListener { showSyncHelpDialog() }
-        }
-    )
-    topBar.addView(
-      com.google.android.material.button
-        .MaterialButton(this, null, com.google.android.material.R.attr.materialIconButtonStyle)
-        .apply {
-          icon = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_settings)
-          iconGravity = com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START
-          iconPadding = 0
-          contentDescription = "Settings"
-          setOnClickListener { showSettingsDialog() }
+          contentDescription = "More options"
+          setOnClickListener { showOverflowMenu(it) }
         }
     )
     return topBar
+  }
+
+  /**
+   * Three-dot overflow: sync help, settings, a manual AnkiDroid deck re-query, permission
+   * re-request.
+   */
+  private fun showOverflowMenu(anchor: View) {
+    android.widget.PopupMenu(this, anchor).apply {
+      menu.add(0, MENU_HELP, 0, "How syncing works")
+      menu.add(0, MENU_SETTINGS, 1, "Settings")
+      menu.add(0, MENU_FORCE_SYNC, 2, "Force sync with AnkiDroid")
+      menu.add(0, MENU_GRANT_PERMS, 3, "Grant permissions")
+      setOnMenuItemClickListener { item ->
+        when (item.itemId) {
+          MENU_HELP -> showSyncHelpDialog()
+          MENU_SETTINGS -> showSettingsDialog()
+          MENU_FORCE_SYNC -> forceSyncWithAnkiDroid()
+          MENU_GRANT_PERMS -> checkPermissions()
+          else -> return@setOnMenuItemClickListener false
+        }
+        true
+      }
+      show()
+    }
+  }
+
+  /**
+   * Re-query the deck list from AnkiDroid's ContentProvider and redraw. Note: AnkiDroid caches its
+   * collection in-process, so a brand-new deck may only appear here after AnkiDroid itself reloads.
+   */
+  private fun forceSyncWithAnkiDroid() {
+    Toast.makeText(this, "Refreshing decks from AnkiDroid…", Toast.LENGTH_SHORT).show()
+    onPermissionsGranted()
   }
 
   /**
