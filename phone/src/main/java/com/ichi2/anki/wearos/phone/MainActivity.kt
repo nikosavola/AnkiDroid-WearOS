@@ -19,6 +19,7 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.activity.enableEdgeToEdge
 import androidx.core.widget.addTextChangedListener
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -109,10 +110,36 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
   private fun prePushCap(): Int = settings.getInt(KEY_PREPUSH_CAP, DEFAULT_PREPUSH_DECKS)
 
+  /**
+   * Inset the root past the status/nav bars AND horizontal display cutouts, and pad the bottom for
+   * the IME so the on-screen keyboard doesn't cover the search box or the sync button.
+   */
+  private fun applyEdgeToEdgeInsets(root: View) {
+    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
+      val bars =
+        insets.getInsets(
+          androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+            androidx.core.view.WindowInsetsCompat.Type.displayCutout()
+        )
+      val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
+      v.setPadding(
+        64 + bars.left,
+        64 + bars.top,
+        64 + bars.right,
+        64 + maxOf(bars.bottom, ime.bottom),
+      )
+      insets
+    }
+  }
+
   private fun readOnly(): Boolean = settings.getBoolean(KEY_READ_ONLY, false)
 
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
+    // Opt into edge-to-edge explicitly (not just implicitly via targetSdk 35) so the intent is
+    // clear
+    // and the system bars get proper contrast scrims.
+    enableEdgeToEdge()
     bridge = AnkiDroidBridge(this)
 
     // Set up a simple vertical layout
@@ -121,13 +148,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         orientation = LinearLayout.VERTICAL
         setPadding(64, 64, 64, 64)
       }
-    // targetSdk 35 draws edge-to-edge on Android 15, so keep content (incl. the gear) clear of the
-    // status/nav bars by adding the system-bar insets on top of the base padding.
-    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(rootLayout) { v, insets ->
-      val bars = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-      v.setPadding(64, 64 + bars.top, 64, 64 + bars.bottom)
-      insets
-    }
+    applyEdgeToEdgeInsets(rootLayout)
 
     val density = resources.displayMetrics.density
     rootLayout.addView(buildTopBar(density))
