@@ -77,13 +77,13 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
   // All screen state is observable so Compose recomposes when the async deck/count loads, the
   // permission flow, the sync broadcast receiver, or filter typing write to it.
-  private var allDecks by mutableStateOf<List<Pair<Long, String>>>(emptyList())
+  private var allDecks by mutableStateOf<List<Pair<DeckId, String>>>(emptyList())
   // Case-insensitive deck-name filter from the search box; blank shows the full tree.
   private var deckFilter by mutableStateOf("")
   // Best-effort per-deck due totals (deckId -> count); empty when AnkiDroid doesn't expose them.
-  private var deckCounts by mutableStateOf<Map<Long, Int>>(emptyMap())
+  private var deckCounts by mutableStateOf<Map<DeckId, Int>>(emptyMap())
   // Observable mirror of the deck_sync_prefs "deck_<id>" selection, so the Compose checkboxes react.
-  private val deckSelection = mutableStateMapOf<Long, Boolean>()
+  private val deckSelection = mutableStateMapOf<DeckId, Boolean>()
   private var statusMessage by mutableStateOf("Checking permissions…")
   private var statusTone by mutableStateOf(StatusTone.NEUTRAL)
   private var syncEnabled by mutableStateOf(false)
@@ -196,14 +196,13 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     val selectedCount = allDecks.count { deckSelection[it.first] ?: true }
 
     Column(
-      modifier =
-        Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(horizontal = 20.dp),
-      verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      Row(
-        verticalAlignment = Alignment.Top,
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        modifier = Modifier.safeDrawingPadding().imePadding().padding(horizontal = 20.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
       ) {
+        Row(
+          verticalAlignment = Alignment.Top,
+          modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        ) {
         Column(modifier = Modifier.weight(1f)) {
           Text(
             text = "ANKIDROID",
@@ -487,15 +486,16 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
   private fun seedSelectionFromPrefs() {
     val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-    for ((id, _) in allDecks) deckSelection[id] = prefs.getBoolean("deck_$id", true)
+    // Key is the raw long ("deck_<id>"), matching DeckSync — DeckId.value, NOT the wrapper's toString.
+    for ((id, _) in allDecks) deckSelection[id] = prefs.getBoolean("deck_${id.value}", true)
   }
 
   /** Persist a single deck's selection and mirror it into the observable map. */
-  private fun setDeckSelected(id: Long, checked: Boolean) {
+  private fun setDeckSelected(id: DeckId, checked: Boolean) {
     deckSelection[id] = checked
     getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
       .edit()
-      .putBoolean("deck_$id", checked)
+      .putBoolean("deck_${id.value}", checked)
       .apply()
   }
 
@@ -531,7 +531,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   /** Check or uncheck every deck at once (bulk select controls above the tree). */
   private fun setAllDecksSelected(selected: Boolean) {
     val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-    prefs.edit().apply { for ((id, _) in allDecks) putBoolean("deck_$id", selected) }.apply()
+    prefs.edit().apply { for ((id, _) in allDecks) putBoolean("deck_${id.value}", selected) }.apply()
     for ((id, _) in allDecks) deckSelection[id] = selected
   }
 
@@ -795,12 +795,12 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
 /** A node in the deck hierarchy parsed from Anki `::`-separated deck names. */
 class DeckNode(val name: String) {
-  var deckId: Long? = null
+  var deckId: DeckId? = null
   val children = sortedMapOf<String, DeckNode>()
 }
 
 /** Build a folder tree from flat `parent::child` deck names. */
-internal fun buildDeckTree(decks: List<Pair<Long, String>>): DeckNode {
+internal fun buildDeckTree(decks: List<Pair<DeckId, String>>): DeckNode {
   val root = DeckNode("")
   for ((id, fullName) in decks) {
     var node = root
@@ -813,10 +813,10 @@ internal fun buildDeckTree(decks: List<Pair<Long, String>>): DeckNode {
 }
 
 /** Collect every real deck id at or below [node]. */
-internal fun collectDeckIds(node: DeckNode, out: MutableList<Long>) {
+internal fun collectDeckIds(node: DeckNode, out: MutableList<DeckId>) {
   node.deckId?.let { out.add(it) }
   for (child in node.children.values) collectDeckIds(child, out)
 }
 
 /** Every real deck id at or below this node — an idiomatic `buildList` wrapper. */
-internal fun DeckNode.deckIds(): List<Long> = buildList { collectDeckIds(this@deckIds, this) }
+internal fun DeckNode.deckIds(): List<DeckId> = buildList { collectDeckIds(this@deckIds, this) }

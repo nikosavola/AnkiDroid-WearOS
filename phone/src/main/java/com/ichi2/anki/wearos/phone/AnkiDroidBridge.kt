@@ -61,13 +61,13 @@ class AnkiDroidBridge(private val context: Context) {
   }
 
   /** Query all available decks in AnkiDroid dynamically. */
-  fun fetchAllDecks(): List<Pair<Long, String>> {
-    val list = mutableListOf<Pair<Long, String>>()
+  fun fetchAllDecks(): List<Pair<DeckId, String>> {
+    val list = mutableListOf<Pair<DeckId, String>>()
     if (!isAnkiDroidAvailable()) {
       return listOf(
-        Pair(1L, "WearOS Dev (Mock Deck)"),
-        Pair(123L, "Japanese Vocab (Mock)"),
-        Pair(456L, "Medical Anatomy (Mock)"),
+        Pair(DeckId(1L), "WearOS Dev (Mock Deck)"),
+        Pair(DeckId(123L), "Japanese Vocab (Mock)"),
+        Pair(DeckId(456L), "Medical Anatomy (Mock)"),
       )
     }
     try {
@@ -79,7 +79,7 @@ class AnkiDroidBridge(private val context: Context) {
           if (idIdx != -1 && nameIdx != -1) {
             val deckId = it.getLong(idIdx)
             val deckName = it.getString(nameIdx)
-            list.add(Pair(deckId, deckName))
+            list.add(Pair(DeckId(deckId), deckName))
           }
         }
       }
@@ -87,7 +87,7 @@ class AnkiDroidBridge(private val context: Context) {
       Log.e(TAG, "Failed to fetch all decks from AnkiDroid: ${e.message}", e)
     }
     if (list.isEmpty()) {
-      list.add(Pair(1L, "Default"))
+      list.add(Pair(DeckId(1L), "Default"))
     }
     return list
   }
@@ -100,9 +100,9 @@ class AnkiDroidBridge(private val context: Context) {
    * "unknown", never as zero. This does one provider query, but the provider may compute counts for
    * the whole collection, so call it off the main thread.
    */
-  fun fetchDeckCounts(): Map<Long, Int> {
+  fun fetchDeckCounts(): Map<DeckId, Int> {
     if (!isAnkiDroidAvailable()) return emptyMap()
-    val out = mutableMapOf<Long, Int>()
+    val out = mutableMapOf<DeckId, Int>()
     try {
       context.contentResolver.query(DECKS_URI, null, null, null, null)?.use { c ->
         val idIdx = c.getColumnIndex(COL_DECK_ID)
@@ -113,7 +113,7 @@ class AnkiDroidBridge(private val context: Context) {
           val raw = c.getString(countsIdx) ?: continue
           // Sum every integer in the value, tolerant of the exact bracket/format the version uses.
           val nums = Regex("\\d+").findAll(raw).map { it.value.toIntOrNull() ?: 0 }.toList()
-          if (nums.isNotEmpty()) out[id] = nums.sum()
+          if (nums.isNotEmpty()) out[DeckId(id)] = nums.sum()
         }
       }
     } catch (e: Exception) {
@@ -124,7 +124,7 @@ class AnkiDroidBridge(private val context: Context) {
   }
 
   /** Query the user's active, currently selected deck from AnkiDroid dynamically. */
-  fun getSelectedDeck(): Pair<Long, String> {
+  fun getSelectedDeck(): Pair<DeckId, String> {
     try {
       val cursor = context.contentResolver.query(DECK_SELECTED_URI, null, null, null, null)
       cursor?.use {
@@ -134,18 +134,18 @@ class AnkiDroidBridge(private val context: Context) {
           if (idIdx != -1 && nameIdx != -1) {
             val deckId = it.getLong(idIdx)
             val deckName = it.getString(nameIdx)
-            return Pair(deckId, deckName)
+            return Pair(DeckId(deckId), deckName)
           }
         }
       }
     } catch (e: Exception) {
       Log.e(TAG, "Failed to query selected deck from AnkiDroid: ${e.message}", e)
     }
-    return Pair(1L, "Default")
+    return Pair(DeckId(1L), "Default")
   }
 
   /** Fetch the due cards batch. Automatically falls back to mock cards if AnkiDroid is missing. */
-  fun fetchDueBatch(deckId: Long, limit: Int, forceMock: Boolean = false): WearosDueBatch {
+  fun fetchDueBatch(deckId: DeckId, limit: Int, forceMock: Boolean = false): WearosDueBatch {
     if (forceMock || !isAnkiDroidAvailable()) {
       Log.i(TAG, "AnkiDroid not found or Mock Mode forced. Falling back to Mock Due Batch.")
       return getMockDueBatch(deckId)
@@ -172,7 +172,7 @@ class AnkiDroidBridge(private val context: Context) {
           SCHEDULE_URI,
           null,
           "limit=?,deckID=?",
-          arrayOf(limit.toString(), resolvedDeckId.toString()),
+          arrayOf(limit.toString(), resolvedDeckId.value.toString()),
           null,
         )
 
@@ -230,7 +230,11 @@ class AnkiDroidBridge(private val context: Context) {
         }
       }
 
-      return WearosDueBatch(deckId = resolvedDeckId, deckName = resolvedDeckName, cards = cards)
+      return WearosDueBatch(
+        deckId = resolvedDeckId.value,
+        deckName = resolvedDeckName,
+        cards = cards,
+      )
     } catch (e: Exception) {
       Log.e(TAG, "Failed to query AnkiDroid ContentProvider: ${e.message}. Using mocks.", e)
       return getMockDueBatch(deckId)
@@ -246,7 +250,7 @@ class AnkiDroidBridge(private val context: Context) {
    * (a single-card note matched by `is:new` is provably the new card); multi-card notes are skipped
    * since the Card projection doesn't expose per-card queue state.
    */
-  fun fetchNewCards(deckId: Long, limit: Int, forceMock: Boolean = false): WearosDueBatch {
+  fun fetchNewCards(deckId: DeckId, limit: Int, forceMock: Boolean = false): WearosDueBatch {
     if (forceMock || !isAnkiDroidAvailable()) {
       return getMockDueBatch(deckId).let { it.copy(deckName = "${it.deckName} (new)") }
     }
@@ -260,10 +264,14 @@ class AnkiDroidBridge(private val context: Context) {
       if (skipped > 0) {
         Log.i(TAG, "Skipped $skipped multi-card notes to avoid rescheduling non-new cards.")
       }
-      WearosDueBatch(deckId = resolvedDeckId, deckName = "$resolvedDeckName (new)", cards = cards)
+      WearosDueBatch(
+        deckId = resolvedDeckId.value,
+        deckName = "$resolvedDeckName (new)",
+        cards = cards,
+      )
     } catch (e: Exception) {
       Log.e(TAG, "Failed to fetch new cards: ${e.message}", e)
-      WearosDueBatch(deckId = deckId, deckName = "New cards", cards = emptyList())
+      WearosDueBatch(deckId = deckId.value, deckName = "New cards", cards = emptyList())
     }
   }
 
@@ -423,7 +431,7 @@ class AnkiDroidBridge(private val context: Context) {
     }
   }
 
-  private fun getMockDueBatch(deckId: Long): WearosDueBatch {
+  private fun getMockDueBatch(deckId: DeckId): WearosDueBatch {
     val mockCards =
       listOf(
         WearosCard(
@@ -466,11 +474,11 @@ class AnkiDroidBridge(private val context: Context) {
       )
 
     return WearosDueBatch(
-      deckId = deckId,
+      deckId = deckId.value,
       deckName =
-        if (deckId == 123L) {
+        if (deckId == DeckId(123L)) {
           "Japanese Vocab (Mock)"
-        } else if (deckId == 456L) {
+        } else if (deckId == DeckId(456L)) {
           "Medical Anatomy (Mock)"
         } else {
           "WearOS Dev (Mock Deck)"

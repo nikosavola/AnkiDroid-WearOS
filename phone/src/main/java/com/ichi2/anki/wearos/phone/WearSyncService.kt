@@ -98,7 +98,7 @@ class WearSyncService : WearableListenerService() {
         scope.launch {
           try {
             // 1. Fetch due cards for this specific deck (no mock forced, respect local available)
-            val batch = bridge.fetchDueBatch(deckId = deckId, limit = 20)
+            val batch = bridge.fetchDueBatch(deckId = DeckId(deckId), limit = 20)
             Log.d(TAG, "Fetched ${batch.cards.size} due cards dynamically.")
 
             // 2. Serialize via Rust using lightweight metadata
@@ -142,8 +142,9 @@ class WearSyncService : WearableListenerService() {
         try {
           val decks = bridge.fetchAllDecks()
           val sharedPrefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-          val filteredDecks = decks.filter { sharedPrefs.getBoolean("deck_${it.first}", true) }
-          val decksStr = filteredDecks.joinToString("\n") { "${it.first}:${it.second}" }
+          // .value: raw long for the prefs key and the "id:name" wire format the watch parses.
+          val filteredDecks = decks.filter { sharedPrefs.getBoolean("deck_${it.first.value}", true) }
+          val decksStr = filteredDecks.joinToString("\n") { "${it.first.value}:${it.second}" }
           val deckBytes = decksStr.toByteArray(Charsets.UTF_8)
 
           val dataClient = Wearable.getDataClient(this@WearSyncService)
@@ -172,7 +173,7 @@ class WearSyncService : WearableListenerService() {
 
         scope.launch {
           try {
-            val batch = bridge.fetchNewCards(deckId = deckId, limit = count)
+            val batch = bridge.fetchNewCards(deckId = DeckId(deckId), limit = count)
             Log.d(TAG, "Fetched ${batch.cards.size} new cards for '${batch.deckName}'.")
             val cleanedCards =
               batch.cards.map { card ->
