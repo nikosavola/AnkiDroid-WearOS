@@ -12,15 +12,30 @@ import android.text.Spanned
 import android.text.style.BulletSpan
 import android.text.style.RelativeSizeSpan
 import android.text.style.StyleSpan
-import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
-import android.widget.ProgressBar
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.material3.Button
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -28,10 +43,12 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.core.widget.addTextChangedListener
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -43,12 +60,6 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     private const val PERMISSION_ANKIDROID = "com.ichi2.anki.permission.READ_WRITE_DATABASE"
     private const val PERMISSION_REQUEST_CODE = 420
     private const val NOTIF_PERMISSION_REQUEST_CODE = 421
-
-    // Overflow menu item ids.
-    private const val MENU_HELP = 1
-    private const val MENU_SETTINGS = 2
-    private const val MENU_FORCE_SYNC = 3
-    private const val MENU_GRANT_PERMS = 4
 
     // Default pre-push cap shown in Settings; the sync itself lives in SyncService now.
     private const val DEFAULT_PREPUSH_DECKS = 15
@@ -63,21 +74,31 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   }
 
   private lateinit var bridge: AnkiDroidBridge
-  private lateinit var statusText: TextView
-  private lateinit var syncStatusText: TextView
-  private lateinit var syncButton: Button
-  private lateinit var progressBar: ProgressBar
-  // Observable state driving the Compose deck tree (DeckSelectionTree). The tree recomposes when any
-  // of these change, so the async deck/count loads and filter typing update it without a manual redraw.
+
+  // All screen state is observable so Compose recomposes when the async deck/count loads, the
+  // permission flow, the sync broadcast receiver, or filter typing write to it.
   private var allDecks by mutableStateOf<List<Pair<Long, String>>>(emptyList())
   // Case-insensitive deck-name filter from the search box; blank shows the full tree.
   private var deckFilter by mutableStateOf("")
-  private lateinit var lastSyncText: TextView
-  private lateinit var sectionHeader: TextView
   // Best-effort per-deck due totals (deckId -> count); empty when AnkiDroid doesn't expose them.
   private var deckCounts by mutableStateOf<Map<Long, Int>>(emptyMap())
   // Observable mirror of the deck_sync_prefs "deck_<id>" selection, so the Compose checkboxes react.
   private val deckSelection = mutableStateMapOf<Long, Boolean>()
+  private var statusMessage by mutableStateOf("Checking permissions…")
+  private var statusTone by mutableStateOf(StatusTone.NEUTRAL)
+  private var syncEnabled by mutableStateOf(false)
+  private var syncStatusMessage by mutableStateOf<String?>(null)
+  private var progressVisible by mutableStateOf(false)
+  private var progressIndeterminate by mutableStateOf(false)
+  private var progressFraction by mutableStateOf(0f)
+  private var lastSyncLabel by mutableStateOf("Not synced yet")
+
+  /** Status-line color role, mapped to the theme's color scheme in the composable. */
+  private enum class StatusTone {
+    NEUTRAL,
+    CONNECTED,
+    ERROR,
+  }
 
   // Mirrors SyncService progress into the in-app status line + bar while the Activity is alive.
   private val syncProgressReceiver =
@@ -89,26 +110,26 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         val done = intent.getBooleanExtra(SyncService.EXTRA_DONE, false)
         val error = intent.getBooleanExtra(SyncService.EXTRA_ERROR, false)
 
-        syncStatusText.visibility = View.VISIBLE
-        syncStatusText.text = text
-        progressBar.visibility = View.VISIBLE
-        progressBar.isIndeterminate = false
-        progressBar.progress = percent
+        syncStatusMessage = text
+        progressVisible = true
+        progressIndeterminate = false
+        progressFraction = percent / 100f
 
         if (done) {
-          syncButton.isEnabled = true
+          syncEnabled = true
           if (error) {
-            progressBar.visibility = View.GONE
+            progressVisible = false
           } else {
             updateLastSyncLabel()
             // Hold the "Done" state briefly, then clear.
-            syncStatusText.postDelayed(
-              {
-                progressBar.visibility = View.GONE
-                syncStatusText.visibility = View.GONE
-              },
-              1500,
-            )
+            android.os.Handler(android.os.Looper.getMainLooper())
+              .postDelayed(
+                {
+                  progressVisible = false
+                  syncStatusMessage = null
+                },
+                1500,
+              )
           }
         }
       }
@@ -121,28 +142,6 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
   private fun prePushCap(): Int = settings.getInt(KEY_PREPUSH_CAP, DEFAULT_PREPUSH_DECKS)
 
-  /**
-   * Inset the root past the status/nav bars AND horizontal display cutouts, and pad the bottom for
-   * the IME so the on-screen keyboard doesn't cover the search box or the sync button.
-   */
-  private fun applyEdgeToEdgeInsets(root: View) {
-    androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(root) { v, insets ->
-      val bars =
-        insets.getInsets(
-          androidx.core.view.WindowInsetsCompat.Type.systemBars() or
-            androidx.core.view.WindowInsetsCompat.Type.displayCutout()
-        )
-      val ime = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.ime())
-      v.setPadding(
-        64 + bars.left,
-        64 + bars.top,
-        64 + bars.right,
-        64 + maxOf(bars.bottom, ime.bottom),
-      )
-      insets
-    }
-  }
-
   private fun readOnly(): Boolean = settings.getBoolean(KEY_READ_ONLY, false)
 
   override fun onCreate(savedInstanceState: Bundle?) {
@@ -153,114 +152,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     enableEdgeToEdge()
     bridge = AnkiDroidBridge(this)
 
-    // Set up a simple vertical layout
-    val rootLayout =
-      LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(64, 64, 64, 64)
-      }
-    applyEdgeToEdgeInsets(rootLayout)
-
-    val density = resources.displayMetrics.density
-    rootLayout.addView(buildTopBar(density))
-
-    statusText =
-      com.google.android.material.textview.MaterialTextView(this).apply {
-        text = "Checking permissions…"
-        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
-        // Clickable: a trailing info icon + ripple signal that tapping shows connection details.
-        setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, R.drawable.ic_info, 0)
-        compoundDrawablePadding = 12
-        isClickable = true
-        isFocusable = true
-        background = resolveAttrDrawable(android.R.attr.selectableItemBackground)
-        setPadding(8, 16, 8, 32)
-        setOnClickListener { showConnectionInfoDialog() }
-      }
-    rootLayout.addView(statusText)
-
-    // Bold section header for the deck list (M3 title role, primary color).
-    sectionHeader =
-      com.google.android.material.textview.MaterialTextView(this).apply {
-        text = "Decks to sync"
-        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_TitleLarge)
-        setTypeface(typeface, android.graphics.Typeface.BOLD)
-        setTextColor(
-          com.google.android.material.color.MaterialColors.getColor(
-            this,
-            com.google.android.material.R.attr.colorPrimary,
-          )
-        )
-        setPadding(0, 0, 0, 12)
-      }
-    rootLayout.addView(sectionHeader)
-
-    // "Last synced …" caption (relative time), refreshed on launch and after each sync.
-    lastSyncText =
-      com.google.android.material.textview.MaterialTextView(this).apply {
-        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodySmall)
-        setTextColor(
-          com.google.android.material.color.MaterialColors.getColor(
-            this,
-            com.google.android.material.R.attr.colorOnSurfaceVariant,
-          )
-        )
-        setPadding(0, 0, 0, 12)
-      }
-    rootLayout.addView(lastSyncText)
     updateLastSyncLabel()
-
-    rootLayout.addView(buildDeckFilterControls(density))
-
-    // Deck selector: a Compose Material 3 Expressive tree (spring chevron + animated expand/collapse)
-    // hosted in a ComposeView island. weight=1 gives it a bounded height so its own verticalScroll
-    // works; the surrounding chrome stays as Material Views. Its own verticalScroll replaces the old
-    // ScrollView, so it is NOT nested in one.
-    val deckTreeView =
-      ComposeView(this).apply {
-        layoutParams =
-          LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply {
-            setMargins(0, 0, 0, 16)
-          }
-        setContent { DeckTreeContent() }
-      }
-    rootLayout.addView(deckTreeView)
-
-    // One-line live sync status, shown right above the progress bar while a sync runs.
-    syncStatusText =
-      com.google.android.material.textview.MaterialTextView(this).apply {
-        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_BodyMedium)
-        setTextColor(
-          com.google.android.material.color.MaterialColors.getColor(
-            this,
-            com.google.android.material.R.attr.colorOnSurfaceVariant,
-          )
-        )
-        visibility = View.GONE
-        setPadding(0, 0, 0, 8)
-      }
-    rootLayout.addView(syncStatusText)
-
-    // Horizontal Progress Bar for sync visual feedback
-    progressBar =
-      com.google.android.material.progressindicator.LinearProgressIndicator(this).apply {
-        isIndeterminate = false
-        max = 100
-        progress = 0
-        visibility = View.GONE
-        setPadding(0, 0, 0, 32)
-      }
-    rootLayout.addView(progressBar)
-
-    syncButton =
-      com.google.android.material.button.MaterialButton(this).apply {
-        text = "Sync Due Cards to Watch"
-        isEnabled = false
-        setOnClickListener { triggerSyncToWatch() }
-      }
-    rootLayout.addView(syncButton)
-
-    setContentView(rootLayout)
+    setContent { AnkiPhoneTheme { PhoneScreen() } }
 
     androidx.core.content.ContextCompat.registerReceiver(
       this,
@@ -279,7 +172,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   override fun onResume() {
     super.onResume()
     // A background auto-sync may have run while we were away; refresh the relative time.
-    if (::lastSyncText.isInitialized) updateLastSyncLabel()
+    updateLastSyncLabel()
   }
 
   override fun onDestroy() {
@@ -288,94 +181,152 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   }
 
   /**
-   * Material 3 large-top-app-bar-style header: a primary-colored overline above a headline title on
-   * the left, with a Material icon button on the right that opens Settings (top-aligned so it sits
-   * in the corner like a real top-app-bar action when the title wraps).
+   * The whole phone screen in Compose Material 3 Expressive. All app logic (permissions, sync,
+   * bridge, receiver) stays in the Activity and feeds this via observable state; the dialogs remain
+   * MaterialAlertDialogs invoked from here.
    */
-  private fun buildTopBar(density: Float): View {
-    val topBar =
-      LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        gravity = android.view.Gravity.TOP
-        setPadding(0, 0, 0, (24 * density).toInt())
+  @Composable
+  private fun PhoneScreen() {
+    val statusColor =
+      when (statusTone) {
+        StatusTone.CONNECTED -> MaterialTheme.colorScheme.primary
+        StatusTone.ERROR -> MaterialTheme.colorScheme.error
+        StatusTone.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
       }
+    val selectedCount = allDecks.count { deckSelection[it.first] ?: true }
 
-    val titleColumn =
-      LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-      }
-    titleColumn.addView(
-      com.google.android.material.textview.MaterialTextView(this).apply {
-        text = "ANKIDROID"
-        setTextAppearance(com.google.android.material.R.style.TextAppearance_Material3_LabelMedium)
-        setTextColor(
-          com.google.android.material.color.MaterialColors.getColor(
-            this,
-            com.google.android.material.R.attr.colorPrimary,
+    Column(
+      modifier =
+        Modifier.fillMaxSize().safeDrawingPadding().imePadding().padding(horizontal = 20.dp),
+      verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+      Row(
+        verticalAlignment = Alignment.Top,
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+      ) {
+        Column(modifier = Modifier.weight(1f)) {
+          Text(
+            text = "ANKIDROID",
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
           )
-        )
-        // Wide tracking + medium weight give the caps overline the polished M3 label look.
-        letterSpacing = 0.1f
-        setTypeface(typeface, android.graphics.Typeface.BOLD)
-      }
-    )
-    titleColumn.addView(
-      com.google.android.material.textview.MaterialTextView(this).apply {
-        text = "WearOS Companion"
-        setTextAppearance(
-          com.google.android.material.R.style.TextAppearance_Material3_HeadlineMedium
-        )
-        setTextColor(
-          com.google.android.material.color.MaterialColors.getColor(
-            this,
-            com.google.android.material.R.attr.colorOnSurface,
+          Text(
+            text = "WearOS Companion",
+            style = MaterialTheme.typography.headlineMedium,
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
           )
-        )
-        setPadding(0, (2 * density).toInt(), 0, 0)
-        maxLines = 2
-        ellipsize = android.text.TextUtils.TruncateAt.END
-      }
-    )
-    topBar.addView(titleColumn)
-
-    // One three-dot overflow instead of separate icons: folds settings, the sync-help dialog, a
-    // manual AnkiDroid re-query, and a permission re-request into a single uncluttered menu.
-    topBar.addView(
-      com.google.android.material.button
-        .MaterialButton(this, null, com.google.android.material.R.attr.materialIconButtonStyle)
-        .apply {
-          icon = androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_more_vert)
-          iconGravity = com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START
-          iconPadding = 0
-          contentDescription = "More options"
-          setOnClickListener { showOverflowMenu(it) }
         }
-    )
-    return topBar
+        OverflowMenu()
+      }
+
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier =
+          Modifier.fillMaxWidth().clickable { showConnectionInfoDialog() }.padding(vertical = 4.dp),
+      ) {
+        Text(text = statusMessage, color = statusColor, modifier = Modifier.weight(1f))
+        Icon(
+          painter = painterResource(id = R.drawable.ic_info),
+          contentDescription = "Connection details",
+          tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+
+      Text(
+        text = "Decks to sync ($selectedCount/${allDecks.size})",
+        style = MaterialTheme.typography.titleLarge,
+        fontWeight = FontWeight.Bold,
+        color = MaterialTheme.colorScheme.primary,
+      )
+      Text(
+        text = lastSyncLabel,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+
+      OutlinedTextField(
+        value = deckFilter,
+        onValueChange = { deckFilter = it.trim() },
+        label = { Text("Search decks") },
+        singleLine = true,
+        modifier = Modifier.fillMaxWidth(),
+      )
+
+      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick = { setAllDecksSelected(true) }) { Text("Select all") }
+        OutlinedButton(onClick = { setAllDecksSelected(false) }) { Text("Select none") }
+      }
+
+      DeckTreeContent(modifier = Modifier.weight(1f))
+
+      syncStatusMessage?.let {
+        Text(
+          text = it,
+          style = MaterialTheme.typography.bodyMedium,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      if (progressVisible) {
+        if (progressIndeterminate) {
+          LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+        } else {
+          LinearProgressIndicator(progress = { progressFraction }, modifier = Modifier.fillMaxWidth())
+        }
+      }
+
+      Button(
+        onClick = { triggerSyncToWatch() },
+        enabled = syncEnabled,
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+      ) {
+        Text("Sync Due Cards to Watch")
+      }
+    }
   }
 
-  /**
-   * Three-dot overflow: sync help, settings, a manual AnkiDroid deck re-query, permission
-   * re-request.
-   */
-  private fun showOverflowMenu(anchor: View) {
-    android.widget.PopupMenu(this, anchor).apply {
-      menu.add(0, MENU_HELP, 0, "How syncing works")
-      menu.add(0, MENU_SETTINGS, 1, "Settings")
-      menu.add(0, MENU_FORCE_SYNC, 2, "Force sync with AnkiDroid")
-      menu.add(0, MENU_GRANT_PERMS, 3, "Grant permissions")
-      setOnMenuItemClickListener { item ->
-        when (item.itemId) {
-          MENU_HELP -> showSyncHelpDialog()
-          MENU_SETTINGS -> showSettingsDialog()
-          MENU_FORCE_SYNC -> forceSyncWithAnkiDroid()
-          MENU_GRANT_PERMS -> checkPermissions()
-          else -> return@setOnMenuItemClickListener false
-        }
-        true
+  /** Three-dot overflow: sync help, settings, a manual AnkiDroid re-query, permission re-request. */
+  @Composable
+  private fun OverflowMenu() {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+      IconButton(onClick = { expanded = true }) {
+        Icon(
+          painter = painterResource(id = R.drawable.ic_more_vert),
+          contentDescription = "More options",
+        )
       }
-      show()
+      DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        DropdownMenuItem(
+          text = { Text("How syncing works") },
+          onClick = {
+            expanded = false
+            showSyncHelpDialog()
+          },
+        )
+        DropdownMenuItem(
+          text = { Text("Settings") },
+          onClick = {
+            expanded = false
+            showSettingsDialog()
+          },
+        )
+        DropdownMenuItem(
+          text = { Text("Force sync with AnkiDroid") },
+          onClick = {
+            expanded = false
+            forceSyncWithAnkiDroid()
+          },
+        )
+        DropdownMenuItem(
+          text = { Text("Grant permissions") },
+          onClick = {
+            expanded = false
+            checkPermissions()
+          },
+        )
+      }
     }
   }
 
@@ -476,79 +427,17 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     return sb
   }
 
-  /** Search box (filters the deck tree by name) plus "Select all/none" bulk controls. */
-  private fun buildDeckFilterControls(density: Float): View {
-    val container = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-
-    val searchLayout =
-      com.google.android.material.textfield.TextInputLayout(this).apply {
-        hint = "Search decks"
-        layoutParams =
-          LinearLayout.LayoutParams(
-              LinearLayout.LayoutParams.MATCH_PARENT,
-              LinearLayout.LayoutParams.WRAP_CONTENT,
-            )
-            .apply { setMargins(0, 0, 0, (8 * density).toInt()) }
-      }
-    searchLayout.addView(
-      com.google.android.material.textfield.TextInputEditText(searchLayout.context).apply {
-        isSingleLine = true
-        imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
-        addTextChangedListener { editable ->
-          // Observable state; the Compose tree recomputes its filtered view + rebuilds automatically.
-          deckFilter = editable?.toString().orEmpty().trim()
-        }
-      }
-    )
-    container.addView(searchLayout)
-
-    val bulkRow =
-      LinearLayout(this).apply {
-        orientation = LinearLayout.HORIZONTAL
-        setPadding(0, 0, 0, (8 * density).toInt())
-      }
-    bulkRow.addView(
-      com.google.android.material.button
-        .MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
-        .apply {
-          text = "Select all"
-          setOnClickListener { setAllDecksSelected(true) }
-        }
-    )
-    bulkRow.addView(
-      com.google.android.material.button
-        .MaterialButton(this, null, com.google.android.material.R.attr.materialButtonOutlinedStyle)
-        .apply {
-          text = "Select none"
-          setOnClickListener { setAllDecksSelected(false) }
-          layoutParams =
-            LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT,
-              )
-              .apply { setMarginStart((8 * density).toInt()) }
-        }
-    )
-    container.addView(bulkRow)
-    return container
-  }
-
-  /** Set the top status line concisely, colored by the theme attribute for the current state. */
-  private fun setStatus(text: String, colorAttr: Int) {
-    statusText.text = text
-    statusText.setTextColor(
-      com.google.android.material.color.MaterialColors.getColor(statusText, colorAttr)
-    )
+  /** Set the top status line; the composable maps the tone to a color-scheme role. */
+  private fun setStatus(text: String, tone: StatusTone) {
+    statusMessage = text
+    statusTone = tone
   }
 
   private fun checkPermissions() {
     if (checkSelfPermission(PERMISSION_ANKIDROID) == PackageManager.PERMISSION_GRANTED) {
       onPermissionsGranted()
     } else {
-      setStatus(
-        "Waiting for card access permission…",
-        com.google.android.material.R.attr.colorOnSurfaceVariant,
-      )
+      setStatus("Waiting for card access permission…", StatusTone.NEUTRAL)
       requestPermissions(arrayOf(PERMISSION_ANKIDROID), PERMISSION_REQUEST_CODE)
     }
   }
@@ -562,28 +451,22 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
         onPermissionsGranted()
       } else {
-        setStatus(
-          "Permission denied — can't read cards",
-          com.google.android.material.R.attr.colorError,
-        )
+        setStatus("Permission denied — can't read cards", StatusTone.ERROR)
         Toast.makeText(this, "Permission required to access cards!", Toast.LENGTH_LONG).show()
       }
     }
   }
 
   private fun onPermissionsGranted() {
-    syncButton.isEnabled = true
+    syncEnabled = true
     // The availability probe and the (potentially large) deck query are ContentProvider I/O; keep
     // them off the main thread so launch doesn't jank, then update the UI on the main thread.
     lifecycleScope.launch {
       val available = withContext(Dispatchers.IO) { bridge.isAnkiDroidAvailable() }
       if (available) {
-        setStatus("Connected to AnkiDroid", com.google.android.material.R.attr.colorPrimary)
+        setStatus("Connected to AnkiDroid", StatusTone.CONNECTED)
       } else {
-        setStatus(
-          "Standalone mock mode — AnkiDroid not found",
-          com.google.android.material.R.attr.colorOnSurfaceVariant,
-        )
+        setStatus("Standalone mock mode — AnkiDroid not found", StatusTone.NEUTRAL)
       }
       allDecks = withContext(Dispatchers.IO) { bridge.fetchAllDecks() }
       renderDeckTree()
@@ -595,13 +478,11 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   }
 
   /**
-   * Refresh the Compose deck tree's backing state: mirror the persisted selection into observable
-   * state and update the header count. The tree itself recomposes off [allDecks]/[deckCounts]/
-   * [deckFilter]/[deckSelection], so there's no manual view rebuild.
+   * Mirror the persisted deck selection into observable state. The tree + the "N/M" header recompose
+   * off [allDecks]/[deckCounts]/[deckFilter]/[deckSelection], so there's no manual view rebuild.
    */
   private fun renderDeckTree() {
     seedSelectionFromPrefs()
-    updateSelectedCountHeader()
   }
 
   private fun seedSelectionFromPrefs() {
@@ -609,55 +490,42 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     for ((id, _) in allDecks) deckSelection[id] = prefs.getBoolean("deck_$id", true)
   }
 
-  /** Persist a single deck's selection and mirror it into the observable map + header. */
+  /** Persist a single deck's selection and mirror it into the observable map. */
   private fun setDeckSelected(id: Long, checked: Boolean) {
     deckSelection[id] = checked
     getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
       .edit()
       .putBoolean("deck_$id", checked)
       .apply()
-    updateSelectedCountHeader()
   }
 
   /** The Compose Material 3 Expressive deck tree, wired to the persisted selection + due counts. */
   @Composable
-  private fun DeckTreeContent() {
-    AnkiPhoneTheme {
-      val filtered =
-        if (deckFilter.isBlank()) {
-          allDecks
-        } else {
-          allDecks.filter { it.second.contains(deckFilter, ignoreCase = true) }
-        }
-      if (filtered.isEmpty()) {
-        Text(
-          text =
-            if (deckFilter.isBlank()) "No decks found." else "No decks match \"$deckFilter\".",
-          modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        )
+  private fun DeckTreeContent(modifier: Modifier = Modifier) {
+    val filtered =
+      if (deckFilter.isBlank()) {
+        allDecks
       } else {
-        val root = remember(filtered) { buildDeckTree(filtered) }
-        DeckSelectionTree(
-          root = root,
-          checkedOf = { deckSelection[it] ?: true },
-          onDeckChecked = { id, checked -> setDeckSelected(id, checked) },
-          onFolderChecked = { node, checked ->
-            node.deckIds().forEach { setDeckSelected(it, checked) }
-          },
-          dueCountOf = { node ->
-            node.deckIds().mapNotNull { deckCounts[it] }.takeIf { it.isNotEmpty() }?.sum()
-          },
-        )
+        allDecks.filter { it.second.contains(deckFilter, ignoreCase = true) }
       }
+    if (filtered.isEmpty()) {
+      Text(
+        text = if (deckFilter.isBlank()) "No decks found." else "No decks match \"$deckFilter\".",
+        modifier = modifier.fillMaxWidth().padding(top = 8.dp),
+      )
+    } else {
+      val root = remember(filtered) { buildDeckTree(filtered) }
+      DeckSelectionTree(
+        root = root,
+        checkedOf = { deckSelection[it] ?: true },
+        onDeckChecked = { id, checked -> setDeckSelected(id, checked) },
+        onFolderChecked = { node, checked -> node.deckIds().forEach { setDeckSelected(it, checked) } },
+        dueCountOf = { node ->
+          node.deckIds().mapNotNull { deckCounts[it] }.takeIf { it.isNotEmpty() }?.sum()
+        },
+        modifier = modifier,
+      )
     }
-  }
-
-  /** Refresh the "Decks to sync (N/M)" header count without rebuilding the tree. */
-  private fun updateSelectedCountHeader() {
-    if (!::sectionHeader.isInitialized) return
-    val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-    val selected = allDecks.count { prefs.getBoolean("deck_${it.first}", true) }
-    sectionHeader.text = "Decks to sync ($selected/${allDecks.size})"
   }
 
   /** Check or uncheck every deck at once (bulk select controls above the tree). */
@@ -665,13 +533,12 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
     prefs.edit().apply { for ((id, _) in allDecks) putBoolean("deck_$id", selected) }.apply()
     for ((id, _) in allDecks) deckSelection[id] = selected
-    updateSelectedCountHeader()
   }
 
   /** Refresh the "Last synced …" caption from the stored timestamp. */
   private fun updateLastSyncLabel() {
     val ms = settings.getLong(DeckSync.KEY_LAST_SYNC_MS, 0L)
-    lastSyncText.text =
+    lastSyncLabel =
       if (ms <= 0L) {
         "Not synced yet"
       } else {
@@ -702,11 +569,10 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       )
     }
 
-    syncButton.isEnabled = false
-    syncStatusText.visibility = View.VISIBLE
-    syncStatusText.text = "Starting sync…"
-    progressBar.visibility = View.VISIBLE
-    progressBar.isIndeterminate = true
+    syncEnabled = false
+    syncStatusMessage = "Starting sync…"
+    progressVisible = true
+    progressIndeterminate = true
 
     androidx.core.content.ContextCompat.startForegroundService(
       this,
@@ -924,13 +790,6 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       android.content.ClipData.newPlainText("AnkiDroid Wear debug info", text)
     )
     Toast.makeText(this, "Copied debug info", Toast.LENGTH_SHORT).show()
-  }
-
-  /** Resolve a theme attribute that points at a drawable (e.g. a ripple background). */
-  private fun resolveAttrDrawable(attr: Int): android.graphics.drawable.Drawable? {
-    val tv = android.util.TypedValue()
-    theme.resolveAttribute(attr, tv, true)
-    return androidx.core.content.ContextCompat.getDrawable(this, tv.resourceId)
   }
 }
 
