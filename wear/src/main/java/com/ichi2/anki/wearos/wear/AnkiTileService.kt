@@ -51,7 +51,7 @@ class AnkiTileService : TileService() {
       materialScope(this, requestParams.deviceConfiguration) {
         primaryLayout(
           titleSlot = {
-            text("AnkiDroid Wear".layoutString, typography = Typography.LABEL_SMALL)
+            text("AnkiDroid WearOS".layoutString, typography = Typography.LABEL_SMALL)
           },
           onClick = launchApp,
           mainSlot = {

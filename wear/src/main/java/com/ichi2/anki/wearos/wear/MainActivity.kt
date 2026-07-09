@@ -38,10 +38,10 @@ import androidx.wear.compose.foundation.AnchorType
 import androidx.wear.compose.foundation.CurvedDirection
 import androidx.wear.compose.foundation.CurvedLayout
 import androidx.wear.compose.foundation.curvedComposable
-import androidx.wear.compose.foundation.lazy.ScalingLazyColumn
-import androidx.wear.compose.foundation.lazy.ScalingLazyListScope
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.foundation.lazy.items
-import androidx.wear.compose.foundation.lazy.rememberScalingLazyListState
+import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.material3.AppScaffold
@@ -54,7 +54,13 @@ import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
+import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
+import androidx.wear.compose.material3.lazy.TransformationSpec
+import androidx.wear.compose.material3.lazy.TransformationVariableSpec
+import androidx.wear.compose.material3.lazy.rememberTransformationSpec
+import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.curvedText
 import com.google.android.gms.wearable.PutDataMapRequest
@@ -577,6 +583,21 @@ class MainActivity : ComponentActivity() {
     )
   }
 
+  /**
+   * The M3 Expressive edge-morph spec for our lists. Same as the default TransformingLazyColumn
+   * transform but with a higher container/content alpha floor at the bezel (0.75 instead of the
+   * default 0.5), so cards, switches and buttons stay legible near the top/bottom edges rather than
+   * fading half-out. targetValue stays 1.0 (fully opaque at the vertical center).
+   */
+  @Composable
+  private fun rememberEdgeMorphSpec(): TransformationSpec {
+    val edgeAlpha = TransformationVariableSpec(0.75f)
+    return rememberTransformationSpec(
+      ResponsiveTransformationSpec.smallScreen(containerAlpha = edgeAlpha, contentAlpha = edgeAlpha),
+      ResponsiveTransformationSpec.largeScreen(containerAlpha = edgeAlpha, contentAlpha = edgeAlpha),
+    )
+  }
+
   @Composable
   fun WearAppScreen() {
     AnkiWearTheme(themeMode) {
@@ -627,7 +648,8 @@ class MainActivity : ComponentActivity() {
 
   @Composable
   fun WelcomeScreen() {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberTransformingLazyColumnState()
+    val transformSpec = rememberEdgeMorphSpec()
     val entries = deckEntries()
     val countById = remember(entries) { entries.associate { it.id to it.cardCount } }
     // Resolve one folder level from the flat deck list in Rust; card counts stay a UI concern here.
@@ -636,17 +658,15 @@ class MainActivity : ComponentActivity() {
     LaunchedEffect(deckFolderPath) { listState.scrollToItem(0) }
 
     val title =
-      if (deckFolderPath.isEmpty()) "AnkiDroid Wear" else deckFolderPath.substringAfterLast("::")
+      if (deckFolderPath.isEmpty()) "AnkiDroid WearOS" else deckFolderPath.substringAfterLast("::")
 
     ScreenScaffold(scrollState = listState) { contentPadding ->
-      ScalingLazyColumn(
+      // M3 Expressive edge-hugging list: TransformingLazyColumn morphs each item container toward the
+      // round bezel, so deck cards visibly widen and round as they approach the vertical center and
+      // shrink at the top/bottom edges. SurfaceTransformation + transformedHeight drive the morph.
+      TransformingLazyColumn(
         state = listState,
         contentPadding = contentPadding,
-        // ScreenScaffold's contentPadding already reserves exactly the space needed at each end
-        // (including room for the trailing EdgeButton); auto-centering would additionally pad the
-        // list so the last item can reach the screen's vertical center, letting it be over-scrolled
-        // well past its resting spot at the bezel.
-        autoCentering = null,
         modifier = Modifier.fillMaxSize().rotaryScroll(listState),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(4.dp),
@@ -695,15 +715,23 @@ class MainActivity : ComponentActivity() {
           // Studying the folder itself (Anki parent decks are real decks).
           level.ownDeck?.let { own ->
             item {
-              DeckCard(id = own.id, label = "Study ${own.name}", cardCount = countById[own.id])
+              DeckCard(
+                id = own.id,
+                label = "Study ${own.name}",
+                cardCount = countById[own.id],
+                transformation = SurfaceTransformation(transformSpec),
+                modifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec),
+              )
             }
           }
 
           items(level.children) { node ->
+            val transformation = SurfaceTransformation(transformSpec)
+            val cardModifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec)
             if (node.isFolder) {
-              FolderCard(node)
+              FolderCard(node, transformation, cardModifier)
             } else {
-              DeckCard(id = node.id, label = node.name, cardCount = countById[node.id])
+              DeckCard(node.id, node.name, countById[node.id], transformation, cardModifier)
             }
           }
         }
@@ -741,8 +769,16 @@ class MainActivity : ComponentActivity() {
    * A folder row in the deck picker: a Material folder icon + name; taps descend into the folder.
    */
   @Composable
-  private fun FolderCard(node: DeckNodeInfo) {
-    Card(onClick = { deckFolderPath = node.path }, modifier = Modifier.fillMaxWidth(0.95f)) {
+  private fun FolderCard(
+    node: DeckNodeInfo,
+    transformation: SurfaceTransformation,
+    modifier: Modifier,
+  ) {
+    Card(
+      onClick = { deckFolderPath = node.path },
+      transformation = transformation,
+      modifier = modifier,
+    ) {
       Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
           painter = painterResource(id = R.drawable.ic_folder),
@@ -770,8 +806,14 @@ class MainActivity : ComponentActivity() {
 
   /** A studyable deck row: taps open it offline if cached, else request it from the phone. */
   @Composable
-  private fun DeckCard(id: Long, label: String, cardCount: Int?) {
-    Card(onClick = { selectDeck(id) }, modifier = Modifier.fillMaxWidth(0.95f)) {
+  private fun DeckCard(
+    id: Long,
+    label: String,
+    cardCount: Int?,
+    transformation: SurfaceTransformation,
+    modifier: Modifier,
+  ) {
+    Card(onClick = { selectDeck(id) }, transformation = transformation, modifier = modifier) {
       Column {
         Text(
           text = label,
@@ -792,13 +834,12 @@ class MainActivity : ComponentActivity() {
   @Composable
   fun DeckScreen(session: ReviewSession) {
     var pickingNewCount by remember { mutableStateOf(false) }
-    val listState = rememberScalingLazyListState()
+    val listState = rememberTransformingLazyColumnState()
+    val transformSpec = rememberEdgeMorphSpec()
     ScreenScaffold(scrollState = listState) { contentPadding ->
-      ScalingLazyColumn(
+      TransformingLazyColumn(
         state = listState,
         contentPadding = contentPadding,
-        // See WelcomeScreen: avoid over-scrolling the list past its natural end.
-        autoCentering = null,
         modifier = Modifier.fillMaxSize().rotaryScroll(listState),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(6.dp),
@@ -819,7 +860,11 @@ class MainActivity : ComponentActivity() {
           )
         }
         item {
-          Card(onClick = {}, modifier = Modifier.fillMaxWidth(0.9f)) {
+          Card(
+            onClick = {},
+            transformation = SurfaceTransformation(transformSpec),
+            modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
+          ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
               Text(
                 text = "Due Cards: ${session.getTotalCards()}",
@@ -844,14 +889,15 @@ class MainActivity : ComponentActivity() {
           Button(
             onClick = { isReviewing = true },
             colors = ButtonDefaults.buttonColors(),
-            modifier = Modifier.fillMaxWidth(0.9f),
+            transformation = SurfaceTransformation(transformSpec),
+            modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
           ) {
             Text("Start Review")
           }
         }
         // Study new cards ahead of the daily queue limit. Only available when we know the deck id.
         if (activeDeckId != null) {
-          newCardControlItems(pickingNewCount) { pickingNewCount = it }
+          newCardControlItems(pickingNewCount, transformSpec) { pickingNewCount = it }
         }
         item {
           SwitchButton(
@@ -862,7 +908,8 @@ class MainActivity : ComponentActivity() {
             },
             label = { Text("Voice Reviews") },
             secondaryLabel = { Text(if (ttsEnabled) "Speaker On 🔊" else "Speaker Off 🔇") },
-            modifier = Modifier.fillMaxWidth(0.9f),
+            transformation = SurfaceTransformation(transformSpec),
+            modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
           )
         }
         if (outstandingAnswersCount > 0) {
@@ -874,7 +921,8 @@ class MainActivity : ComponentActivity() {
                   containerColor = Color(0xFF66BB6A).copy(alpha = 0.2f),
                   contentColor = Color(0xFF66BB6A),
                 ),
-              modifier = Modifier.fillMaxWidth(0.9f),
+              transformation = SurfaceTransformation(transformSpec),
+              modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
             ) {
               Text("Sync $outstandingAnswersCount Reviews")
             }
@@ -1223,8 +1271,9 @@ class MainActivity : ComponentActivity() {
   }
 
   /** "Learn new cards" chip that expands into a 5/10/20 chooser; shared by Deck and Finished. */
-  private fun ScalingLazyListScope.newCardControlItems(
+  private fun TransformingLazyColumnScope.newCardControlItems(
     picking: Boolean,
+    transformSpec: TransformationSpec,
     setPicking: (Boolean) -> Unit,
   ) {
     val purpleBg = Color(0xFF7E57C2).copy(alpha = 0.3f)
@@ -1234,7 +1283,8 @@ class MainActivity : ComponentActivity() {
         Button(
           onClick = { setPicking(true) },
           colors = ButtonDefaults.buttonColors(containerColor = purpleBg, contentColor = purpleFg),
-          modifier = Modifier.fillMaxWidth(0.9f),
+          transformation = SurfaceTransformation(transformSpec),
+          modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
         ) {
           Text("Learn new cards")
         }
@@ -1245,10 +1295,14 @@ class MainActivity : ComponentActivity() {
           text = "How many new?",
           style = MaterialTheme.typography.labelMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.transformedHeight(this, transformSpec),
         )
       }
       item {
-        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          modifier = Modifier.transformedHeight(this, transformSpec),
+        ) {
           listOf(5, 10, 20).forEach { n ->
             CompactButton(
               onClick = {
@@ -1268,6 +1322,8 @@ class MainActivity : ComponentActivity() {
         CompactButton(
           onClick = { setPicking(false) },
           colors = ButtonDefaults.filledTonalButtonColors(),
+          transformation = SurfaceTransformation(transformSpec),
+          modifier = Modifier.transformedHeight(this, transformSpec),
         ) {
           Text("Cancel")
         }
@@ -1278,15 +1334,14 @@ class MainActivity : ComponentActivity() {
   @Composable
   fun FinishedScreen(session: ReviewSession) {
     var pickingNewCount by remember { mutableStateOf(false) }
-    val listState = rememberScalingLazyListState()
+    val listState = rememberTransformingLazyColumnState()
+    val transformSpec = rememberEdgeMorphSpec()
     // Tally what was graded this session (recomputed if an undo/answer changed it).
     val summary = remember(cardCompletedTrigger) { session.getSummary() }
     ScreenScaffold(scrollState = listState) { contentPadding ->
-      ScalingLazyColumn(
+      TransformingLazyColumn(
         state = listState,
         contentPadding = contentPadding,
-        // See WelcomeScreen: avoid over-scrolling the list past its natural end.
-        autoCentering = null,
         modifier = Modifier.fillMaxSize().rotaryScroll(listState),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
@@ -1308,7 +1363,11 @@ class MainActivity : ComponentActivity() {
         // Session recap: how many reviews (relearned cards count more than once), ease split, time.
         if (summary.total > 0) {
           item {
-            Card(onClick = {}, modifier = Modifier.fillMaxWidth(0.9f)) {
+            Card(
+              onClick = {},
+              transformation = SurfaceTransformation(transformSpec),
+              modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
+            ) {
               Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
                   text = "${summary.total} reviews · ${formatDuration(summary.totalTimeMs)}",
@@ -1343,7 +1402,7 @@ class MainActivity : ComponentActivity() {
         }
         // Learn new cards right after finishing the due queue.
         if (activeDeckId != null) {
-          newCardControlItems(pickingNewCount) { pickingNewCount = it }
+          newCardControlItems(pickingNewCount, transformSpec) { pickingNewCount = it }
         }
         // Material 3 expressive edge button hugging the bottom bezel: sync answers and go back.
         item {
@@ -1373,9 +1432,10 @@ class MainActivity : ComponentActivity() {
     label: String,
     options: List<Pair<T, String>>,
     selected: T,
+    modifier: Modifier = Modifier,
     onSelect: (T) -> Unit,
   ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
       Text(
         text = label,
         style = MaterialTheme.typography.labelMedium,
@@ -1400,14 +1460,34 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /** A full-width settings toggle row that morphs with the edge-hugging list like the other items. */
+  private fun TransformingLazyColumnScope.settingSwitchItem(
+    checked: Boolean,
+    label: String,
+    secondaryLabel: String,
+    transformSpec: TransformationSpec,
+    onCheckedChange: (Boolean) -> Unit,
+  ) {
+    item {
+      SwitchButton(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        label = { Text(label) },
+        secondaryLabel = { Text(secondaryLabel) },
+        transformation = SurfaceTransformation(transformSpec),
+        modifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec),
+      )
+    }
+  }
+
   @Composable
   fun SettingsScreen() {
-    val listState = rememberScalingLazyListState()
+    val listState = rememberTransformingLazyColumnState()
+    val transformSpec = rememberEdgeMorphSpec()
     ScreenScaffold(scrollState = listState) { contentPadding ->
-      ScalingLazyColumn(
+      TransformingLazyColumn(
         state = listState,
         contentPadding = contentPadding,
-        autoCentering = null,
         modifier = Modifier.fillMaxSize().rotaryScroll(listState),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(8.dp),
@@ -1416,7 +1496,7 @@ class MainActivity : ComponentActivity() {
           Text(
             text = "Settings",
             style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(vertical = 6.dp),
+            modifier = Modifier.padding(vertical = 6.dp).transformedHeight(this, transformSpec),
           )
         }
         item {
@@ -1429,6 +1509,7 @@ class MainActivity : ComponentActivity() {
                 WatchSettings.ThemeMode.LIGHT to "Light",
               ),
             selected = themeMode,
+            modifier = Modifier.transformedHeight(this, transformSpec),
           ) { mode ->
             themeMode = mode
             WatchSettings.setThemeMode(this@MainActivity, mode)
@@ -1439,6 +1520,7 @@ class MainActivity : ComponentActivity() {
             label = "Text size",
             options = listOf(0.9f to "S", 1.0f to "M", 1.3f to "L", 1.6f to "XL", 1.8f to "XXL"),
             selected = fontScale,
+            modifier = Modifier.transformedHeight(this, transformSpec),
           ) { scale ->
             fontScale = scale
             WatchSettings.setFontScale(this@MainActivity, scale)
@@ -1459,6 +1541,7 @@ class MainActivity : ComponentActivity() {
                 fontSize = (16 * fontScale).sp,
                 fontFamily = previewTypeface,
               ),
+            modifier = Modifier.transformedHeight(this, transformSpec),
           )
         }
         item {
@@ -1471,45 +1554,41 @@ class MainActivity : ComponentActivity() {
                 WatchSettings.CardFont.MONOSPACE to "Mono",
               ),
             selected = cardFont,
+            modifier = Modifier.transformedHeight(this, transformSpec),
           ) { font ->
             cardFont = font
             WatchSettings.setCardFont(this@MainActivity, font)
           }
         }
-        item {
-          SwitchButton(
-            checked = ttsEnabled,
-            onCheckedChange = {
-              ttsEnabled = it
-              WatchSettings.setTtsEnabled(this@MainActivity, it)
-            },
-            label = { Text("Voice reviews") },
-            secondaryLabel = { Text("Read cards aloud (TTS)") },
-            modifier = Modifier.fillMaxWidth(0.95f),
-          )
+        settingSwitchItem(
+          checked = ttsEnabled,
+          label = "Voice reviews",
+          secondaryLabel = "Read cards aloud (TTS)",
+          transformSpec = transformSpec,
+        ) {
+          ttsEnabled = it
+          WatchSettings.setTtsEnabled(this@MainActivity, it)
         }
         item {
           settingChoiceRow(
             label = "Speech rate",
             options = listOf(0.7f to "Slow", 1.0f to "Normal", 1.4f to "Fast"),
             selected = speechRate,
+            modifier = Modifier.transformedHeight(this, transformSpec),
           ) { rate ->
             speechRate = rate
             WatchSettings.setSpeechRate(this@MainActivity, rate)
             tts?.setSpeechRate(rate)
           }
         }
-        item {
-          SwitchButton(
-            checked = keepScreenOn,
-            onCheckedChange = {
-              keepScreenOn = it
-              WatchSettings.setKeepScreenOn(this@MainActivity, it)
-            },
-            label = { Text("Keep screen on") },
-            secondaryLabel = { Text("During review · uses battery") },
-            modifier = Modifier.fillMaxWidth(0.95f),
-          )
+        settingSwitchItem(
+          checked = keepScreenOn,
+          label = "Keep screen on",
+          secondaryLabel = "During review · uses battery",
+          transformSpec = transformSpec,
+        ) {
+          keepScreenOn = it
+          WatchSettings.setKeepScreenOn(this@MainActivity, it)
         }
         item { Spacer(modifier = Modifier.height(8.dp)) }
         item {
