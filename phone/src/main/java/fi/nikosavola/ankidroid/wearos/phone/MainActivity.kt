@@ -16,10 +16,21 @@ import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ProgressBar
-import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.unit.dp
 import androidx.core.widget.addTextChangedListener
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
@@ -56,17 +67,17 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   private lateinit var syncStatusText: TextView
   private lateinit var syncButton: Button
   private lateinit var progressBar: ProgressBar
-  private lateinit var deckListLayout: LinearLayout
-  private var allDecks: List<Pair<Long, String>> = emptyList()
-  // Folder paths currently expanded in the deck selector. Empty = everything collapsed, so the
-  // list opens compact (just the top-level folders) and the user drills in with [+].
-  private val expandedFolders = mutableSetOf<String>()
+  // Observable state driving the Compose deck tree (DeckSelectionTree). The tree recomposes when any
+  // of these change, so the async deck/count loads and filter typing update it without a manual redraw.
+  private var allDecks by mutableStateOf<List<Pair<Long, String>>>(emptyList())
   // Case-insensitive deck-name filter from the search box; blank shows the full tree.
-  private var deckFilter: String = ""
+  private var deckFilter by mutableStateOf("")
   private lateinit var lastSyncText: TextView
   private lateinit var sectionHeader: TextView
   // Best-effort per-deck due totals (deckId -> count); empty when AnkiDroid doesn't expose them.
-  private var deckCounts: Map<Long, Int> = emptyMap()
+  private var deckCounts by mutableStateOf<Map<Long, Int>>(emptyMap())
+  // Observable mirror of the deck_sync_prefs "deck_<id>" selection, so the Compose checkboxes react.
+  private val deckSelection = mutableStateMapOf<Long, Boolean>()
 
   // Mirrors SyncService progress into the in-app status line + bar while the Activity is alive.
   private val syncProgressReceiver =
@@ -201,24 +212,19 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
     rootLayout.addView(buildDeckFilterControls(density))
 
-    // Scrollable container for the checkboxes for our decks list
-    val scrollView =
-      ScrollView(this).apply {
+    // Deck selector: a Compose Material 3 Expressive tree (spring chevron + animated expand/collapse)
+    // hosted in a ComposeView island. weight=1 gives it a bounded height so its own verticalScroll
+    // works; the surrounding chrome stays as Material Views. Its own verticalScroll replaces the old
+    // ScrollView, so it is NOT nested in one.
+    val deckTreeView =
+      ComposeView(this).apply {
         layoutParams =
           LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f).apply {
             setMargins(0, 0, 0, 16)
           }
+        setContent { DeckTreeContent() }
       }
-    deckListLayout =
-      LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        // Stopgap "Expressive motion": animate rows appearing/disappearing on expand/collapse. A
-        // true M3 Expressive tree (spring chevron, per-subtree animation) wants the Compose
-        // migration — see HANDOFF_TESTING.md; this at least removes the abrupt full redraw.
-        layoutTransition = android.animation.LayoutTransition()
-      }
-    scrollView.addView(deckListLayout)
-    rootLayout.addView(scrollView)
+    rootLayout.addView(deckTreeView)
 
     // One-line live sync status, shown right above the progress bar while a sync runs.
     syncStatusText =
@@ -489,8 +495,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         isSingleLine = true
         imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_SEARCH
         addTextChangedListener { editable ->
+          // Observable state; the Compose tree recomputes its filtered view + rebuilds automatically.
           deckFilter = editable?.toString().orEmpty().trim()
-          renderDeckTree()
         }
       }
     )
@@ -588,29 +594,61 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     }
   }
 
-  /** (Re)draw the deck selector as a folder tree built from the Anki `::` deck-name hierarchy. */
+  /**
+   * Refresh the Compose deck tree's backing state: mirror the persisted selection into observable
+   * state and update the header count. The tree itself recomposes off [allDecks]/[deckCounts]/
+   * [deckFilter]/[deckSelection], so there's no manual view rebuild.
+   */
   private fun renderDeckTree() {
-    deckListLayout.removeAllViews()
-    val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
+    seedSelectionFromPrefs()
     updateSelectedCountHeader()
-    val decks =
-      if (deckFilter.isBlank()) {
-        allDecks
-      } else {
-        allDecks.filter { it.second.contains(deckFilter, ignoreCase = true) }
-      }
-    if (decks.isEmpty()) {
-      deckListLayout.addView(
-        com.google.android.material.textview.MaterialTextView(this).apply {
-          text = if (deckFilter.isBlank()) "No decks found." else "No decks match \"$deckFilter\"."
-          setPadding(0, (8 * resources.displayMetrics.density).toInt(), 0, 0)
+  }
+
+  private fun seedSelectionFromPrefs() {
+    val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
+    for ((id, _) in allDecks) deckSelection[id] = prefs.getBoolean("deck_$id", true)
+  }
+
+  /** Persist a single deck's selection and mirror it into the observable map + header. */
+  private fun setDeckSelected(id: Long, checked: Boolean) {
+    deckSelection[id] = checked
+    getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
+      .edit()
+      .putBoolean("deck_$id", checked)
+      .apply()
+    updateSelectedCountHeader()
+  }
+
+  /** The Compose Material 3 Expressive deck tree, wired to the persisted selection + due counts. */
+  @Composable
+  private fun DeckTreeContent() {
+    AnkiPhoneTheme {
+      val filtered =
+        if (deckFilter.isBlank()) {
+          allDecks
+        } else {
+          allDecks.filter { it.second.contains(deckFilter, ignoreCase = true) }
         }
-      )
-      return
-    }
-    val root = buildDeckTree(decks)
-    for (child in root.children.values) {
-      addDeckNodeViews(child, 0, child.name, prefs)
+      if (filtered.isEmpty()) {
+        Text(
+          text =
+            if (deckFilter.isBlank()) "No decks found." else "No decks match \"$deckFilter\".",
+          modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        )
+      } else {
+        val root = remember(filtered) { buildDeckTree(filtered) }
+        DeckSelectionTree(
+          root = root,
+          checkedOf = { deckSelection[it] ?: true },
+          onDeckChecked = { id, checked -> setDeckSelected(id, checked) },
+          onFolderChecked = { node, checked ->
+            node.deckIds().forEach { setDeckSelected(it, checked) }
+          },
+          dueCountOf = { node ->
+            node.deckIds().mapNotNull { deckCounts[it] }.takeIf { it.isNotEmpty() }?.sum()
+          },
+        )
+      }
     }
   }
 
@@ -626,7 +664,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   private fun setAllDecksSelected(selected: Boolean) {
     val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
     prefs.edit().apply { for ((id, _) in allDecks) putBoolean("deck_$id", selected) }.apply()
-    renderDeckTree()
+    for ((id, _) in allDecks) deckSelection[id] = selected
+    updateSelectedCountHeader()
   }
 
   /** Refresh the "Last synced …" caption from the stored timestamp. */
@@ -643,104 +682,6 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
             android.text.format.DateUtils.MINUTE_IN_MILLIS,
           )
       }
-  }
-
-  // Fixed expander column width so leaf checkboxes line up under folder names at the same depth.
-  private val expanderWidthPx by lazy { (48 * resources.displayMetrics.density).toInt() }
-
-  /** " · N due" for a node's subtree, or "" when we have no count data for it (never shows 0). */
-  private fun dueSuffix(node: DeckNode): String {
-    val known = node.deckIds().mapNotNull { deckCounts[it] }
-    return if (known.isEmpty()) "" else " · ${known.sum()} due"
-  }
-
-  private fun addDeckNodeViews(
-    node: DeckNode,
-    depth: Int,
-    path: String,
-    prefs: android.content.SharedPreferences,
-  ) {
-    val indent = 32 + depth * 56
-    if (node.children.isNotEmpty()) {
-      // Folder row: a [+]/[-] expander plus a checkbox that toggles every deck nested under this
-      // path (itself included). Children only render when the folder is expanded. While a search
-      // filter is active, every folder is forced open so matches are visible.
-      val expanded = deckFilter.isNotBlank() || expandedFolders.contains(path)
-      val deckIds = node.deckIds()
-      val allChecked = deckIds.isNotEmpty() && deckIds.all { prefs.getBoolean("deck_$it", true) }
-
-      val row =
-        LinearLayout(this).apply {
-          orientation = LinearLayout.HORIZONTAL
-          gravity = android.view.Gravity.CENTER_VERTICAL
-          setPadding(indent, 4, 0, 4)
-        }
-      // M3 expand affordance: a standard icon button with the expand_more chevron, rotated to
-      // point up when the folder is open (the Material 3 idiom, rather than a +/- glyph).
-      val expander =
-        com.google.android.material.button
-          .MaterialButton(this, null, com.google.android.material.R.attr.materialIconButtonStyle)
-          .apply {
-            icon =
-              androidx.core.content.ContextCompat.getDrawable(context, R.drawable.ic_expand_more)
-            iconGravity = com.google.android.material.button.MaterialButton.ICON_GRAVITY_TEXT_START
-            iconPadding = 0
-            rotation = if (expanded) 180f else 0f
-            minWidth = 0
-            minimumWidth = 0
-            insetTop = 0
-            insetBottom = 0
-            layoutParams =
-              LinearLayout.LayoutParams(expanderWidthPx, LinearLayout.LayoutParams.WRAP_CONTENT)
-            contentDescription = if (expanded) "Collapse ${node.name}" else "Expand ${node.name}"
-            setOnClickListener {
-              if (expanded) expandedFolders.remove(path) else expandedFolders.add(path)
-              renderDeckTree()
-            }
-          }
-      row.addView(expander)
-      val folder =
-        com.google.android.material.checkbox.MaterialCheckBox(this).apply {
-          text = "📁 ${node.name}${dueSuffix(node)}"
-          setTypeface(null, android.graphics.Typeface.BOLD)
-          isChecked = allChecked
-          setPadding(16, 0, 0, 0)
-          setOnCheckedChangeListener { _, checked ->
-            val editor = prefs.edit()
-            for (id in deckIds) editor.putBoolean("deck_$id", checked)
-            editor.apply()
-            renderDeckTree()
-          }
-        }
-      row.addView(folder)
-      deckListLayout.addView(row)
-
-      if (expanded) {
-        for (child in node.children.values) {
-          addDeckNodeViews(child, depth + 1, "$path::${child.name}", prefs)
-        }
-      }
-    } else {
-      val id = node.deckId ?: return
-      // Wrap in a padded row (rather than padding the checkbox) so the box, not just the text,
-      // lines up under the sibling folders' checkboxes past the expander column.
-      val row =
-        LinearLayout(this).apply {
-          orientation = LinearLayout.HORIZONTAL
-          setPadding(indent + expanderWidthPx + 16, 4, 0, 4)
-        }
-      val cb =
-        com.google.android.material.checkbox.MaterialCheckBox(this).apply {
-          text = "${node.name}${dueSuffix(node)}"
-          isChecked = prefs.getBoolean("deck_$id", true)
-          setOnCheckedChangeListener { _, checked ->
-            prefs.edit().putBoolean("deck_$id", checked).apply()
-            updateSelectedCountHeader()
-          }
-        }
-      row.addView(cb)
-      deckListLayout.addView(row)
-    }
   }
 
   /**
