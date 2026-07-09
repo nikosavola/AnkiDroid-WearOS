@@ -159,4 +159,117 @@ class AnkiDroidBridgeTest {
         )
     assertEquals("a2 kept for retry; a1+a3 settled", listOf("a1", "a3"), settled)
   }
+
+  // --- fetchDueBatch (AnkiDroid schedule/card cursors -> WearosCard) --------------------------
+  // The primary data path the watch studies from. These drive it with fake cursors for the three
+  // query shapes it issues (decks list, schedule rows, per-card front/back).
+
+  private fun deckCursor(id: Long, name: String) =
+    mockk<Cursor>(relaxed = true) {
+      every { getColumnIndex("deck_id") } returns 0
+      every { getColumnIndex("deck_name") } returns 1
+      every { moveToNext() } returnsMany listOf(true, false)
+      every { getLong(0) } returns id
+      every { getString(1) } returns name
+    }
+
+  private fun cardCursor(id: Long, front: String, back: String) =
+    mockk<Cursor>(relaxed = true) {
+      every { getColumnIndex("_id") } returns 0
+      every { getColumnIndex("question") } returns 1
+      every { getColumnIndex("answer") } returns 2
+      every { moveToFirst() } returns true
+      every { getLong(0) } returns id
+      every { getString(1) } returns front
+      every { getString(2) } returns back
+    }
+
+  /** Routes fetchDueBatch's queries (decks / schedule / per-card) to the given fake cursors. */
+  private fun dueBatchResolver(
+    deck: Cursor,
+    schedule: Cursor,
+    card: Cursor,
+  ): ContentResolver = availableResolver {
+    every { query(any(), any(), any(), any(), any()) } answers
+      {
+        when {
+          firstArg<Uri>().toString().endsWith("/decks") -> deck
+          firstArg<Uri>().toString().endsWith("/schedule") -> schedule
+          firstArg<Uri>().toString().contains("/cards/") -> card
+          else -> null
+        }
+      }
+  }
+
+  @Test
+  fun fetchDueBatch_forceMock_neverTouchesProvider() {
+    // Guards the safety path the user relies on to never grade real decks from a test build.
+    val resolver = availableResolver {}
+    val batch = bridge(resolver).fetchDueBatch(deckId = 7L, limit = 10, forceMock = true)
+
+    verify(exactly = 0) { resolver.query(any(), any(), any(), any(), any()) }
+    assertTrue("mock batch should carry cards", batch.cards.isNotEmpty())
+  }
+
+  @Test
+  fun fetchDueBatch_parsesScheduleAndCardCursors() {
+    val schedule =
+      mockk<Cursor>(relaxed = true) {
+        every { getColumnIndex("note_id") } returns 0
+        every { getColumnIndex("ord") } returns 1
+        every { getColumnIndex("button_count") } returns 2
+        every { getColumnIndex("next_review_times") } returns 3
+        every { moveToNext() } returnsMany listOf(true, false)
+        every { getLong(0) } returns 1001L
+        every { getInt(1) } returns 0
+        every { getInt(2) } returns 3
+        every { getString(3) } returns "1m, 8m, 3d"
+      }
+    val resolver =
+      dueBatchResolver(
+        deck = deckCursor(42L, "Japani::文法"),
+        schedule = schedule,
+        card = cardCursor(555L, "<b>Front</b>", "Back"),
+      )
+
+    val batch = bridge(resolver).fetchDueBatch(deckId = 42L, limit = 10)
+
+    assertEquals(42L, batch.deckId)
+    assertEquals("Japani::文法", batch.deckName)
+    assertEquals(1, batch.cards.size)
+    val card = batch.cards.single()
+    assertEquals(555L, card.id)
+    assertEquals(1001L, card.noteId)
+    assertEquals(0, card.ord)
+    assertEquals(3, card.buttonCount)
+    assertEquals("<b>Front</b>", card.front)
+    assertEquals("Back", card.back)
+    assertEquals(listOf("1m", "8m", "3d"), card.nextReviewTimes)
+  }
+
+  @Test
+  fun fetchDueBatch_defaultsWhenScheduleColumnsMissing() {
+    // Older/leaner providers may omit button_count and next_review_times; fall back rather than crash.
+    val schedule =
+      mockk<Cursor>(relaxed = true) {
+        every { getColumnIndex("note_id") } returns 0
+        every { getColumnIndex("ord") } returns 1
+        every { getColumnIndex("button_count") } returns -1
+        every { getColumnIndex("next_review_times") } returns -1
+        every { moveToNext() } returnsMany listOf(true, false)
+        every { getLong(0) } returns 1001L
+        every { getInt(1) } returns 0
+      }
+    val resolver =
+      dueBatchResolver(
+        deck = deckCursor(42L, "Japani"),
+        schedule = schedule,
+        card = cardCursor(555L, "Q", "A"),
+      )
+
+    val card = bridge(resolver).fetchDueBatch(deckId = 42L, limit = 10).cards.single()
+
+    assertEquals(4, card.buttonCount)
+    assertEquals(listOf("1m", "10m", "4d", "7d"), card.nextReviewTimes)
+  }
 }
