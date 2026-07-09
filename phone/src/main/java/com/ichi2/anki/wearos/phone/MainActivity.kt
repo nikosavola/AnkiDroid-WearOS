@@ -270,6 +270,10 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
           text = it,
           style = MaterialTheme.typography.bodyMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
+          // Keep the sync status on one line; truncate rather than reflow and shove the button down.
+          maxLines = 1,
+          softWrap = false,
+          overflow = TextOverflow.Ellipsis,
         )
       }
       if (progressVisible) {
