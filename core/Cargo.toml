@@ -24,11 +24,11 @@ rusqlite = { version = "0.32.0", features = ["bundled"] }
 serde = { version = "1.0.204", features = ["derive"] }
 serde_json = "1.0.120"
 thiserror = "1.0.63"
-# Pure-Rust gzip backend (miniz_oxide) so the crate's `unsafe_code = forbid` still holds; used to
-# compress the due-batch payload inside the sync (de)serializers.
-flate2 = "1.0"
-# Protobuf encoding via derive macros only — no protoc / build.rs needed (messages are defined as
-# annotated Rust structs). Experimental compact wire format for the due batch (see proto.rs).
+# zstd compression for the due-batch payload (best ratio/speed for this text-heavy data). The C
+# backend is compiled per-target by cargo-ndk; `unsafe_code = forbid` only binds our crate, not deps.
+zstd = "0.13"
+# Protobuf encoding via derive macros only — no protoc / build.rs needed (messages are annotated
+# Rust structs). The due-batch wire format (see proto.rs).
 prost = "0.13"
 
 [lints.rust]

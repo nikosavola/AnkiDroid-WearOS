@@ -1,11 +1,6 @@
-//! Experimental protobuf wire format for the due batch, parallel to the JSON path in `sync.rs`.
-//!
-//! Backlog: "Protobufs/FlatBuffers over the Data Layer instead of JSON ... shrinks payloads (helps
-//! the DATA_ITEM_TOO_LARGE margin further)." This defines the schema as annotated Rust structs and
-//! derives the codec with `prost` — no `protoc` and no `build.rs`, so it builds anywhere the crate
-//! does. It is intentionally NOT wired into the Kotlin sync path yet: ship it behind the existing
-//! `serialize_due_batch`/`deserialize_due_batch` once it's validated end-to-end (see
-//! HANDOFF_TESTING.md). Kept a separate export so the migration can be staged and A/B measured.
+//! Protobuf wire format for the due batch. The schema is defined as `prost`-annotated Rust structs
+//! and the codec is derived — no `protoc` and no `build.rs`, so it builds anywhere the crate does.
+//! `sync.rs` wraps [`encode_due_batch`]/[`decode_due_batch`] in zstd for the actual transfer.
 
 use crate::models::{CoreError, WearosCard, WearosDueBatch};
 use prost::Message;
@@ -87,15 +82,13 @@ impl From<DueBatchPb> for WearosDueBatch {
 }
 
 /// Encode a due batch as protobuf bytes (infallible; prost encoding cannot fail).
-#[uniffi::export]
-pub fn serialize_due_batch_proto(batch: WearosDueBatch) -> Vec<u8> {
+pub fn encode_due_batch(batch: WearosDueBatch) -> Vec<u8> {
     DueBatchPb::from(batch).encode_to_vec()
 }
 
-/// Decode protobuf bytes produced by [`serialize_due_batch_proto`].
-#[uniffi::export]
-pub fn deserialize_due_batch_proto(bytes: Vec<u8>) -> Result<WearosDueBatch, CoreError> {
-    DueBatchPb::decode(&bytes[..])
+/// Decode protobuf bytes produced by [`encode_due_batch`].
+pub fn decode_due_batch(bytes: &[u8]) -> Result<WearosDueBatch, CoreError> {
+    DueBatchPb::decode(bytes)
         .map(WearosDueBatch::from)
         .map_err(|e| CoreError::SerializationError { error_message: e.to_string() })
 }
