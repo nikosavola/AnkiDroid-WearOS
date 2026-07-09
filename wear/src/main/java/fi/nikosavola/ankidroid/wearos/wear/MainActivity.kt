@@ -94,6 +94,7 @@ class MainActivity : ComponentActivity() {
   // recomposes the theme / card text immediately.
   private var themeMode by mutableStateOf(WatchSettings.ThemeMode.DARK)
   private var fontScale by mutableFloatStateOf(1.0f)
+  private var speechRate by mutableFloatStateOf(1.0f)
   private var cardFont by mutableStateOf(WatchSettings.CardFont.DEFAULT)
   private var keepScreenOn by mutableStateOf(false)
   private var showSettings by mutableStateOf(false)
@@ -164,6 +165,8 @@ class MainActivity : ComponentActivity() {
       TextToSpeech(this) { status ->
         if (status == TextToSpeech.SUCCESS) {
           tts?.language = Locale.getDefault()
+          // speechRate is loaded synchronously below, before this async callback can fire.
+          tts?.setSpeechRate(speechRate)
           Log.d(TAG, "TTS Engine initialized successfully.")
         } else {
           Log.e(TAG, "TTS Initialization failed.")
@@ -175,6 +178,8 @@ class MainActivity : ComponentActivity() {
     fontScale = WatchSettings.fontScale(this)
     cardFont = WatchSettings.cardFont(this)
     keepScreenOn = WatchSettings.keepScreenOn(this)
+    ttsEnabled = WatchSettings.ttsEnabled(this)
+    speechRate = WatchSettings.speechRate(this)
 
     // 4. Load the list of decks (cached locally + known from the phone). Start on the picker.
     loadDecks()
@@ -851,7 +856,10 @@ class MainActivity : ComponentActivity() {
         item {
           SwitchButton(
             checked = ttsEnabled,
-            onCheckedChange = { ttsEnabled = it },
+            onCheckedChange = {
+              ttsEnabled = it
+              WatchSettings.setTtsEnabled(this@MainActivity, it)
+            },
             label = { Text("Voice Reviews") },
             secondaryLabel = { Text(if (ttsEnabled) "Speaker On 🔊" else "Speaker Off 🔇") },
             modifier = Modifier.fillMaxWidth(0.9f),
@@ -1429,7 +1437,7 @@ class MainActivity : ComponentActivity() {
         item {
           settingChoiceRow(
             label = "Text size",
-            options = listOf(0.9f to "S", 1.0f to "M", 1.3f to "L", 1.6f to "XL"),
+            options = listOf(0.9f to "S", 1.0f to "M", 1.3f to "L", 1.6f to "XL", 1.8f to "XXL"),
             selected = fontScale,
           ) { scale ->
             fontScale = scale
@@ -1466,6 +1474,29 @@ class MainActivity : ComponentActivity() {
           ) { font ->
             cardFont = font
             WatchSettings.setCardFont(this@MainActivity, font)
+          }
+        }
+        item {
+          SwitchButton(
+            checked = ttsEnabled,
+            onCheckedChange = {
+              ttsEnabled = it
+              WatchSettings.setTtsEnabled(this@MainActivity, it)
+            },
+            label = { Text("Voice reviews") },
+            secondaryLabel = { Text("Read cards aloud (TTS)") },
+            modifier = Modifier.fillMaxWidth(0.95f),
+          )
+        }
+        item {
+          settingChoiceRow(
+            label = "Speech rate",
+            options = listOf(0.7f to "Slow", 1.0f to "Normal", 1.4f to "Fast"),
+            selected = speechRate,
+          ) { rate ->
+            speechRate = rate
+            WatchSettings.setSpeechRate(this@MainActivity, rate)
+            tts?.setSpeechRate(rate)
           }
         }
         item {

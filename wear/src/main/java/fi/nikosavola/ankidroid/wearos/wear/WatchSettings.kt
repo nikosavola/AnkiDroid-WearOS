@@ -13,6 +13,8 @@ object WatchSettings {
   private const val KEY_FONT_SCALE = "font_scale"
   private const val KEY_CARD_FONT = "card_font"
   private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
+  private const val KEY_TTS_ENABLED = "tts_enabled"
+  private const val KEY_SPEECH_RATE = "speech_rate"
 
   /** Theme selection. SYSTEM follows the OS light/dark setting where the platform reports one. */
   enum class ThemeMode {
@@ -31,6 +33,10 @@ object WatchSettings {
   // Legible clamp for the card text multiplier (1.0 == the 16sp baseline).
   const val FONT_SCALE_MIN = 0.8f
   const val FONT_SCALE_MAX = 1.8f
+
+  // TTS speech-rate clamp (1.0 == the engine's normal rate).
+  const val SPEECH_RATE_MIN = 0.5f
+  const val SPEECH_RATE_MAX = 2.0f
 
   private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -65,5 +71,22 @@ object WatchSettings {
 
   fun setKeepScreenOn(context: Context, on: Boolean) {
     prefs(context).edit().putBoolean(KEY_KEEP_SCREEN_ON, on).apply()
+  }
+
+  /** Whether card text is read aloud during review. Off by default (no surprise audio). */
+  fun ttsEnabled(context: Context): Boolean = prefs(context).getBoolean(KEY_TTS_ENABLED, false)
+
+  fun setTtsEnabled(context: Context, on: Boolean) {
+    prefs(context).edit().putBoolean(KEY_TTS_ENABLED, on).apply()
+  }
+
+  fun speechRate(context: Context): Float =
+    prefs(context).getFloat(KEY_SPEECH_RATE, 1.0f).coerceIn(SPEECH_RATE_MIN, SPEECH_RATE_MAX)
+
+  fun setSpeechRate(context: Context, rate: Float) {
+    prefs(context)
+      .edit()
+      .putFloat(KEY_SPEECH_RATE, rate.coerceIn(SPEECH_RATE_MIN, SPEECH_RATE_MAX))
+      .apply()
   }
 }
