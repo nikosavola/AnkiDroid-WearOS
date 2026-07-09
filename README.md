@@ -87,3 +87,5 @@ cargo test --manifest-path core/Cargo.toml
 
 ### Local Emulation
 You can install both modules onto an Android Phone and a Wear OS circular emulator. The phone companion will automatically pair with the watch's sync listener and detect whether the local `com.ichi2.anki.flashcards` provider is available, falling back to mock cards for testing if needed.
+
+For a lightweight, headless phone environment (no KVM/AVD needed), `CONTRIBUTING.md` documents running Android in Docker via **redroid** — handy for verifying the AnkiDroid write-back path and phone UI on a server or remote VM.
