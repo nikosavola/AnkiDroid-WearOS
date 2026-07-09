@@ -986,17 +986,26 @@ class MainActivity : ComponentActivity() {
         color = Color.LightGray.copy(alpha = 0.7f),
       )
     }
-    // Undo the previous grade (steps back a card and drops its buffered answer). Drawn LAST so it
-    // sits on top of the full-screen reveal-clickable Column (otherwise the reveal zone eats the
-    // tap), and inset from the top-start corner so it stays inside the round display's safe area.
+    // Undo the previous grade (steps back a card and drops its buffered answer). A bare glyph with
+    // no background, tucked just left of the progress text at the top. Drawn LAST so it sits above
+    // the full-screen reveal-clickable Column, which would otherwise eat the tap. The trailing
+    // padding both spaces the glyph and widens the tap target.
     if (session.canUndo()) {
-      CompactButton(
-        onClick = { undoLastAnswer(session) },
-        colors = ButtonDefaults.filledTonalButtonColors(),
-        modifier = Modifier.align(Alignment.TopStart).padding(start = 40.dp, top = 40.dp),
-      ) {
-        Text("↩", style = MaterialTheme.typography.labelSmall)
-      }
+      Text(
+        text = "↩",
+        style = MaterialTheme.typography.labelLarge,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier =
+          Modifier.align(Alignment.TopCenter)
+            .offset(x = (-30).dp, y = 8.dp)
+            .clickable(
+              interactionSource = remember { MutableInteractionSource() },
+              indication = null,
+            ) {
+              undoLastAnswer(session)
+            }
+            .padding(8.dp),
+      )
     }
   }
 
