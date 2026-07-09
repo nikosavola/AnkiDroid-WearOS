@@ -43,6 +43,21 @@ object DeckCache {
 
   fun totalDue(context: Context): Int = listCached(context).sumOf { it.cardCount }
 
+  /** Card ids across every currently-cached deck, for pruning stale per-card artifacts (images). */
+  fun allCachedCardIds(context: Context): Set<Long> {
+    val ids = mutableSetOf<Long>()
+    context.filesDir
+      .listFiles { f -> f.name.startsWith(PREFIX) && f.name.endsWith(SUFFIX) }
+      ?.forEach { f ->
+        try {
+          deserializeDueBatch(f.readBytes()).cards.forEach { ids.add(it.id) }
+        } catch (_: Exception) {
+          // Skip corrupt cache files rather than crashing.
+        }
+      }
+    return ids
+  }
+
   /**
    * Drop cached due-batch files for decks that are no longer in the current list (i.e. deselected
    * on the phone). Without this, `listCached` keeps surfacing them as stray top-level decks even

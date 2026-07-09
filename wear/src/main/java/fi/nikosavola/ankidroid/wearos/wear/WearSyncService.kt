@@ -160,6 +160,10 @@ class WearSyncService : WearableListenerService() {
       DeckCache.saveBatch(this, batch.deckId, bytes)
       Log.i(TAG, "Saved deck ${batch.deckId} ('${batch.deckName}') to local cache.")
 
+      // Drop cached bitmaps for cards no longer in any cached deck (fresh ones for current cards are
+      // kept, and re-sends overwrite in place). Runs after saveBatch so the new cards count as valid.
+      CardImageCache.pruneImages(this, DeckCache.allCachedCardIds(this))
+
       // 4. Broadcast to the MainActivity UI that new cards are ready, tagged with the deck id
       val intent =
         Intent(ACTION_BATCH_UPDATED).apply {
@@ -187,6 +191,8 @@ class WearSyncService : WearableListenerService() {
         text.lineSequence().mapNotNull { it.substringBefore(':').trim().toLongOrNull() }.toSet()
       if (text.isBlank() || validIds.isNotEmpty()) {
         DeckCache.pruneOrphans(this, validIds)
+        // A pruned deck's card images are now orphans; drop them too.
+        CardImageCache.pruneImages(this, DeckCache.allCachedCardIds(this))
       }
 
       // Broadcast to MainActivity that new decks list is ready

@@ -26,9 +26,22 @@ class CardBitmapRenderer(private val context: Context) {
     private const val TAG = "CardBitmapRenderer"
     private const val AUTHORITY = "com.ichi2.anki.flashcards"
     private var slowDrawEnabled = false
+
+    // Render square at a resolution that covers the largest current Wear round displays (~450-480px)
+    // so the watch downscales (ContentScale.Fit) to a crisp image on any device. True per-device
+    // sizing would need the watch to report its width; this fixed high resolution is a safe proxy.
+    private const val RENDER_SIZE_PX = 480
+
+    // Bounded poll for readiness (DOM complete + images loaded) instead of a flat post-load delay.
+    private const val MAX_CAPTURE_ATTEMPTS = 20
+    private const val CAPTURE_POLL_MS = 30L
   }
 
-  suspend fun render(html: String, width: Int = 400, height: Int = 400): ByteArray? {
+  suspend fun render(
+    html: String,
+    width: Int = RENDER_SIZE_PX,
+    height: Int = RENDER_SIZE_PX,
+  ): ByteArray? {
     return withContext(Dispatchers.Main) {
       if (!slowDrawEnabled) {
         try {
@@ -139,27 +152,7 @@ class CardBitmapRenderer(private val context: Context) {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-              // Give a tiny amount of time for reflow/layouts to complete
-              Handler(Looper.getMainLooper())
-                .postDelayed(
-                  {
-                    try {
-                      val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                      val canvas = Canvas(bitmap)
-                      webView.draw(canvas)
-
-                      val stream = ByteArrayOutputStream()
-                      bitmap.compress(Bitmap.CompressFormat.PNG, 95, stream)
-                      bitmap.recycle()
-
-                      deferred.complete(stream.toByteArray())
-                    } catch (e: Exception) {
-                      Log.e(TAG, "Failed to draw WebView to bitmap: ${e.message}", e)
-                      deferred.complete(null)
-                    }
-                  },
-                  60,
-                )
+              captureWhenReady(webView, width, height, 0) { deferred.complete(it) }
             }
           }
 
@@ -178,6 +171,49 @@ class CardBitmapRenderer(private val context: Context) {
       deferred.await()
     }
   }
+
+  /**
+   * Capture once the page is genuinely ready: DOM complete AND every <img> has finished loading
+   * (naturalHeight > 0), polled on a short interval. Falls back to capturing anyway after
+   * [MAX_CAPTURE_ATTEMPTS] so a stuck/missing image can't hang the render. Replaces the old flat
+   * 60ms delay, which could fire mid-reflow or before media arrived.
+   */
+  private fun captureWhenReady(
+    webView: WebView,
+    width: Int,
+    height: Int,
+    attempt: Int,
+    onReady: (ByteArray?) -> Unit,
+  ) {
+    val readinessJs =
+      "(function(){return document.readyState==='complete'&&" +
+        "Array.prototype.every.call(document.images,function(i){" +
+        "return i.complete&&i.naturalHeight>0;});})()"
+    webView.evaluateJavascript(readinessJs) { result ->
+      if (result == "true" || attempt >= MAX_CAPTURE_ATTEMPTS) {
+        onReady(captureBitmap(webView, width, height))
+      } else {
+        Handler(Looper.getMainLooper())
+          .postDelayed(
+            { captureWhenReady(webView, width, height, attempt + 1, onReady) },
+            CAPTURE_POLL_MS,
+          )
+      }
+    }
+  }
+
+  private fun captureBitmap(webView: WebView, width: Int, height: Int): ByteArray? =
+    try {
+      val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+      webView.draw(Canvas(bitmap))
+      val stream = ByteArrayOutputStream()
+      bitmap.compress(Bitmap.CompressFormat.PNG, 95, stream)
+      bitmap.recycle()
+      stream.toByteArray()
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to draw WebView to bitmap: ${e.message}", e)
+      null
+    }
 
   fun needsRichRendering(html: String): Boolean {
     val lower = html.lowercase()
