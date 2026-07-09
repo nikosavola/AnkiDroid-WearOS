@@ -2,6 +2,7 @@ package fi.nikosavola.ankidroid.wearos.wear
 
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -55,6 +56,19 @@ class DeckCacheTest {
     DeckCache.saveBatch(context, 1, serializeDueBatch(batch(1, "A", 4)))
     DeckCache.saveBatch(context, 2, serializeDueBatch(batch(2, "B", 6)))
     assertEquals(10, DeckCache.totalDue(context))
+  }
+
+  @Test
+  fun pruneOrphans_dropsDeselectedDecksOnly() {
+    DeckCache.saveBatch(context, 1, serializeDueBatch(batch(1, "Keep", 2)))
+    DeckCache.saveBatch(context, 2, serializeDueBatch(batch(2, "Drop", 3)))
+    DeckCache.saveBatch(context, 3, serializeDueBatch(batch(3, "Keep2", 1)))
+
+    // Only 1 and 3 remain selected on the phone; 2 was deselected.
+    DeckCache.pruneOrphans(context, setOf(1L, 3L))
+
+    assertEquals(setOf("Keep", "Keep2"), DeckCache.listCached(context).map { it.name }.toSet())
+    assertFalse("orphaned deck file should be deleted", DeckCache.deckFile(context, 2).exists())
   }
 
   @Test

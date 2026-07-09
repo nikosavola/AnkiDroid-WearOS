@@ -43,6 +43,22 @@ object DeckCache {
 
   fun totalDue(context: Context): Int = listCached(context).sumOf { it.cardCount }
 
+  /**
+   * Drop cached due-batch files for decks that are no longer in the current list (i.e. deselected
+   * on the phone). Without this, `listCached` keeps surfacing them as stray top-level decks even
+   * though the deck picker's list no longer includes them.
+   */
+  fun pruneOrphans(context: Context, validDeckIds: Set<Long>) {
+    context.filesDir
+      .listFiles { f -> f.name.startsWith(PREFIX) && f.name.endsWith(SUFFIX) }
+      ?.forEach { f ->
+        val id = f.name.removePrefix(PREFIX).removeSuffix(SUFFIX).toLongOrNull()
+        if (id != null && id !in validDeckIds) {
+          f.delete()
+        }
+      }
+  }
+
   private fun migrateLegacy(context: Context) {
     val legacy = File(context.filesDir, LEGACY)
     if (!legacy.exists()) return

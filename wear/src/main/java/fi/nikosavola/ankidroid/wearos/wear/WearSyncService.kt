@@ -179,6 +179,16 @@ class WearSyncService : WearableListenerService() {
       cacheFile.writeBytes(bytes)
       Log.i(TAG, "Saved decks list cache locally.")
 
+      // Prune cached due batches for decks no longer in the list (deselected on the phone) so they
+      // stop showing as stray decks. Format is "id:name" per line. Guard against a malformed empty
+      // parse wiping everything: only prune when the list is genuinely empty or we parsed real ids.
+      val text = String(bytes, Charsets.UTF_8)
+      val validIds =
+        text.lineSequence().mapNotNull { it.substringBefore(':').trim().toLongOrNull() }.toSet()
+      if (text.isBlank() || validIds.isNotEmpty()) {
+        DeckCache.pruneOrphans(this, validIds)
+      }
+
       // Broadcast to MainActivity that new decks list is ready
       val intent = Intent(ACTION_DECKS_UPDATED).apply { setPackage(packageName) }
       sendBroadcast(intent)
