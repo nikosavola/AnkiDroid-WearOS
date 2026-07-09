@@ -42,6 +42,25 @@ object CardImageCache {
     }
   }
 
+  /**
+   * Delete cached card-side images whose card id is no longer present in any cached deck. Additive
+   * cleanup that keeps the img_<id>_<side>.png filename contract with the phone intact (no key
+   * change). Fresh images for still-present cards are untouched, and every sync re-renders and
+   * overwrites a card's image, so updated content refreshes without an explicit invalidation.
+   */
+  fun pruneImages(context: Context, validCardIds: Set<Long>) {
+    try {
+      getImagesDir(context).listFiles()?.forEach { f ->
+        val id = f.name.removePrefix("img_").substringBefore('_').toLongOrNull()
+        if (id != null && id !in validCardIds) {
+          f.delete()
+        }
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to prune stale card images: ${e.message}", e)
+    }
+  }
+
   fun clearAll(context: Context) {
     try {
       val dir = getImagesDir(context)
