@@ -31,6 +31,16 @@ zstd = "0.13"
 # Rust structs). The due-batch wire format (see proto.rs).
 prost = "0.13"
 
+# Release profile for the shipped Android .so. cargo-ndk builds --release, so this is what ships.
+# LTO + a single codegen unit let the optimizer inline across crates and drop dead code (zstd,
+# rusqlite, prost, uniffi are large), and strip removes symbols. NOT panic="abort": UniFFI wraps
+# exported calls in catch_unwind to turn Rust panics into Kotlin exceptions, which abort would break.
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
 [lints.rust]
 unsafe_code = "forbid"
 
