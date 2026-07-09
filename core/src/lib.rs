@@ -27,7 +27,6 @@ pub use db::{
 pub use decks::*;
 pub use html::*;
 pub use models::*;
-pub use proto::*;
 pub use session::*;
 pub use sync::*;
 pub use tile::*;
@@ -251,8 +250,8 @@ mod tests {
     }
 
     #[test]
-    fn test_due_batch_is_gzipped_and_smaller() {
-        // A repetitive payload must come back gzip-framed and meaningfully smaller than the JSON.
+    fn test_due_batch_is_zstd_framed_and_smaller() {
+        // A repetitive payload must come back zstd-framed and meaningfully smaller than raw JSON.
         let front = "<b>repeated content </b>".repeat(200);
         let json_len = serde_json::to_vec(&card_with_front(&front)).unwrap().len();
         let batch = WearosDueBatch {
@@ -261,47 +260,23 @@ mod tests {
             cards: vec![card_with_front(&front)],
         };
         let bytes = serialize_due_batch(batch).unwrap();
-        assert_eq!(&bytes[..2], &[0x1f, 0x8b], "payload is not gzip-framed");
+        // zstd frame magic number (little-endian 0xFD2FB528).
+        assert_eq!(&bytes[..4], &[0x28, 0xb5, 0x2f, 0xfd], "payload is not zstd-framed");
         assert!(
             bytes.len() < json_len,
-            "gzip did not shrink the payload: {} vs {json_len}",
+            "zstd+proto did not shrink the payload: {} vs {json_len}",
             bytes.len()
         );
     }
 
     #[test]
-    fn test_deserialize_due_batch_accepts_raw_json() {
-        // Backward compatibility: an item left by a pre-compression peer is uncompressed JSON and
-        // must still deserialize (maybe_gunzip passes non-gzip bytes straight through).
-        let batch = WearosDueBatch {
-            deck_id: 7,
-            deck_name: "Raw".to_string(),
-            cards: vec![card_with_front("Q")],
-        };
-        let raw_json = serde_json::to_vec(&batch).unwrap();
-        assert_ne!(&raw_json[..2], &[0x1f, 0x8b]);
-        let restored = deserialize_due_batch(raw_json).unwrap();
-        assert_eq!(restored.deck_id, 7);
-        assert_eq!(restored.cards[0].front, "Q");
-    }
-
-    #[test]
-    fn test_deserialize_due_batch_rejects_garbage() {
-        // Neither gzip nor JSON: a clear SerializationError, not a panic. (WearosDueBatch isn't
-        // Debug, so match the result rather than unwrap_err.)
-        let result = deserialize_due_batch(vec![b'n', b'o', b'p', b'e']);
-        assert!(matches!(result, Err(CoreError::SerializationError { .. })));
-    }
-
-    #[test]
-    fn test_due_batch_proto_round_trips() {
+    fn test_due_batch_round_trips_via_zstd_proto() {
         let batch = WearosDueBatch {
             deck_id: 55,
             deck_name: "文法".to_string(),
             cards: vec![card_with_front("<b>Q</b>"), card_with_front("Q2")],
         };
-        let bytes = serialize_due_batch_proto(batch);
-        let restored = deserialize_due_batch_proto(bytes).unwrap();
+        let restored = deserialize_due_batch(serialize_due_batch(batch).unwrap()).unwrap();
         assert_eq!(restored.deck_id, 55);
         assert_eq!(restored.deck_name, "文法");
         assert_eq!(restored.cards.len(), 2);
@@ -311,19 +286,10 @@ mod tests {
     }
 
     #[test]
-    fn test_due_batch_proto_smaller_than_raw_json() {
-        // Protobuf drops the JSON field-name overhead; on a many-card batch it beats raw JSON.
-        let cards: Vec<WearosCard> = (0..50).map(|_| card_with_front("some front text")).collect();
-        let batch = WearosDueBatch { deck_id: 1, deck_name: "D".to_string(), cards };
-        let proto_len = serialize_due_batch_proto(batch.clone()).len();
-        let json_len = serde_json::to_vec(&batch).unwrap().len();
-        assert!(proto_len < json_len, "proto {proto_len} not smaller than json {json_len}");
-    }
-
-    #[test]
-    fn test_due_batch_proto_rejects_garbage() {
-        // Invalid protobuf wire bytes surface a SerializationError rather than panicking.
-        let result = deserialize_due_batch_proto(vec![0xff, 0xff, 0xff, 0xff]);
+    fn test_deserialize_due_batch_rejects_garbage() {
+        // Not a valid zstd frame: a clear SerializationError, not a panic. (WearosDueBatch isn't
+        // Debug, so match the result rather than unwrap_err.)
+        let result = deserialize_due_batch(vec![b'n', b'o', b'p', b'e']);
         assert!(matches!(result, Err(CoreError::SerializationError { .. })));
     }
 
