@@ -112,3 +112,32 @@ so you can read the collection DB directly:
 - Test mode toggles live in the companion Settings dialog: **Force Mock Mode** (synth cards) and
   **Read-only mode** (skips write-back). Both must be OFF to exercise real write-back; turn them
   back ON when done.
+
+## Local Android emulator (redroid) — available on this VM
+
+Headless Android 13 (x86_64) runs here via Docker + redroid, sharing the host kernel (no KVM/AVD).
+This unblocks on-device verification (write-back, phone UI) without a physical device.
+
+One-time host prereq (binder), doable from a privileged container (no root login needed here):
+
+```bash
+docker run --rm --privileged -v /lib/modules:/lib/modules:ro alpine \
+  sh -c 'apk add -q kmod && modprobe binder_linux devices="binder,hwbinder,vndbinder"'
+```
+
+Run / connect:
+
+```bash
+docker run -itd --privileged --name redroid -v "$HOME/redroid-data:/data" -p 5555:5555 \
+  redroid/redroid:13.0.0-latest androidboot.redroid_gpu_mode=guest
+adb connect localhost:5555          # wait for: getprop sys.boot_completed == 1
+adb -s localhost:5555 install -r phone/build/outputs/apk/debug/phone-debug.apk
+adb -s localhost:5555 exec-out screencap -p > shot.png   # visual verification
+```
+
+`docker start redroid` to resume (data persists in ~/redroid-data). Notes: the image is AOSP with
+**no Google Play Services**, so the Wearable Data Layer paths won't work — it's for the AnkiDroid
+ContentProvider write-back and phone-UI rendering, not the phone<->watch transfer. redroid is phone
+Android, not Wear OS (watch UI still needs a Wear device/AVD). The bluetooth HAL SIGABRTs in logcat
+are a benign redroid quirk. To exercise write-back: install an x86_64 AnkiDroid build, create a
+collection, grant the companion the READ_WRITE_DATABASE permission, then follow the steps above.
