@@ -14,6 +14,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
 import uniffi.wearos_core.deserializeAnswers
 import uniffi.wearos_core.serializeDueBatch
@@ -73,7 +74,12 @@ class WearSyncService : WearableListenerService() {
           val bytes = dataMapItem.dataMap.getByteArray(KEY_ANSWERS_BYTES)
 
           if (bytes != null) {
-            scope.launch { processAnswers(bytes) }
+            // Run synchronously (this callback is already on a background thread) so the service
+            // stays alive through the whole write-back + clear_answers handshake. Launching on the
+            // service scope let onDestroy cancel it mid-flight ("Job was cancelled") before the
+            // clear was sent, so the watch never cleared its buffer and re-sent the same answers -
+            // the phone then applied them twice.
+            runBlocking { processAnswers(bytes) }
           }
         }
       }
