@@ -294,6 +294,41 @@ mod tests {
     }
 
     #[test]
+    fn test_answers_round_trip_via_proto() {
+        // Answers go over the wire as protobuf (not JSON): every field must survive the round trip.
+        let answers = vec![
+            WearosAnswer {
+                id: "c1_0_1000".to_string(),
+                note_id: 11,
+                ord: 0,
+                ease: 1,
+                time_taken_ms: 4200,
+            },
+            WearosAnswer {
+                id: "c2_1_2000".to_string(),
+                note_id: 22,
+                ord: 1,
+                ease: 4,
+                time_taken_ms: 900,
+            },
+        ];
+        let restored = deserialize_answers(serialize_answers(answers).unwrap()).unwrap();
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored[0].id, "c1_0_1000");
+        assert_eq!(restored[0].note_id, 11);
+        assert_eq!(restored[0].ease, 1);
+        assert_eq!(restored[0].time_taken_ms, 4200);
+        assert_eq!(restored[1].ord, 1);
+        assert_eq!(restored[1].ease, 4);
+    }
+
+    #[test]
+    fn test_empty_answers_round_trip() {
+        let restored = deserialize_answers(serialize_answers(vec![]).unwrap()).unwrap();
+        assert!(restored.is_empty());
+    }
+
+    #[test]
     fn test_review_session_state_machine() {
         // answer_card buffers into DB_CONN when a DB is configured; serialize with the buffer tests.
         let _guard = db_test_guard();
