@@ -42,8 +42,11 @@ wear-compose-material = { group = "androidx.wear.compose", name = "compose-mater
 wear-compose-material3 = { group = "androidx.wear.compose", name = "compose-material3", version.ref = "wear-compose" }
 wear-compose-foundation = { group = "androidx.wear.compose", name = "compose-foundation", version.ref = "wear-compose" }
 wear-compose-navigation = { group = "androidx.wear.compose", name = "compose-navigation", version.ref = "wear-compose" }
-wear-tiles = { group = "androidx.wear.tiles", name = "tiles", version = "1.2.0" }
-wear-protolayout = { group = "androidx.wear.protolayout", name = "protolayout-material", version = "1.1.0" }
+wear-tiles = { group = "androidx.wear.tiles", name = "tiles", version = "1.5.0" }
+# protolayout-material3 = the M3 Expressive tile components; it pins protolayout core to a strict
+# [1.4.1], so pin the core explicitly to keep resolution unambiguous against tiles' own core dep.
+wear-protolayout = { group = "androidx.wear.protolayout", name = "protolayout-material3", version = "1.4.1" }
+wear-protolayout-core = { group = "androidx.wear.protolayout", name = "protolayout", version = "1.4.1" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }

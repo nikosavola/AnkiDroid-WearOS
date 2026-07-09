@@ -74,6 +74,7 @@ dependencies {
   implementation(libs.wear.compose.navigation)
   implementation(libs.wear.tiles)
   implementation(libs.wear.protolayout)
+  implementation(libs.wear.protolayout.core)
 
   implementation(libs.play.services.wearable)
   implementation("net.java.dev.jna:jna:5.14.0@aar")
