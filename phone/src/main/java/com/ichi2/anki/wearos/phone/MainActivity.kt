@@ -5,7 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.graphics.Typeface
 import android.os.Bundle
+import android.text.SpannableStringBuilder
+import android.text.Spanned
+import android.text.style.BulletSpan
+import android.text.style.RelativeSizeSpan
+import android.text.style.StyleSpan
 import android.view.View
 import android.widget.Button
 import android.widget.LinearLayout
@@ -330,29 +336,88 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
    * Explains the sync model: what's pushed to the watch and how watch reviews return to AnkiDroid.
    */
   private fun showSyncHelpDialog() {
-    val message =
-      """
-      Phone → Watch
-      • The phone reads your due cards from AnkiDroid and pushes the selected decks to the watch (compressed, over Bluetooth). Only the decks you check are synced.
-      • This happens when you tap "Sync Due Cards to Watch", automatically in the background (if enabled), and when the watch requests a deck.
-
-      Reviewing on the watch
-      • You review offline on the watch. Each grade is buffered locally on the watch — nothing is sent per-card.
-
-      Watch → Phone → AnkiDroid
-      • Buffered grades are sent back to the phone when a review session finishes, when you tap "Sync N reviews", or on the next background sync.
-      • The phone writes them into AnkiDroid's scheduler (the same as answering in AnkiDroid), then tells the watch to clear its buffer.
-
-      Read-only mode
-      • When enabled (Settings), the phone accepts the watch's reviews and clears the buffer but does NOT change AnkiDroid — useful for testing without affecting your scheduling.
-      """
-        .trimIndent()
     com.google.android.material.dialog
       .MaterialAlertDialogBuilder(this)
       .setTitle("How syncing works")
-      .setMessage(message)
+      .setMessage(buildSyncHelpText())
       .setPositiveButton("Got it", null)
       .show()
+  }
+
+  /**
+   * Rich body for the sync-help dialog: bold section headings, a little italic emphasis, and
+   * hanging-indented bullets (BulletSpan is a leading-margin span, so wrapped lines line up under
+   * the text rather than back under the bullet).
+   */
+  private fun buildSyncHelpText(): CharSequence {
+    val gap = (12 * resources.displayMetrics.density).toInt()
+    val sb = SpannableStringBuilder()
+
+    fun heading(text: String) {
+      if (sb.isNotEmpty()) sb.append("\n\n")
+      val start = sb.length
+      sb.append(text).append('\n')
+      sb.setSpan(StyleSpan(Typeface.BOLD), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+      sb.setSpan(RelativeSizeSpan(1.1f), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+
+    fun bullet(text: String) {
+      val start = sb.length
+      sb.append(text).append('\n')
+      sb.setSpan(BulletSpan(gap), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+
+    fun emphasize(term: String) {
+      val i = sb.indexOf(term)
+      if (i >= 0) {
+        sb.setSpan(StyleSpan(Typeface.ITALIC), i, i + term.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+      }
+    }
+
+    heading("Phone → Watch")
+    bullet(
+      "The phone reads your due cards from AnkiDroid and pushes the selected decks to the watch " +
+        "(compressed, over Bluetooth). Only the decks you check are synced."
+    )
+    bullet(
+      "This happens when you tap \"Sync Due Cards to Watch\", automatically in the background " +
+        "(if enabled), and when the watch requests a deck."
+    )
+
+    heading("Reviewing on the watch")
+    bullet(
+      "You review offline on the watch. Each grade is buffered locally, nothing is sent per-card."
+    )
+    bullet(
+      "Scheduling mirrors Anki within the session: a card graded onto a learning step (a sub-day " +
+        "interval, e.g. Again always and Hard/Good while it is still in learning) goes back into " +
+        "the queue so you relearn it before the deck is done. A day-or-more interval graduates the " +
+        "card out. Progress counts graduated cards, so you can't finish without clearing the lapses."
+    )
+    bullet(
+      "The real schedule is still computed by AnkiDroid from the grades you send; the in-session " +
+        "repeats are a local approximation for offline use."
+    )
+
+    heading("Watch → Phone → AnkiDroid")
+    bullet(
+      "Buffered grades are sent back to the phone when a session finishes, when you tap " +
+        "\"Sync N reviews\", or on the next background sync."
+    )
+    bullet(
+      "The phone writes them into AnkiDroid's scheduler (the same as answering in AnkiDroid), then " +
+        "tells the watch to clear its buffer."
+    )
+
+    heading("Read-only mode")
+    bullet(
+      "When enabled (Settings), the phone accepts the watch's reviews and clears the buffer but " +
+        "does not change AnkiDroid, useful for testing without affecting your scheduling."
+    )
+
+    emphasize("so you can't finish without clearing the lapses")
+    emphasize("a local approximation for offline use")
+    return sb
   }
 
   /** Search box (filters the deck tree by name) plus "Select all/none" bulk controls. */
