@@ -74,6 +74,8 @@ data class DeckEntry(val id: Long, val name: String, val cardCount: Int?)
 class MainActivity : ComponentActivity() {
   companion object {
     private const val TAG = "WatchMainActivity"
+    // How long to keep the sync-progress arc up waiting for the phone's batch before giving up.
+    private const val DOWNLOAD_TIMEOUT_MS = 20_000L
     private const val PATH_ANSWERS = "/answers"
     private const val KEY_ANSWERS_BYTES = "answers_bytes"
   }
@@ -105,7 +107,8 @@ class MainActivity : ComponentActivity() {
   private var knownDecks by mutableStateOf<List<Pair<Long, String>>>(emptyList())
 
   // Deck the user tapped to download; loaded automatically once its batch arrives from the phone.
-  private var pendingDeckId: Long? = null
+  // Compose state so the UI can show a sync-progress arc while a download is in flight.
+  private var pendingDeckId: Long? by mutableStateOf(null)
   // The deck currently open in a review session (for requesting more new cards of it).
   private var activeDeckId by mutableStateOf<Long?>(null)
   // Whether the pending request was for new cards, so we can report when none came back.
@@ -318,6 +321,7 @@ class MainActivity : ComponentActivity() {
 
         if (nodes.isEmpty()) {
           launch(Dispatchers.Main) {
+            pendingDeckId = null // stop the sync arc; nothing is coming
             Toast.makeText(
                 this@MainActivity,
                 "Phone not connected! Check Bluetooth.",
@@ -337,10 +341,12 @@ class MainActivity : ComponentActivity() {
 
         launch(Dispatchers.Main) {
           Toast.makeText(this@MainActivity, "Syncing deck from phone...", Toast.LENGTH_SHORT).show()
+          startDownloadTimeout(deckId)
         }
       } catch (e: Exception) {
         Log.e(TAG, "Failed to request deck from phone: ${e.message}", e)
         launch(Dispatchers.Main) {
+          pendingDeckId = null
           Toast.makeText(
               this@MainActivity,
               "Failed to contact phone: ${e.message}",
@@ -348,6 +354,19 @@ class MainActivity : ComponentActivity() {
             )
             .show()
         }
+      }
+    }
+  }
+
+  /** Stop the sync-progress arc if the phone never sends the batch, instead of spinning forever. */
+  private fun startDownloadTimeout(deckId: Long) {
+    scope.launch {
+      kotlinx.coroutines.delay(DOWNLOAD_TIMEOUT_MS)
+      if (pendingDeckId == deckId) {
+        pendingDeckId = null
+        pendingIsNew = false
+        Toast.makeText(this@MainActivity, "Phone didn't respond — try again.", Toast.LENGTH_SHORT)
+          .show()
       }
     }
   }
@@ -363,6 +382,7 @@ class MainActivity : ComponentActivity() {
         val nodes = nodeClient.connectedNodes.await()
         if (nodes.isEmpty()) {
           launch(Dispatchers.Main) {
+            pendingDeckId = null
             Toast.makeText(this@MainActivity, "Phone not connected!", Toast.LENGTH_SHORT).show()
           }
           return@launch
@@ -374,10 +394,12 @@ class MainActivity : ComponentActivity() {
         launch(Dispatchers.Main) {
           Toast.makeText(this@MainActivity, "Fetching $count new cards...", Toast.LENGTH_SHORT)
             .show()
+          startDownloadTimeout(deckId)
         }
       } catch (e: Exception) {
         Log.e(TAG, "Failed to request new cards: ${e.message}", e)
         launch(Dispatchers.Main) {
+          pendingDeckId = null
           Toast.makeText(this@MainActivity, "Failed to contact phone.", Toast.LENGTH_SHORT).show()
         }
       }
@@ -566,23 +588,33 @@ class MainActivity : ComponentActivity() {
         androidx.activity.compose.BackHandler { deckFolderPath = parentFolder(deckFolderPath) }
       }
 
-      AppScaffold {
-        if (showSettings) {
-          SettingsScreen()
-        } else if (session == null) {
-          WelcomeScreen()
-        } else {
-          // Keying on cardCompletedTrigger subscribes this scope, so answering/undoing a card
-          // recomposes it onto the next card (and switches to the finished screen when the queue
-          // empties) without a throwaway "unused variable" read.
-          val currentCard = remember(session, cardCompletedTrigger) { session.getCurrentCard() }
-          if (currentCard == null) {
-            FinishedScreen(session)
-          } else if (!isReviewing) {
-            DeckScreen(session)
+      Box(modifier = Modifier.fillMaxSize()) {
+        AppScaffold {
+          if (showSettings) {
+            SettingsScreen()
+          } else if (session == null) {
+            WelcomeScreen()
           } else {
-            ReviewCardScreen(session, currentCard)
+            // Keying on cardCompletedTrigger subscribes this scope, so answering/undoing a card
+            // recomposes it onto the next card (and switches to the finished screen when the queue
+            // empties) without a throwaway "unused variable" read.
+            val currentCard = remember(session, cardCompletedTrigger) { session.getCurrentCard() }
+            if (currentCard == null) {
+              FinishedScreen(session)
+            } else if (!isReviewing) {
+              DeckScreen(session)
+            } else {
+              ReviewCardScreen(session, currentCard)
+            }
           }
+        }
+        // While a deck/new-card batch is downloading from the phone, sweep an indeterminate arc
+        // around the round edge (the Data Layer transfer exposes no fraction). Cleared when the
+        // batch arrives or the request times out.
+        if (pendingDeckId != null) {
+          androidx.wear.compose.material3.CircularProgressIndicator(
+            modifier = Modifier.fillMaxSize().padding(2.dp)
+          )
         }
       }
     }
