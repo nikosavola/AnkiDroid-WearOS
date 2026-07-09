@@ -1,6 +1,7 @@
 plugins {
   alias(libs.plugins.android.application)
-  alias(libs.plugins.kotlin.android)
+  // kotlin.android removed: AGP 9 built-in Kotlin (version pinned in the root buildscript
+  // classpath).
   alias(libs.plugins.compose.compiler)
 }
 
@@ -31,7 +32,11 @@ android {
     targetCompatibility = JavaVersion.VERSION_21
   }
   buildFeatures { compose = true }
-  sourceSets { getByName("main") { java.srcDirs("src/main/java", "../bindings") } }
+  // ../bindings is generated UniFFI Kotlin. Under AGP 9 built-in Kotlin, extra dirs must be added
+  // to
+  // the *kotlin* source set (java.srcDirs no longer feeds Kotlin compilation as the KGP plugin
+  // did).
+  sourceSets { getByName("main") { kotlin.directories.add("../bindings") } }
 
   testOptions {
     unitTests {
@@ -50,9 +55,12 @@ android {
 
 kotlin { jvmToolchain(21) }
 
-tasks.withType<org.jetbrains.kotlin.gradle.tasks.KotlinCompile>().configureEach {
-  dependsOn(":generateBindings")
-}
+// The ../bindings UniFFI Kotlin must exist before Kotlin compiles. Match by task name rather than
+// the KGP KotlinCompile type so it holds under AGP 9 built-in Kotlin (no KGP import on the
+// classpath).
+tasks
+  .matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }
+  .configureEach { dependsOn(":generateBindings") }
 
 dependencies {
   implementation(libs.kotlin.stdlib)
