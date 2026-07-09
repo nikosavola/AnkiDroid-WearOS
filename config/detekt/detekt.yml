@@ -5,9 +5,9 @@
 # deliberate project choices — Jetpack Compose, ktfmt as the sole formatting authority, and the
 # Android ContentProvider / Wearable / FFI style — mirroring the FFI `allow`s kept in
 # core/Cargo.toml. Everything else detekt offers is left on.
-build:
-  maxIssues: 0
-  excludeCorrectable: true
+#
+# detekt 2.0 removed the top-level `build:` block (maxIssues/excludeCorrectable). The Gradle plugin
+# now fails on any finding by default (ignoreFailures=false), which is the maxIssues=0 we relied on.
 comments:
   active: true
   # Public API is documented where it aids understanding, not exhaustively; don't require KDoc on
@@ -18,9 +18,10 @@ comments:
     active: false
   UndocumentedPublicProperty:
     active: false
-  CommentOverPrivateFunction:
+  # detekt 2.0 renamed CommentOverPrivate{Function,Property} -> DocumentationOverPrivate{...}.
+  DocumentationOverPrivateFunction:
     active: false
-  CommentOverPrivateProperty:
+  DocumentationOverPrivateProperty:
     active: false
   AbsentOrWrongFileLicense:
     active: false
@@ -28,23 +29,35 @@ complexity:
   active: true
   LongMethod:
     active: true
-    threshold: 120
+    allowedLines: 120
   CyclomaticComplexMethod:
     active: true
-    threshold: 25
+    allowedComplexity: 25
   NestedBlockDepth:
     active: true
-    threshold: 8
+    allowedDepth: 8
   # Compose composables legitimately take many parameters (hoisted state + event callbacks), e.g.
   # ReviewAnswer / DeckSelectionTree.
   LongParameterList:
     active: true
-    functionThreshold: 11
-    constructorThreshold: 11
+    allowedFunctionParameters: 11
+    allowedConstructorParameters: 11
     ignoreDefaultParameters: true
   LargeClass:
     active: false
   TooManyFunctions:
+    active: false
+  # detekt 2.0 (under allRules) adds a second complexity metric on top of CyclomaticComplexMethod and
+  # LongMethod, which we already tune; it re-flags the same deliberately-dense ContentProvider/Compose
+  # methods (fetchDueBatch, addDeckNodeViews, ...). One complexity gate is enough.
+  CognitiveComplexMethod:
+    active: false
+  # The duplicated literals are short ContentProvider path segments / column keys; hoisting each into
+  # a constant adds more noise than it removes.
+  StringLiteralDuplication:
+    active: false
+  # Labels are used only where genuinely needed (breaking out of nested loops).
+  LabeledExpression:
     active: false
 naming:
   active: true
@@ -52,6 +65,10 @@ naming:
   FunctionNaming:
     active: true
     functionPattern: '[a-zA-Z][a-zA-Z0-9]*'
+  # Descriptive test names (writeAnswersBack_perAnswerOutcomes_areIndependent) exceed 30 chars by
+  # design; that readability is the point of the convention.
+  FunctionNameMaxLength:
+    active: false
 style:
   active: true
   MagicNumber:
@@ -65,10 +82,25 @@ style:
   # We use explanatory NOTE:/TODO-style comments deliberately (e.g. hand-off markers).
   ForbiddenComment:
     active: false
-  # @Preview composables are entry points for the IDE/screenshot tooling, not dead code.
-  UnusedPrivateMember:
+  # detekt 2.0 split UnusedPrivateMember into UnusedPrivateFunction/Property/Parameter. @Preview
+  # composables are entry points for the IDE/screenshot tooling, not dead code.
+  UnusedPrivateFunction:
     active: true
     ignoreAnnotated: ['Preview']
+  # The rules below are new-in-2.0 or off-by-default rules that allRules switched on, each conflicting
+  # with a deliberate choice (mirroring the ktlint disables in .editorconfig):
+  # ktfmt owns formatting, including multiline raw-string indentation (the CardBitmapRenderer HTML).
+  MultilineRawStringIndentation:
+    active: false
+  # Companion-object-at-top is our convention; ClassOrdering wants companions/props after methods.
+  ClassOrdering:
+    active: false
+  # Converting the base64/regex escaped strings to raw strings isn't clearer.
+  StringShouldBeRawString:
+    active: false
+  # SyncSummary is a small data class with a computed message(); deliberate and fine here.
+  DataClassContainsFunctions:
+    active: false
 exceptions:
   active: true
   # Android ContentProvider / Wearable Data Layer calls throw broad exceptions that we intentionally
@@ -76,4 +108,10 @@ exceptions:
   TooGenericExceptionCaught:
     active: false
   SwallowedException:
+    active: false
+potential-bugs:
+  active: true
+  # lateinit is idiomatic for Android views/services initialized in onCreate/onBind (off by default;
+  # allRules turned it on).
+  LateinitUsage:
     active: false

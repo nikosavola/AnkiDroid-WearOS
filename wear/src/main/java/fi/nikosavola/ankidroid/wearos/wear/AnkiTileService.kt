@@ -143,9 +143,8 @@ class AnkiTileService : TileService() {
     private const val BUFFER_DB_NAME = "wearos_buffer.db"
   }
 
-  private fun argb(color: Int): androidx.wear.protolayout.ColorBuilders.ColorProp {
-    return androidx.wear.protolayout.ColorBuilders.ColorProp.Builder(color).build()
-  }
+  private fun argb(color: Int): androidx.wear.protolayout.ColorBuilders.ColorProp =
+    androidx.wear.protolayout.ColorBuilders.ColorProp.Builder(color).build()
 
   /**
    * A lightweight, self-contained implementation of ImmediateFuture to avoid importing heavy Guava

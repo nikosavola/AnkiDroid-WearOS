@@ -1,12 +1,74 @@
 import org.gradle.internal.os.OperatingSystem
 
+// AGP 9 built-in Kotlin would otherwise pull its bundled Kotlin (2.3.10 for AGP 9.2). Force our
+// Kotlin (2.4.0) onto the buildscript classpath so built-in Kotlin compiles with it and the
+// compose-compiler plugin (which must match the Kotlin version exactly) stays aligned.
+buildscript {
+    // Literal (not libs.versions.kotlin): the version-catalog accessor isn't available this early in
+    // buildscript{} evaluation. Keep in sync with `kotlin` in gradle/libs.versions.toml.
+    dependencies {
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.0")
+    }
+}
+
 plugins {
     alias(libs.plugins.android.application) apply false
-    alias(libs.plugins.kotlin.android) apply false
+    // kotlin.android removed: AGP 9 provides built-in Kotlin (applying it errors on a duplicate
+    // `kotlin` extension). Version is pinned via the buildscript classpath above.
     alias(libs.plugins.compose.compiler) apply false
-    alias(libs.plugins.ktlint) apply false
     alias(libs.plugins.ktfmt) apply false
+    alias(libs.plugins.ktlint) apply false
     alias(libs.plugins.detekt) apply false
+}
+
+subprojects {
+    apply(plugin = "com.ncorti.ktfmt.gradle")
+    apply(plugin = "org.jlleitschuh.gradle.ktlint")
+    // detekt 2.0 (dev.detekt) is the first line compatible with Gradle 9; it's a pre-release.
+    apply(plugin = "dev.detekt")
+
+    configure<dev.detekt.gradle.extensions.DetektExtension> {
+        buildUponDefaultConfig = true
+        // Enable detekt's off-by-default rules too (the Kotlin analog of clippy pedantic/nursery);
+        // config/detekt/detekt.yml re-disables only the ones that conflict with our conventions.
+        allRules = true
+        parallel = true
+        config.setFrom(rootProject.file("config/detekt/detekt.yml"))
+    }
+
+    tasks.withType<dev.detekt.gradle.Detekt>().configureEach {
+        exclude("**/bindings/**")
+        exclude("**/jniLibs/**")
+        exclude("**/uniffi/**")
+        exclude("**/wearos_core.kt")
+    }
+
+    configure<com.ncorti.ktfmt.gradle.KtfmtExtension> {
+        googleStyle()
+    }
+
+    configure<org.jlleitschuh.gradle.ktlint.KtlintExtension> {
+        filter {
+            exclude("**/bindings/**")
+            exclude("**/jniLibs/**")
+            exclude("**/uniffi/**")
+            exclude("**/wearos_core.kt")
+        }
+    }
+
+    tasks.withType<com.ncorti.ktfmt.gradle.tasks.KtfmtFormatTask>().configureEach {
+        exclude("**/bindings/**")
+        exclude("**/jniLibs/**")
+        exclude("**/uniffi/**")
+        exclude("**/wearos_core.kt")
+    }
+
+    tasks.withType<com.ncorti.ktfmt.gradle.tasks.KtfmtCheckTask>().configureEach {
+        exclude("**/bindings/**")
+        exclude("**/jniLibs/**")
+        exclude("**/uniffi/**")
+        exclude("**/wearos_core.kt")
+    }
 }
 
 tasks.register("clean", Delete::class) {
@@ -73,59 +135,6 @@ tasks.register<Exec>("generateBindings") {
         "--language", "kotlin",
         "--out-dir", "../bindings"
     )
-}
-
-subprojects {
-    apply(plugin = "org.jlleitschuh.gradle.ktlint")
-    apply(plugin = "com.ncorti.ktfmt.gradle")
-    apply(plugin = "io.gitlab.arturbosch.detekt")
-
-    configure<io.gitlab.arturbosch.detekt.extensions.DetektExtension> {
-        buildUponDefaultConfig = true
-        // Enable detekt's off-by-default rules too (the Kotlin analog of clippy pedantic/nursery);
-        // config/detekt/detekt.yml re-disables only the ones that conflict with our conventions.
-        allRules = true
-        parallel = true
-    }
-
-    tasks.withType<io.gitlab.arturbosch.detekt.Detekt>().configureEach {
-        exclude("**/bindings/**")
-        exclude("**/jniLibs/**")
-        exclude("**/uniffi/**")
-        exclude("**/wearos_core.kt")
-        reports {
-            html.required.set(true)
-            xml.required.set(true)
-            sarif.required.set(true)
-        }
-    }
-
-    configure<org.jlleitschuh.gradle.ktlint.KtlintExtension> {
-        filter {
-            exclude("**/bindings/**")
-            exclude("**/jniLibs/**")
-            exclude("**/uniffi/**")
-            exclude("**/wearos_core.kt")
-        }
-    }
-
-    configure<com.ncorti.ktfmt.gradle.KtfmtExtension> {
-        googleStyle()
-    }
-
-    tasks.withType<com.ncorti.ktfmt.gradle.tasks.KtfmtFormatTask>().configureEach {
-        exclude("**/bindings/**")
-        exclude("**/jniLibs/**")
-        exclude("**/uniffi/**")
-        exclude("**/wearos_core.kt")
-    }
-
-    tasks.withType<com.ncorti.ktfmt.gradle.tasks.KtfmtCheckTask>().configureEach {
-        exclude("**/bindings/**")
-        exclude("**/jniLibs/**")
-        exclude("**/uniffi/**")
-        exclude("**/wearos_core.kt")
-    }
 }
 
 tasks.register<Exec>("rustFmt") {

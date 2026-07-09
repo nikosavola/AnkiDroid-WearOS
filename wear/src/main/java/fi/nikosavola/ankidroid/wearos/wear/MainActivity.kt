@@ -452,8 +452,8 @@ class MainActivity : ComponentActivity() {
     when {
       secs < 60 -> "${secs}s"
       secs < 3600 -> "${secs / 60}m"
-      secs < 86400 -> "${secs / 3600}h"
-      else -> "${secs / 86400}d"
+      secs < 86_400 -> "${secs / 3600}h"
+      else -> "${secs / 86_400}d"
     }
 
   /**
@@ -872,7 +872,7 @@ class MainActivity : ComponentActivity() {
             }
           }
           // Nudge when reviews have been waiting to reach the phone for a day or more.
-          if (outstandingOldestSecs >= 86400) {
+          if (outstandingOldestSecs >= 86_400) {
             item {
               Text(
                 text = "⚠ Oldest unsynced ${humanAge(outstandingOldestSecs)} ago",

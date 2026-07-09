@@ -20,13 +20,11 @@ object CardImageCache {
     return dir
   }
 
-  fun getImagePath(context: Context, cardId: Long, side: String): File {
-    return File(getImagesDir(context), "img_${cardId}_$side.png")
-  }
+  fun getImagePath(context: Context, cardId: Long, side: String): File =
+    File(getImagesDir(context), "img_${cardId}_$side.png")
 
-  fun hasImage(context: Context, cardId: Long, side: String): Boolean {
-    return getImagePath(context, cardId, side).exists()
-  }
+  fun hasImage(context: Context, cardId: Long, side: String): Boolean =
+    getImagePath(context, cardId, side).exists()
 
   suspend fun saveImage(context: Context, cardId: Long, side: String, asset: Asset) {
     try {

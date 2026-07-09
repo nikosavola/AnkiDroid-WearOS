@@ -1,13 +1,13 @@
 [versions]
-agp = "8.13.2"
+agp = "9.2.1"
 kotlin = "2.4.0"
 compose-compiler = "2.4.0"
 wear-compose = "1.6.2"
 jna = "5.14.0"
 coroutines = "1.8.1"
-ktlint = "12.1.1"
+ktlint = "14.2.0"
 ktfmt = "0.26.0"
-detekt = "1.23.6"
+detekt = "2.0.0-alpha.5"
 # Testing
 junit = "4.13.2"
 robolectric = "4.14.1"
@@ -70,4 +70,4 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }
 ktfmt = { id = "com.ncorti.ktfmt.gradle", version.ref = "ktfmt" }
-detekt = { id = "io.gitlab.arturbosch.detekt", version.ref = "detekt" }
+detekt = { id = "dev.detekt", version.ref = "detekt" }
