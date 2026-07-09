@@ -36,6 +36,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -195,7 +196,11 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       }
     val selectedCount = allDecks.count { deckSelection[it.first] ?: true }
 
-    Column(
+    // Host in a Surface so LocalContentColor is onBackground everywhere. Otherwise unstyled Text
+    // (the deck-tree leaf rows, the headline) falls back to the default content color and is nearly
+    // invisible in dark mode.
+    Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+      Column(
         modifier = Modifier.safeDrawingPadding().imePadding().padding(horizontal = 20.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
       ) {
@@ -282,6 +287,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       ) {
         Text("Sync Due Cards to Watch")
       }
+    }
     }
   }
 
