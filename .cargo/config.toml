@@ -1,0 +1,5 @@
+# Repo-local cargo settings. Cap rustc parallelism so builds leave cores free for
+# other work on the dev machine. Applies to host `cargo test` and the cargo-ndk
+# cross-compiles (cargo walks up from core/ and finds this).
+[build]
+jobs = 2
