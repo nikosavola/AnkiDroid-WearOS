@@ -2,14 +2,15 @@ package com.ichi2.anki.wearos.wear
 
 import android.content.Context
 import androidx.wear.protolayout.ActionBuilders
-import androidx.wear.protolayout.DeviceParametersBuilders
 import androidx.wear.protolayout.LayoutElementBuilders
 import androidx.wear.protolayout.ModifiersBuilders
 import androidx.wear.protolayout.ResourceBuilders
 import androidx.wear.protolayout.TimelineBuilders
-import androidx.wear.protolayout.material.Text
-import androidx.wear.protolayout.material.Typography
-import androidx.wear.protolayout.material.layouts.PrimaryLayout
+import androidx.wear.protolayout.material3.Typography
+import androidx.wear.protolayout.material3.materialScope
+import androidx.wear.protolayout.material3.primaryLayout
+import androidx.wear.protolayout.material3.text
+import androidx.wear.protolayout.types.layoutString
 import androidx.wear.tiles.RequestBuilders.ResourcesRequest
 import androidx.wear.tiles.RequestBuilders.TileRequest
 import androidx.wear.tiles.TileBuilders.Tile
@@ -43,48 +44,43 @@ class AnkiTileService : TileService() {
         )
         .build()
 
-    val content =
-      LayoutElementBuilders.Column.Builder()
-        .setModifiers(ModifiersBuilders.Modifiers.Builder().setClickable(launchApp).build())
-        .addContent(
-          Text.Builder(this, count.toString())
-            .setTypography(Typography.TYPOGRAPHY_DISPLAY2)
-            .setColor(argb(if (caughtUp) 0xFF9E9E9E.toInt() else 0xFF66BB6A.toInt()))
-            .build()
-        )
-        .addContent(
-          Text.Builder(this, if (count == 1) "card due today" else "cards due today")
-            .setTypography(Typography.TYPOGRAPHY_CAPTION1)
-            .setColor(argb(0xFFFFFFFF.toInt()))
-            .build()
-        )
-        .addContent(
-          Text.Builder(this, etaText(this, count))
-            .setTypography(Typography.TYPOGRAPHY_CAPTION2)
-            .setColor(argb(0xFF9E9E9E.toInt()))
-            .build()
-        )
-        .build()
-
-    // Manually bridge the legacy Tiles DeviceParameters to the modern ProtoLayout DeviceParameters
-    val adkParams = requestParams.deviceParameters!!
-    val protoDeviceParams =
-      DeviceParametersBuilders.DeviceParameters.Builder()
-        .setScreenWidthDp(adkParams.screenWidthDp)
-        .setScreenHeightDp(adkParams.screenHeightDp)
-        .setScreenShape(adkParams.screenShape)
-        .build()
-
+    // Material 3 Expressive tile: primaryLayout with a labeled title slot and a stacked main slot.
+    // tiles 1.5 hands us ProtoLayout DeviceParameters directly (no legacy bridge), and materialScope
+    // applies the M3 theme/typography/color scheme.
     val rootLayout =
-      PrimaryLayout.Builder(protoDeviceParams)
-        .setPrimaryLabelTextContent(
-          Text.Builder(this, "AnkiDroid Wear")
-            .setTypography(Typography.TYPOGRAPHY_CAPTION1)
-            .setColor(argb(0xFF66BB6A.toInt()))
-            .build()
+      materialScope(this, requestParams.deviceConfiguration) {
+        primaryLayout(
+          titleSlot = {
+            text("AnkiDroid Wear".layoutString, typography = Typography.LABEL_SMALL)
+          },
+          onClick = launchApp,
+          mainSlot = {
+            LayoutElementBuilders.Column.Builder()
+              .setWidth(androidx.wear.protolayout.DimensionBuilders.expand())
+              .addContent(
+                text(
+                  count.toString().layoutString,
+                  typography = Typography.DISPLAY_LARGE,
+                  color = if (caughtUp) colorScheme.onSurfaceVariant else colorScheme.primary,
+                )
+              )
+              .addContent(
+                text(
+                  (if (count == 1) "card due today" else "cards due today").layoutString,
+                  typography = Typography.BODY_MEDIUM,
+                )
+              )
+              .addContent(
+                text(
+                  etaText(this@AnkiTileService, count).layoutString,
+                  typography = Typography.BODY_SMALL,
+                  color = colorScheme.onSurfaceVariant,
+                )
+              )
+              .build()
+          },
         )
-        .setContent(content)
-        .build()
+      }
 
     val tile =
       Tile.Builder()
@@ -142,9 +138,6 @@ class AnkiTileService : TileService() {
     // Must match the buffer file MainActivity initializes, so both read the same answer history.
     private const val BUFFER_DB_NAME = "wearos_buffer.db"
   }
-
-  private fun argb(color: Int): androidx.wear.protolayout.ColorBuilders.ColorProp =
-    androidx.wear.protolayout.ColorBuilders.ColorProp.Builder(color).build()
 
   /**
    * A lightweight, self-contained implementation of ImmediateFuture to avoid importing heavy Guava
