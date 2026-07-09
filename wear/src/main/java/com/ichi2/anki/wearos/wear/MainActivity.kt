@@ -434,7 +434,9 @@ class MainActivity : ComponentActivity() {
       else -> "${secs / 86400}d"
     }
 
-  /** Epoch seconds at the device's local midnight today (passed to the Rust "reviews today" count). */
+  /**
+   * Epoch seconds at the device's local midnight today (passed to the Rust "reviews today" count).
+   */
   private fun todayMidnightSecs(): Long =
     java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond()
 
@@ -512,7 +514,9 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** Undo the last grade: Rust steps the queue back and drops the buffered answer; refresh the UI. */
+  /**
+   * Undo the last grade: Rust steps the queue back and drops the buffered answer; refresh the UI.
+   */
   fun undoLastAnswer(session: ReviewSession) {
     scope.launch {
       try {
@@ -660,33 +664,7 @@ class MainActivity : ComponentActivity() {
 
           items(level.children) { node ->
             if (node.isFolder) {
-              Card(
-                onClick = { deckFolderPath = node.path },
-                modifier = Modifier.fillMaxWidth(0.95f),
-              ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                  Icon(
-                    painter = painterResource(id = R.drawable.ic_folder),
-                    contentDescription = null,
-                    modifier = Modifier.size(22.dp),
-                    tint = MaterialTheme.colorScheme.primary,
-                  )
-                  Spacer(modifier = Modifier.width(10.dp))
-                  Column {
-                    Text(
-                      text = node.name,
-                      style = MaterialTheme.typography.bodyMedium,
-                      maxLines = 2,
-                      overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                    )
-                    Text(
-                      text = "Folder",
-                      style = MaterialTheme.typography.labelSmall,
-                      color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                  }
-                }
-              }
+              FolderCard(node)
             } else {
               DeckCard(id = node.id, label = node.name, cardCount = countById[node.id])
             }
@@ -717,6 +695,37 @@ class MainActivity : ComponentActivity() {
               contentDescription = "Refresh decks",
             )
           }
+        }
+      }
+    }
+  }
+
+  /**
+   * A folder row in the deck picker: a Material folder icon + name; taps descend into the folder.
+   */
+  @Composable
+  private fun FolderCard(node: DeckNodeInfo) {
+    Card(onClick = { deckFolderPath = node.path }, modifier = Modifier.fillMaxWidth(0.95f)) {
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Icon(
+          painter = painterResource(id = R.drawable.ic_folder),
+          contentDescription = null,
+          modifier = Modifier.size(22.dp),
+          tint = MaterialTheme.colorScheme.primary,
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Column {
+          Text(
+            text = node.name,
+            style = MaterialTheme.typography.bodyMedium,
+            maxLines = 2,
+            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+          )
+          Text(
+            text = "Folder",
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
         }
       }
     }
@@ -909,22 +918,23 @@ class MainActivity : ComponentActivity() {
           scrollState,
           cardStartTime,
           gradeEnabled = !isAnswering,
-        ) { ease, autoSync, duration ->
+        ) { ease, duration ->
           if (!isAnswering) {
             isAnswering = true
             // Confirm the grade with a short haptic tick (eyes-free / glanceable feedback).
             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-            answerCardSafely(session, ease, duration) {
-              if (autoSync) triggerAnswersSync() // auto sync when finishing with Easy
-              isAnswering = false
-            }
+            // Answers just buffer locally here; they sync on the Finished screen, the deck-screen
+            // "Sync N reviews" action, or background sync — not after every grade (too noisy).
+            answerCardSafely(session, ease, duration) { isAnswering = false }
           }
         }
       }
     }
   }
 
-  /** Front of a review card: progress, an optional undo, the tappable card body, and a reveal hint. */
+  /**
+   * Front of a review card: progress, an optional undo, the tappable card body, and a reveal hint.
+   */
   @Composable
   private fun BoxScope.ReviewFront(
     session: ReviewSession,
@@ -938,20 +948,10 @@ class MainActivity : ComponentActivity() {
       text = session.getProgressString(),
       style = MaterialTheme.typography.labelSmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
-      modifier = Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
+      // Sit below the ScreenScaffold TimeText (the clock owns the very top center) so the two
+      // don't overlap into an unreadable smudge.
+      modifier = Modifier.align(Alignment.TopCenter).padding(top = 26.dp),
     )
-    // Undo the previous grade (steps back a card and drops its buffered answer). Only shown once at
-    // least one card has been answered. NOTE: placement near the top edge may need tuning on round
-    // displays where the corners are clipped.
-    if (session.canUndo()) {
-      CompactButton(
-        onClick = { undoLastAnswer(session) },
-        colors = ButtonDefaults.filledTonalButtonColors(),
-        modifier = Modifier.align(Alignment.TopStart).padding(start = 8.dp, top = 2.dp),
-      ) {
-        Text("↩", style = MaterialTheme.typography.labelSmall)
-      }
-    }
     Column(
       modifier =
         Modifier.fillMaxSize()
@@ -986,6 +986,18 @@ class MainActivity : ComponentActivity() {
         color = Color.LightGray.copy(alpha = 0.7f),
       )
     }
+    // Undo the previous grade (steps back a card and drops its buffered answer). Drawn LAST so it
+    // sits on top of the full-screen reveal-clickable Column (otherwise the reveal zone eats the
+    // tap), and inset from the top-start corner so it stays inside the round display's safe area.
+    if (session.canUndo()) {
+      CompactButton(
+        onClick = { undoLastAnswer(session) },
+        colors = ButtonDefaults.filledTonalButtonColors(),
+        modifier = Modifier.align(Alignment.TopStart).padding(start = 40.dp, top = 40.dp),
+      ) {
+        Text("↩", style = MaterialTheme.typography.labelSmall)
+      }
+    }
   }
 
   /** Revealed card: front + answer scrolling under the curved grade buttons. */
@@ -998,14 +1010,16 @@ class MainActivity : ComponentActivity() {
     scrollState: androidx.compose.foundation.ScrollState,
     cardStartTime: Long,
     gradeEnabled: Boolean,
-    onGrade: (ease: Int, autoSync: Boolean, durationMs: Long) -> Unit,
+    onGrade: (ease: Int, durationMs: Long) -> Unit,
   ) {
     val duration = System.currentTimeMillis() - cardStartTime
     Text(
       text = session.getProgressString(),
       style = MaterialTheme.typography.labelSmall,
       color = MaterialTheme.colorScheme.onSurfaceVariant,
-      modifier = Modifier.align(Alignment.TopCenter).padding(top = 4.dp),
+      // Sit below the ScreenScaffold TimeText (the clock owns the very top center) so the two
+      // don't overlap into an unreadable smudge.
+      modifier = Modifier.align(Alignment.TopCenter).padding(top = 26.dp),
     )
     Column(
       modifier =
@@ -1026,7 +1040,10 @@ class MainActivity : ComponentActivity() {
       )
       Spacer(
         modifier =
-          Modifier.padding(vertical = 6.dp).fillMaxWidth(0.5f).height(1.dp).background(Color.DarkGray)
+          Modifier.padding(vertical = 6.dp)
+            .fillMaxWidth(0.5f)
+            .height(1.dp)
+            .background(Color.DarkGray)
       )
       CardSideContent(
         cardId = card.id,
@@ -1035,31 +1052,24 @@ class MainActivity : ComponentActivity() {
         modifier = Modifier.fillMaxWidth(),
       )
     }
-    GradeEdgeButtons(card = card, enabled = gradeEnabled) { ease, autoSync ->
-      onGrade(ease, autoSync, duration)
-    }
+    GradeEdgeButtons(card = card, enabled = gradeEnabled) { ease -> onGrade(ease, duration) }
   }
 
-  private data class GradeSpec(
-    val text: String,
-    val color: Color,
-    val ease: Int,
-    val autoSync: Boolean,
-  )
+  private data class GradeSpec(val text: String, val color: Color, val ease: Int)
 
   private fun gradeSpecs(card: WearosCard): List<GradeSpec> =
     if (card.buttonCount == 3) {
       listOf(
-        GradeSpec("Again", Color(0xFFEF5350), 1, false),
-        GradeSpec("Good", Color(0xFF66BB6A), 3, false),
-        GradeSpec("Easy", Color(0xFF42A5F5), 4, true),
+        GradeSpec("Again", Color(0xFFEF5350), 1),
+        GradeSpec("Good", Color(0xFF66BB6A), 3),
+        GradeSpec("Easy", Color(0xFF42A5F5), 4),
       )
     } else {
       listOf(
-        GradeSpec("Again", Color(0xFFEF5350), 1, false),
-        GradeSpec("Hard", Color(0xFFFFA726), 2, false),
-        GradeSpec("Good", Color(0xFF66BB6A), 3, false),
-        GradeSpec("Easy", Color(0xFF42A5F5), 4, true),
+        GradeSpec("Again", Color(0xFFEF5350), 1),
+        GradeSpec("Hard", Color(0xFFFFA726), 2),
+        GradeSpec("Good", Color(0xFF66BB6A), 3),
+        GradeSpec("Easy", Color(0xFF42A5F5), 4),
       )
     }
 
@@ -1069,11 +1079,7 @@ class MainActivity : ComponentActivity() {
    * this size (colour signals the grade); curvedComposable children stay clickable.
    */
   @Composable
-  private fun GradeEdgeButtons(
-    card: WearosCard,
-    enabled: Boolean,
-    onGrade: (ease: Int, autoSync: Boolean) -> Unit,
-  ) {
+  private fun GradeEdgeButtons(card: WearosCard, enabled: Boolean, onGrade: (ease: Int) -> Unit) {
     val grades = gradeSpecs(card)
     CurvedLayout(
       modifier = Modifier.fillMaxSize(),
@@ -1087,7 +1093,7 @@ class MainActivity : ComponentActivity() {
         }
         curvedComposable {
           CompactButton(
-            onClick = { if (enabled) onGrade(g.ease, g.autoSync) },
+            onClick = { if (enabled) onGrade(g.ease) },
             colors =
               ButtonDefaults.buttonColors(
                 containerColor = g.color.copy(alpha = 0.32f),
@@ -1310,7 +1316,9 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** A labelled row of mutually-exclusive choice chips; the active one is filled, the rest tonal. */
+  /**
+   * A labelled row of mutually-exclusive choice chips; the active one is filled, the rest tonal.
+   */
   @Composable
   private fun <T> settingChoiceRow(
     label: String,
@@ -1330,8 +1338,11 @@ class MainActivity : ComponentActivity() {
           CompactButton(
             onClick = { onSelect(value) },
             colors =
-              if (value == selected) ButtonDefaults.buttonColors()
-              else ButtonDefaults.filledTonalButtonColors(),
+              if (value == selected) {
+                ButtonDefaults.buttonColors()
+              } else {
+                ButtonDefaults.filledTonalButtonColors()
+              },
           ) {
             Text(text, maxLines = 1, style = MaterialTheme.typography.labelSmall)
           }
@@ -1431,10 +1442,7 @@ class MainActivity : ComponentActivity() {
         item { Spacer(modifier = Modifier.height(8.dp)) }
         item {
           EdgeButton(onClick = { showSettings = false }, buttonSize = EdgeButtonSize.Medium) {
-            Icon(
-              painter = painterResource(id = R.drawable.ic_check),
-              contentDescription = "Done",
-            )
+            Icon(painter = painterResource(id = R.drawable.ic_check), contentDescription = "Done")
           }
         }
       }

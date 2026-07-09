@@ -21,8 +21,9 @@ data class SyncSummary(val decksPushed: Int, val cardsPushed: Int, val decksRema
  * (foreground, with a progress notification) and the background [AutoSyncWorker] (WorkManager).
  *
  * It reads the deck selection + settings, pushes the filtered deck list and each non-empty due
- * batch to the watch as a gzipped Asset (compression lives in the Rust `serializeDueBatch`), renders
- * rich card bitmaps, and reports intermediate steps through [onProgress] (text, percent 0..100).
+ * batch to the watch as a gzipped Asset (compression lives in the Rust `serializeDueBatch`),
+ * renders rich card bitmaps, and reports intermediate steps through [onProgress] (text, percent
+ * 0..100).
  *
  * Returns `null` (a no-op) when AnkiDroid isn't reachable and mock mode isn't explicitly forced, so
  * a background run never silently ships mock decks to the watch.
@@ -84,7 +85,8 @@ object DeckSync {
     for ((deckId, deckName) in filteredDecks) {
       if (pushed >= prePushCap || scanned >= MAX_SCAN_DECKS) break
       scanned++
-      val batch = bridge.fetchDueBatch(deckId = deckId, limit = CARDS_PER_DECK, forceMock = isForced)
+      val batch =
+        bridge.fetchDueBatch(deckId = deckId, limit = CARDS_PER_DECK, forceMock = isForced)
       if (batch.cards.isEmpty()) continue
 
       val cleanedBatch =

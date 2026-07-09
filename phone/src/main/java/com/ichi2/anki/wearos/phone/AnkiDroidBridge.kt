@@ -300,7 +300,8 @@ class AnkiDroidBridge(private val context: Context) {
     var front = "No Front Text"
     var back = "No Back Text"
     var cardId = 0L
-    cr.query(
+    cr
+      .query(
         Uri.parse("content://$AUTHORITY/notes/$noteId/cards/$ord"),
         arrayOf("_id", "question", "answer"),
         null,

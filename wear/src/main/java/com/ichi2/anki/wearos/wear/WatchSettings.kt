@@ -46,7 +46,10 @@ object WatchSettings {
     prefs(context).getFloat(KEY_FONT_SCALE, 1.0f).coerceIn(FONT_SCALE_MIN, FONT_SCALE_MAX)
 
   fun setFontScale(context: Context, scale: Float) {
-    prefs(context).edit().putFloat(KEY_FONT_SCALE, scale.coerceIn(FONT_SCALE_MIN, FONT_SCALE_MAX)).apply()
+    prefs(context)
+      .edit()
+      .putFloat(KEY_FONT_SCALE, scale.coerceIn(FONT_SCALE_MIN, FONT_SCALE_MAX))
+      .apply()
   }
 
   fun cardFont(context: Context): CardFont =
@@ -58,8 +61,7 @@ object WatchSettings {
   }
 
   /** Keep the screen awake during a review (handy for hands-free TTS study; costs battery). */
-  fun keepScreenOn(context: Context): Boolean =
-    prefs(context).getBoolean(KEY_KEEP_SCREEN_ON, false)
+  fun keepScreenOn(context: Context): Boolean = prefs(context).getBoolean(KEY_KEEP_SCREEN_ON, false)
 
   fun setKeepScreenOn(context: Context, on: Boolean) {
     prefs(context).edit().putBoolean(KEY_KEEP_SCREEN_ON, on).apply()
