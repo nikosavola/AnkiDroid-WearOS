@@ -5,7 +5,8 @@
 //! Protobuf is far more compact than JSON and zstd compresses this text-heavy data well; both live
 //! here so the Kotlin sides just ship the bytes.
 //!
-//! Answers stay raw JSON: a buffered-answer list is tiny, so a second wire format isn't worth it.
+//! Answers go over as protobuf too (no zstd: a buffered-answer list is tiny, so compression would
+//! only add framing overhead). Everything on the wire is protobuf; nothing uses JSON.
 
 use crate::models::{CoreError, WearosAnswer, WearosDueBatch};
 use crate::proto;
@@ -29,12 +30,10 @@ pub fn deserialize_due_batch(bytes: Vec<u8>) -> Result<WearosDueBatch, CoreError
 
 #[uniffi::export]
 pub fn serialize_answers(answers: Vec<WearosAnswer>) -> Result<Vec<u8>, CoreError> {
-    serde_json::to_vec(&answers)
-        .map_err(|e| CoreError::SerializationError { error_message: e.to_string() })
+    Ok(proto::encode_answers(answers))
 }
 
 #[uniffi::export]
 pub fn deserialize_answers(bytes: Vec<u8>) -> Result<Vec<WearosAnswer>, CoreError> {
-    serde_json::from_slice(&bytes)
-        .map_err(|e| CoreError::SerializationError { error_message: e.to_string() })
+    proto::decode_answers(&bytes)
 }
