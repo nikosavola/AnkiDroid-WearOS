@@ -362,6 +362,20 @@ class AnkiDroidBridge(private val context: Context) {
 
     for (answer in answers) {
       try {
+        // Prime the scheduler BEFORE answering. A bare update() on ReviewInfo silently no-ops on the
+        // rslib/v3 backend (returns rows>0 but the answerCard call throws internally and is
+        // swallowed) unless a schedule query has first reset the scheduler and built its queue.
+        // Verified on an emulator: bare update leaves the card due (reps=0, no revlog), whereas
+        // query-then-update graduates it (reps++, revlog row, card leaves the due queue). Mirrors
+        // AnkiDroid's own ContentProviderTest, which fetches from the scheduler before answering.
+        //
+        // Known constraint (emulator-verified): the v3 backend only answers the card the scheduler
+        // currently presents, so answers must be applied in the scheduler's presentation order.
+        // That matches the normal flow (the watch batch is fetched in that order and graded/buffered
+        // in order, and this loop replays them in order). Out-of-order answers, or a second answer
+        // for the same card relearned in one session, may not all land - see TODO.md.
+        primeScheduler(contentResolver)
+
         // Answer a card via FlashCardsContract.ReviewInfo: the fields go in ContentValues with a
         // null selection. The provider calls the real scheduler (col.sched.answerCard).
         val values =
@@ -394,6 +408,19 @@ class AnkiDroidBridge(private val context: Context) {
         "${answers.size - settledIds.size} kept for retry.",
     )
     return settledIds
+  }
+
+  /**
+   * Reset AnkiDroid's scheduler by querying the schedule URI. The returned cursor is discarded; the
+   * side effect (the provider calling col.sched.reset and rebuilding the review queue) is what makes
+   * the following ReviewInfo update actually answer the card. Without it the update no-ops.
+   */
+  private fun primeScheduler(contentResolver: ContentResolver) {
+    try {
+      contentResolver.query(SCHEDULE_URI, null, null, null, null)?.close()
+    } catch (e: Exception) {
+      Log.w(TAG, "Scheduler prime query failed; the next answer may not persist: ${e.message}")
+    }
   }
 
   private fun getMockDueBatch(deckId: Long): WearosDueBatch {

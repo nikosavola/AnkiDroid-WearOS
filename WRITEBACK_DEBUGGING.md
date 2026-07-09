@@ -1,5 +1,33 @@
 # Write-back debugging handoff (watch grades -> AnkiDroid scheduling)
 
+## RESOLVED (root-caused + fixed + verified on the redroid emulator)
+
+Root cause: a bare `ContentResolver.update()` on `ReviewInfo`/`schedule` **silently no-ops** on
+AnkiDroid 2.24.0's rslib/v3 backend. It returns rows>0, but `col.sched.answerCard` throws internally
+and the provider swallows it, so nothing persists. The ContentValues keys were correct all along
+(`note_id`, `ord`=ReviewInfo.CARD_ORD, `answer_ease`, `time_taken`).
+
+Fix: `AnkiDroidBridge.writeAnswersBack` now **queries the schedule first (`primeScheduler`) to reset
+the scheduler / rebuild the review queue, then updates to answer** — mirroring AnkiDroid's own passing
+`ContentProviderTest`, which fetches from the scheduler before answering.
+
+Verified confound-free on redroid (Android 13, adb root reading collection.anki2 + the live provider):
+- Bare update: card stays due, `reps=0`, no `revlog` row.
+- Query-then-update: the answer persists — card advances (new -> learning/review), `reps` increments,
+  a `revlog` row is written, and it leaves the due queue as expected.
+
+Known constraint (also emulator-verified): the v3 backend only answers the card the scheduler
+**currently presents**. Answering the current card persists; answering a different (non-current) card
+no-ops. So write-back must apply answers in the scheduler's presentation order. This matches the
+normal flow (the watch batch is fetched in that order, graded and buffered in order, and replayed in
+order), but out-of-order answers or a second answer for a card relearned within one watch session may
+not all land. Follow-up: reconcile per-answer against the scheduler's current card (match by note_id/
+ord, or re-fetch), tracked in TODO.md.
+
+Everything below is the original handoff, kept for context.
+
+---
+
 Status as of this session. The goal: grades made on the watch should update AnkiDroid's real
 schedule. On-device testing shows they currently **do not**. This documents exactly what was found,
 what was ruled out, and how to finish the investigation on an emulator where the collection is

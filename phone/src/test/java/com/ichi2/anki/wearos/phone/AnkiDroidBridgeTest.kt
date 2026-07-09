@@ -10,6 +10,7 @@ import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
 import io.mockk.verify
+import io.mockk.verifyOrder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -158,6 +159,23 @@ class AnkiDroidBridgeTest {
           readOnly = false,
         )
     assertEquals("a2 kept for retry; a1+a3 settled", listOf("a1", "a3"), settled)
+  }
+
+  @Test
+  fun writeAnswersBack_primesSchedulerBeforeAnswering() {
+    // The rslib/v3 backend silently no-ops a bare ReviewInfo update; writeAnswersBack must first
+    // query the schedule to reset the scheduler so the answer persists (verified on the emulator:
+    // bare update -> reps 0/no revlog; query-then-update -> reps++/revlog row). Pin that ordering.
+    val resolver =
+      availableResolver {
+        every { query(any(), any(), any(), any(), any()) } returns null
+        every { update(any(), any(), any(), any()) } returns 1
+      }
+    bridge(resolver).writeAnswersBack(listOf(answer("a1", 3)), readOnly = false)
+    verifyOrder {
+      resolver.query(any(), any(), any(), any(), any())
+      resolver.update(any(), any(), any(), any())
+    }
   }
 
   // --- fetchDueBatch (AnkiDroid schedule/card cursors -> WearosCard) --------------------------
