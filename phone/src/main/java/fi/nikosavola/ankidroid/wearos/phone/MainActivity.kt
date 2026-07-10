@@ -17,6 +17,7 @@ import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,7 +41,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -74,72 +74,28 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     private const val PREPUSH_MAX = 30
   }
 
-  private lateinit var bridge: AnkiDroidBridge
-
-  // All screen state is observable so Compose recomposes when the async deck/count loads, the
-  // permission flow, the sync broadcast receiver, or filter typing write to it.
-  private var allDecks by mutableStateOf<List<Pair<DeckId, String>>>(emptyList())
-  // Case-insensitive deck-name filter from the search box; blank shows the full tree.
-  private var deckFilter by mutableStateOf("")
-  // Best-effort per-deck due totals (deckId -> count); empty when AnkiDroid doesn't expose them.
-  private var deckCounts by mutableStateOf<Map<DeckId, Int>>(emptyMap())
-  // Observable mirror of the deck_sync_prefs "deck_<id>" selection, so the Compose checkboxes react.
-  private val deckSelection = mutableStateMapOf<DeckId, Boolean>()
-  private var statusMessage by mutableStateOf("Checking permissions…")
-  private var statusTone by mutableStateOf(StatusTone.NEUTRAL)
-  private var syncEnabled by mutableStateOf(false)
-  private var syncStatusMessage by mutableStateOf<String?>(null)
-  private var progressVisible by mutableStateOf(false)
-  private var progressIndeterminate by mutableStateOf(false)
-  private var progressFraction by mutableStateOf(0f)
-  private var lastSyncLabel by mutableStateOf("Not synced yet")
-
-  /** Status-line color role, mapped to the theme's color scheme in the composable. */
-  private enum class StatusTone {
-    NEUTRAL,
-    CONNECTED,
-    ERROR,
-  }
+  // UI state + light orchestration live in the ViewModel (survives config changes); this Activity is
+  // just the framework boundary (permissions, receiver, service start, dialogs).
+  private val vm: PhoneViewModel by viewModels()
 
   // Mirrors SyncService progress into the in-app status line + bar while the Activity is alive.
   private val syncProgressReceiver =
     object : BroadcastReceiver() {
       override fun onReceive(context: Context?, intent: Intent?) {
         if (intent?.action != SyncService.ACTION_PROGRESS) return
-        val text = intent.getStringExtra(SyncService.EXTRA_TEXT).orEmpty()
-        val percent = intent.getIntExtra(SyncService.EXTRA_PERCENT, 0)
-        val done = intent.getBooleanExtra(SyncService.EXTRA_DONE, false)
-        val error = intent.getBooleanExtra(SyncService.EXTRA_ERROR, false)
-
-        syncStatusMessage = text
-        progressVisible = true
-        progressIndeterminate = false
-        progressFraction = percent / 100f
-
-        if (done) {
-          syncEnabled = true
-          if (error) {
-            progressVisible = false
-          } else {
-            updateLastSyncLabel()
-            // Hold the "Done" state briefly, then clear.
-            android.os.Handler(android.os.Looper.getMainLooper())
-              .postDelayed(
-                {
-                  progressVisible = false
-                  syncStatusMessage = null
-                },
-                1500,
-              )
-          }
-        }
+        vm.onSyncProgress(
+          text = intent.getStringExtra(SyncService.EXTRA_TEXT).orEmpty(),
+          percent = intent.getIntExtra(SyncService.EXTRA_PERCENT, 0),
+          done = intent.getBooleanExtra(SyncService.EXTRA_DONE, false),
+          error = intent.getBooleanExtra(SyncService.EXTRA_ERROR, false),
+        )
       }
     }
 
   private val settings by lazy { getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE) }
 
   private fun forceMock(): Boolean =
-    settings.getBoolean(KEY_FORCE_MOCK, !bridge.isAnkiDroidAvailable())
+    settings.getBoolean(KEY_FORCE_MOCK, !vm.bridge.isAnkiDroidAvailable())
 
   private fun prePushCap(): Int = settings.getInt(KEY_PREPUSH_CAP, DEFAULT_PREPUSH_DECKS)
 
@@ -151,9 +107,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     // clear
     // and the system bars get proper contrast scrims.
     enableEdgeToEdge()
-    bridge = AnkiDroidBridge(this)
 
-    updateLastSyncLabel()
+    vm.updateLastSyncLabel()
     setContent { AnkiPhoneTheme { PhoneScreen() } }
 
     androidx.core.content.ContextCompat.registerReceiver(
@@ -173,7 +128,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   override fun onResume() {
     super.onResume()
     // A background auto-sync may have run while we were away; refresh the relative time.
-    updateLastSyncLabel()
+    vm.updateLastSyncLabel()
   }
 
   override fun onDestroy() {
@@ -182,19 +137,19 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   }
 
   /**
-   * The whole phone screen in Compose Material 3 Expressive. All app logic (permissions, sync,
-   * bridge, receiver) stays in the Activity and feeds this via observable state; the dialogs remain
+   * The whole phone screen in Compose Material 3 Expressive. UI state comes from [vm]; the
+   * framework glue (permissions, sync, receiver) stays in the Activity, and the dialogs remain
    * MaterialAlertDialogs invoked from here.
    */
   @Composable
   private fun PhoneScreen() {
     val statusColor =
-      when (statusTone) {
+      when (vm.statusTone) {
         StatusTone.CONNECTED -> MaterialTheme.colorScheme.primary
         StatusTone.ERROR -> MaterialTheme.colorScheme.error
         StatusTone.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
       }
-    val selectedCount = allDecks.count { deckSelection[it.first] ?: true }
+    val selectedCount = vm.allDecks.count { vm.deckSelection[it.first] ?: true }
 
     // Host in a Surface so LocalContentColor is onBackground everywhere. Otherwise unstyled Text
     // (the deck-tree leaf rows, the headline) falls back to the default content color and is nearly
@@ -230,7 +185,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         modifier =
           Modifier.fillMaxWidth().clickable { showConnectionInfoDialog() }.padding(vertical = 4.dp),
       ) {
-        Text(text = statusMessage, color = statusColor, modifier = Modifier.weight(1f))
+        Text(text = vm.statusMessage, color = statusColor, modifier = Modifier.weight(1f))
         Icon(
           painter = painterResource(id = R.drawable.ic_info),
           contentDescription = "Connection details",
@@ -239,33 +194,33 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       }
 
       Text(
-        text = "Decks to sync ($selectedCount/${allDecks.size})",
+        text = "Decks to sync ($selectedCount/${vm.allDecks.size})",
         style = MaterialTheme.typography.titleLarge,
         fontWeight = FontWeight.Bold,
         color = MaterialTheme.colorScheme.primary,
       )
       Text(
-        text = lastSyncLabel,
+        text = vm.lastSyncLabel,
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
 
       OutlinedTextField(
-        value = deckFilter,
-        onValueChange = { deckFilter = it.trim() },
+        value = vm.deckFilter,
+        onValueChange = { vm.deckFilter = it.trim() },
         label = { Text("Search decks") },
         singleLine = true,
         modifier = Modifier.fillMaxWidth(),
       )
 
       Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { setAllDecksSelected(true) }) { Text("Select all") }
-        OutlinedButton(onClick = { setAllDecksSelected(false) }) { Text("Select none") }
+        OutlinedButton(onClick = { vm.setAllDecksSelected(true) }) { Text("Select all") }
+        OutlinedButton(onClick = { vm.setAllDecksSelected(false) }) { Text("Select none") }
       }
 
       DeckTreeContent(modifier = Modifier.weight(1f))
 
-      syncStatusMessage?.let {
+      vm.syncStatusMessage?.let {
         Text(
           text = it,
           style = MaterialTheme.typography.bodyMedium,
@@ -276,17 +231,17 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
           overflow = TextOverflow.Ellipsis,
         )
       }
-      if (progressVisible) {
-        if (progressIndeterminate) {
+      if (vm.progressVisible) {
+        if (vm.progressIndeterminate) {
           LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
         } else {
-          LinearProgressIndicator(progress = { progressFraction }, modifier = Modifier.fillMaxWidth())
+          LinearProgressIndicator(progress = { vm.progressFraction }, modifier = Modifier.fillMaxWidth())
         }
       }
 
       Button(
         onClick = { triggerSyncToWatch() },
-        enabled = syncEnabled,
+        enabled = vm.syncEnabled,
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
       ) {
         Text("Sync Due Cards to Watch")
@@ -345,7 +300,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
    */
   private fun forceSyncWithAnkiDroid() {
     Toast.makeText(this, "Refreshing decks from AnkiDroid…", Toast.LENGTH_SHORT).show()
-    onPermissionsGranted()
+    vm.loadDecks()
   }
 
   /**
@@ -436,17 +391,11 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     return sb
   }
 
-  /** Set the top status line; the composable maps the tone to a color-scheme role. */
-  private fun setStatus(text: String, tone: StatusTone) {
-    statusMessage = text
-    statusTone = tone
-  }
-
   private fun checkPermissions() {
     if (checkSelfPermission(PERMISSION_ANKIDROID) == PackageManager.PERMISSION_GRANTED) {
-      onPermissionsGranted()
+      vm.loadDecks()
     } else {
-      setStatus("Waiting for card access permission…", StatusTone.NEUTRAL)
+      vm.setStatus("Waiting for card access permission…", StatusTone.NEUTRAL)
       requestPermissions(arrayOf(PERMISSION_ANKIDROID), PERMISSION_REQUEST_CODE)
     }
   }
@@ -458,107 +407,46 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   ) {
     if (requestCode == PERMISSION_REQUEST_CODE) {
       if (grantResults.isNotEmpty() && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-        onPermissionsGranted()
+        vm.loadDecks()
       } else {
-        setStatus("Permission denied — can't read cards", StatusTone.ERROR)
+        vm.setStatus("Permission denied — can't read cards", StatusTone.ERROR)
         Toast.makeText(this, "Permission required to access cards!", Toast.LENGTH_LONG).show()
       }
     }
-  }
-
-  private fun onPermissionsGranted() {
-    syncEnabled = true
-    // The availability probe and the (potentially large) deck query are ContentProvider I/O; keep
-    // them off the main thread so launch doesn't jank, then update the UI on the main thread.
-    lifecycleScope.launch {
-      val available = withContext(Dispatchers.IO) { bridge.isAnkiDroidAvailable() }
-      if (available) {
-        setStatus("Connected to AnkiDroid", StatusTone.CONNECTED)
-      } else {
-        setStatus("Standalone mock mode — AnkiDroid not found", StatusTone.NEUTRAL)
-      }
-      allDecks = withContext(Dispatchers.IO) { bridge.fetchAllDecks() }
-      renderDeckTree()
-      // Due counts (if the provider exposes them) can be slow; load them after the tree is drawn
-      // and re-render to annotate rows.
-      deckCounts = withContext(Dispatchers.IO) { bridge.fetchDeckCounts() }
-      if (deckCounts.isNotEmpty()) renderDeckTree()
-    }
-  }
-
-  /**
-   * Mirror the persisted deck selection into observable state. The tree + the "N/M" header recompose
-   * off [allDecks]/[deckCounts]/[deckFilter]/[deckSelection], so there's no manual view rebuild.
-   */
-  private fun renderDeckTree() {
-    seedSelectionFromPrefs()
-  }
-
-  private fun seedSelectionFromPrefs() {
-    val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-    // Key is the raw long ("deck_<id>"), matching DeckSync — DeckId.value, NOT the wrapper's toString.
-    for ((id, _) in allDecks) deckSelection[id] = prefs.getBoolean("deck_${id.value}", true)
-  }
-
-  /** Persist a single deck's selection and mirror it into the observable map. */
-  private fun setDeckSelected(id: DeckId, checked: Boolean) {
-    deckSelection[id] = checked
-    getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-      .edit()
-      .putBoolean("deck_${id.value}", checked)
-      .apply()
   }
 
   /** The Compose Material 3 Expressive deck tree, wired to the persisted selection + due counts. */
   @Composable
   private fun DeckTreeContent(modifier: Modifier = Modifier) {
     val filtered =
-      if (deckFilter.isBlank()) {
-        allDecks
+      if (vm.deckFilter.isBlank()) {
+        vm.allDecks
       } else {
-        allDecks.filter { it.second.contains(deckFilter, ignoreCase = true) }
+        vm.allDecks.filter { it.second.contains(vm.deckFilter, ignoreCase = true) }
       }
     if (filtered.isEmpty()) {
       Text(
-        text = if (deckFilter.isBlank()) "No decks found." else "No decks match \"$deckFilter\".",
+        text =
+          if (vm.deckFilter.isBlank()) {
+            "No decks found."
+          } else {
+            "No decks match \"${vm.deckFilter}\"."
+          },
         modifier = modifier.fillMaxWidth().padding(top = 8.dp),
       )
     } else {
       val root = remember(filtered) { buildDeckTree(filtered) }
       DeckSelectionTree(
         root = root,
-        checkedOf = { deckSelection[it] ?: true },
-        onDeckChecked = { id, checked -> setDeckSelected(id, checked) },
-        onFolderChecked = { node, checked -> node.deckIds().forEach { setDeckSelected(it, checked) } },
+        checkedOf = { vm.deckSelection[it] ?: true },
+        onDeckChecked = { id, checked -> vm.setDeckSelected(id, checked) },
+        onFolderChecked = { node, checked -> node.deckIds().forEach { vm.setDeckSelected(it, checked) } },
         dueCountOf = { node ->
-          node.deckIds().mapNotNull { deckCounts[it] }.takeIf { it.isNotEmpty() }?.sum()
+          node.deckIds().mapNotNull { vm.deckCounts[it] }.takeIf { it.isNotEmpty() }?.sum()
         },
         modifier = modifier,
       )
     }
-  }
-
-  /** Check or uncheck every deck at once (bulk select controls above the tree). */
-  private fun setAllDecksSelected(selected: Boolean) {
-    val prefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-    prefs.edit().apply { for ((id, _) in allDecks) putBoolean("deck_${id.value}", selected) }.apply()
-    for ((id, _) in allDecks) deckSelection[id] = selected
-  }
-
-  /** Refresh the "Last synced …" caption from the stored timestamp. */
-  private fun updateLastSyncLabel() {
-    val ms = settings.getLong(DeckSync.KEY_LAST_SYNC_MS, 0L)
-    lastSyncLabel =
-      if (ms <= 0L) {
-        "Not synced yet"
-      } else {
-        "Last synced " +
-          android.text.format.DateUtils.getRelativeTimeSpanString(
-            ms,
-            System.currentTimeMillis(),
-            android.text.format.DateUtils.MINUTE_IN_MILLIS,
-          )
-      }
   }
 
   /**
@@ -579,10 +467,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       )
     }
 
-    syncEnabled = false
-    syncStatusMessage = "Starting sync…"
-    progressVisible = true
-    progressIndeterminate = true
+    vm.onSyncStarting()
 
     androidx.core.content.ContextCompat.startForegroundService(
       this,
@@ -699,14 +584,14 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
    * connected-watch list are filled in asynchronously so the dialog opens instantly.
    */
   private fun showConnectionInfoDialog() {
-    val available = bridge.isAnkiDroidAvailable()
+    val available = vm.bridge.isAnkiDroidAvailable()
     val permGranted = checkSelfPermission(PERMISSION_ANKIDROID) == PackageManager.PERMISSION_GRANTED
     val notifGranted =
       android.os.Build.VERSION.SDK_INT < 33 ||
         checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
           PackageManager.PERMISSION_GRANTED
     val deckPrefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-    val selectedCount = allDecks.count { deckPrefs.getBoolean("deck_${it.first}", true) }
+    val selectedCount = vm.allDecks.count { deckPrefs.getBoolean("deck_${it.first}", true) }
 
     val lines =
       mutableListOf(
@@ -721,8 +606,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         "   Authority: com.ichi2.anki.flashcards",
         "   Read/write permission: ${if (permGranted) "granted" else "denied"}",
         "   Selected deck: checking…",
-        "   Decks visible: ${allDecks.size}",
-        "   Decks selected to sync: $selectedCount / ${allDecks.size}",
+        "   Decks visible: ${vm.allDecks.size}",
+        "   Decks selected to sync: $selectedCount / ${vm.allDecks.size}",
         "",
         "▸ Settings",
         "   Force mock mode: ${if (forceMock()) "on" else "off"}",
@@ -759,7 +644,11 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       val selectedDeck =
         withContext(Dispatchers.IO) {
           try {
-            if (available) bridge.getSelectedDeck().let { "${it.second} (${it.first})" } else "n/a"
+            if (available) {
+              vm.bridge.getSelectedDeck().let { "${it.second} (${it.first})" }
+            } else {
+              "n/a"
+            }
           } catch (e: Exception) {
             "error"
           }
