@@ -121,8 +121,21 @@ class AnkiDroidBridgeTest {
   // guard our side of the contract: the right ContentValues, read-only skipping, and which answers
   // are reported "settled" (safe to clear from the watch buffer) vs kept for retry.
 
-  private fun answer(id: String, ease: Int) =
-    WearosAnswer(id = id, noteId = 111L, ord = 0, ease = ease, timeTakenMs = 4200L)
+  private fun answer(id: String, ease: Int, noteId: Long = 111L, ord: Int = 0) =
+    WearosAnswer(id = id, noteId = noteId, ord = ord, ease = ease, timeTakenMs = 4200L)
+
+  /** A schedule-query cursor presenting [noteId]/[ord] as the current card (what primeScheduler reads). */
+  private fun scheduleCursor(noteId: Long, ord: Int) =
+    mockk<Cursor>(relaxed = true) {
+      every { moveToFirst() } returns true
+      every { getColumnIndex("note_id") } returns 0
+      every { getColumnIndex("ord") } returns 1
+      every { getLong(0) } returns noteId
+      every { getInt(1) } returns ord
+    }
+
+  /** A schedule-query cursor with no due card (moveToFirst == false). */
+  private fun noCardCursor() = mockk<Cursor>(relaxed = true) { every { moveToFirst() } returns false }
 
   /** ContentResolver whose provider is reachable (isAnkiDroidAvailable() == true). */
   private fun availableResolver(block: ContentResolver.() -> Unit): ContentResolver {
@@ -152,6 +165,7 @@ class AnkiDroidBridgeTest {
   fun writeAnswersBack_appliesAnswer_withCorrectContentValues() {
     val values = slot<ContentValues>()
     val resolver = availableResolver {
+      every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 2)
       every { update(any(), capture(values), any(), any()) } returns 1
     }
 
@@ -172,9 +186,12 @@ class AnkiDroidBridgeTest {
 
   @Test
   fun writeAnswersBack_settlesNoMatchAsTerminal_notRetried() {
-    // rows==0 means the card no longer matches (already answered / removed): terminal, so it is
-    // reported settled and cleared from the buffer rather than piling up.
-    val resolver = availableResolver { every { update(any(), any(), any(), any()) } returns 0 }
+    // The scheduler presents the card, but the update writes 0 rows (already answered / removed):
+    // terminal, so it's reported settled and cleared from the buffer rather than piling up.
+    val resolver = availableResolver {
+      every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
+      every { update(any(), any(), any(), any()) } returns 0
+    }
     val settled = bridge(resolver).writeAnswersBack(listOf(answer("a1", 3)), readOnly = false)
     assertEquals(listOf("a1"), settled)
   }
@@ -182,6 +199,7 @@ class AnkiDroidBridgeTest {
   @Test
   fun writeAnswersBack_keepsForRetry_onTransientException() {
     val resolver = availableResolver {
+      every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
       every { update(any(), any(), any(), any()) } throws RuntimeException("boom")
     }
     val settled = bridge(resolver).writeAnswersBack(listOf(answer("a1", 3)), readOnly = false)
@@ -189,22 +207,60 @@ class AnkiDroidBridgeTest {
   }
 
   @Test
-  fun writeAnswersBack_perAnswerOutcomes_areIndependent() {
-    // a1 applies, a2 throws (retry), a3 is no-match (settled). One failure must not drop the
-    // others.
+  fun writeAnswersBack_neverAnswersACardTheSchedulerIsntPresenting() {
+    // The scheduler is on note 999 (nothing buffered for it). Answering the current card with a
+    // buffered answer for a DIFFERENT card would mis-grade note 999, so update must never be called
+    // and the buffered answer stays for a later sync.
     val resolver = availableResolver {
-      every { update(any(), any(), any(), any()) } returns
-        1 andThenThrows
-        RuntimeException("boom") andThen
-        0
+      every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(999L, 0)
+      every { update(any(), any(), any(), any()) } returns 1
     }
+    val settled =
+      bridge(resolver).writeAnswersBack(listOf(answer("a1", 3, noteId = 111L)), readOnly = false)
+
+    verify(exactly = 0) { resolver.update(any(), any(), any(), any()) }
+    assertTrue("unmatched answer is kept for retry, not mis-applied", settled.isEmpty())
+  }
+
+  @Test
+  fun writeAnswersBack_drainsInSchedulerOrder_notBufferOrder() {
+    // Buffer order is [222, 111] but the scheduler presents 111 then 222; answers must follow the
+    // scheduler, so 111 is answered first.
+    val applied = mutableListOf<ContentValues>()
+    val resolver = availableResolver {
+      every { query(any(), any(), any(), any(), any()) } returnsMany
+        listOf(scheduleCursor(111L, 0), scheduleCursor(222L, 0), noCardCursor())
+      every { update(any(), capture(applied), any(), any()) } returns 1
+    }
+
     val settled =
       bridge(resolver)
         .writeAnswersBack(
-          listOf(answer("a1", 3), answer("a2", 1), answer("a3", 2)),
+          listOf(answer("a2", 1, noteId = 222L), answer("a1", 3, noteId = 111L)),
           readOnly = false,
         )
-    assertEquals("a2 kept for retry; a1+a3 settled", listOf("a1", "a3"), settled)
+
+    assertEquals(listOf(111L, 222L), applied.map { it.getAsLong("note_id") })
+    assertEquals(listOf("a1", "a2"), settled)
+  }
+
+  @Test
+  fun writeAnswersBack_sameCardRelearn_appliesBothWhenRepresented() {
+    // A card graded Again-then-Good in one session: two buffered answers for note 111. The scheduler
+    // presents 111, then re-presents it (relearn step), so both land - no grade is dropped.
+    val eases = mutableListOf<ContentValues>()
+    val resolver = availableResolver {
+      every { query(any(), any(), any(), any(), any()) } returnsMany
+        listOf(scheduleCursor(111L, 0), scheduleCursor(111L, 0), noCardCursor())
+      every { update(any(), capture(eases), any(), any()) } returns 1
+    }
+
+    val settled =
+      bridge(resolver)
+        .writeAnswersBack(listOf(answer("again", 1), answer("good", 3)), readOnly = false)
+
+    assertEquals(listOf(1, 3), eases.map { it.getAsInteger("answer_ease") })
+    assertEquals(listOf("again", "good"), settled)
   }
 
   @Test
@@ -214,7 +270,7 @@ class AnkiDroidBridgeTest {
     // bare update -> reps 0/no revlog; query-then-update -> reps++/revlog row). Pin that ordering.
     val resolver =
       availableResolver {
-        every { query(any(), any(), any(), any(), any()) } returns null
+        every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
         every { update(any(), any(), any(), any()) } returns 1
       }
     bridge(resolver).writeAnswersBack(listOf(answer("a1", 3)), readOnly = false)
