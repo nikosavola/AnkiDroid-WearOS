@@ -17,14 +17,12 @@ const ZSTD_LEVEL: i32 = 19;
 
 #[uniffi::export]
 pub fn serialize_due_batch(batch: WearosDueBatch) -> Result<Vec<u8>, CoreError> {
-    zstd::encode_all(proto::encode_due_batch(batch).as_slice(), ZSTD_LEVEL)
-        .map_err(|e| CoreError::SerializationError { error_message: e.to_string() })
+    Ok(zstd::encode_all(proto::encode_due_batch(batch).as_slice(), ZSTD_LEVEL)?)
 }
 
 #[uniffi::export]
 pub fn deserialize_due_batch(bytes: Vec<u8>) -> Result<WearosDueBatch, CoreError> {
-    let proto_bytes = zstd::decode_all(bytes.as_slice())
-        .map_err(|e| CoreError::SerializationError { error_message: e.to_string() })?;
+    let proto_bytes = zstd::decode_all(bytes.as_slice())?;
     proto::decode_due_batch(&proto_bytes)
 }
 

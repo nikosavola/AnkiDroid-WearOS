@@ -88,9 +88,7 @@ pub fn encode_due_batch(batch: WearosDueBatch) -> Vec<u8> {
 
 /// Decode protobuf bytes produced by [`encode_due_batch`].
 pub fn decode_due_batch(bytes: &[u8]) -> Result<WearosDueBatch, CoreError> {
-    DueBatchPb::decode(bytes)
-        .map(WearosDueBatch::from)
-        .map_err(|e| CoreError::SerializationError { error_message: e.to_string() })
+    Ok(DueBatchPb::decode(bytes)?.into())
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -144,7 +142,5 @@ pub fn encode_answers(answers: Vec<WearosAnswer>) -> Vec<u8> {
 
 /// Decode protobuf bytes produced by [`encode_answers`].
 pub fn decode_answers(bytes: &[u8]) -> Result<Vec<WearosAnswer>, CoreError> {
-    AnswersPb::decode(bytes)
-        .map(|pb| pb.answers.into_iter().map(WearosAnswer::from).collect())
-        .map_err(|e| CoreError::SerializationError { error_message: e.to_string() })
+    Ok(AnswersPb::decode(bytes)?.answers.into_iter().map(WearosAnswer::from).collect())
 }

@@ -68,3 +68,26 @@ pub enum CoreError {
     #[error("State error: {error_message}")]
     StateError { error_message: String },
 }
+
+// `?`-conversions so the db/proto/sync layers propagate their native errors as the right CoreError
+// variant instead of hand-writing `.map_err(|e| CoreError::..)` at every call site. The message is
+// preserved verbatim via `to_string()`, matching what those closures produced.
+impl From<rusqlite::Error> for CoreError {
+    fn from(e: rusqlite::Error) -> Self {
+        Self::DatabaseError { error_message: e.to_string() }
+    }
+}
+
+impl From<prost::DecodeError> for CoreError {
+    fn from(e: prost::DecodeError) -> Self {
+        Self::SerializationError { error_message: e.to_string() }
+    }
+}
+
+// zstd (de)compression surfaces failures as std::io::Error; the core has no other raw io::Error
+// source, so mapping it to SerializationError can't mis-classify anything else.
+impl From<std::io::Error> for CoreError {
+    fn from(e: std::io::Error) -> Self {
+        Self::SerializationError { error_message: e.to_string() }
+    }
+}
