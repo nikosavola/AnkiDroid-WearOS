@@ -91,17 +91,7 @@ object DeckSync {
         bridge.fetchDueBatch(deckId = deckId, limit = CARDS_PER_DECK, forceMock = isForced)
       if (batch.cards.isEmpty()) continue
 
-      val cleanedBatch =
-        batch.copy(
-          cards =
-            batch.cards.map {
-              it.copy(
-                front = AnkiDroidBridge.stripBase64Images(it.front),
-                back = AnkiDroidBridge.stripBase64Images(it.back),
-              )
-            }
-        )
-      val bytes = serializeDueBatch(cleanedBatch)
+      val bytes = serializeDueBatch(AnkiDroidBridge.stripBase64Batch(batch))
       dataClient
         .putDataItem(
           PutDataMapRequest.create("$PATH_DUE_BATCH/${deckId.value}")
