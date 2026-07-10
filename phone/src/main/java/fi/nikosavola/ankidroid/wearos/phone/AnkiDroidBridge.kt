@@ -21,6 +21,18 @@ class AnkiDroidBridge(private val context: Context) {
       return html.replace(regex, "data:image/placeholder")
     }
 
+    /**
+     * A copy of [batch] with inline base64 image data stripped from every card's front and back (the
+     * watch renders from separately-synced bitmaps, so the heavy data URIs must not ride the wire).
+     */
+    fun stripBase64Batch(batch: WearosDueBatch): WearosDueBatch =
+      batch.copy(
+        cards =
+          batch.cards.map {
+            it.copy(front = stripBase64Images(it.front), back = stripBase64Images(it.back))
+          }
+      )
+
     // Schedule/Card columns (FlashCardsContract). getColumnIndex is case-insensitive, but the
     // ordinal column is literally "ord" (not "card_ord"), so it must match exactly.
     private const val COL_NOTE_ID = "note_id"

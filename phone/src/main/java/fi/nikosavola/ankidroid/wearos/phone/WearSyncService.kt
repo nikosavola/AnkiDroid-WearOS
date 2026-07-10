@@ -102,15 +102,7 @@ class WearSyncService : WearableListenerService() {
             Log.d(TAG, "Fetched ${batch.cards.size} due cards dynamically.")
 
             // 2. Serialize via Rust using lightweight metadata
-            val cleanedCards =
-              batch.cards.map { card ->
-                card.copy(
-                  front = AnkiDroidBridge.stripBase64Images(card.front),
-                  back = AnkiDroidBridge.stripBase64Images(card.back),
-                )
-              }
-            val cleanedBatch = batch.copy(cards = cleanedCards)
-            val bytes = serializeDueBatch(cleanedBatch)
+            val bytes = serializeDueBatch(AnkiDroidBridge.stripBase64Batch(batch))
 
             // 3. Broadcast back to Watch
             val dataClient = Wearable.getDataClient(this@WearSyncService)
@@ -175,15 +167,7 @@ class WearSyncService : WearableListenerService() {
           try {
             val batch = bridge.fetchNewCards(deckId = DeckId(deckId), limit = count)
             Log.d(TAG, "Fetched ${batch.cards.size} new cards for '${batch.deckName}'.")
-            val cleanedCards =
-              batch.cards.map { card ->
-                card.copy(
-                  front = AnkiDroidBridge.stripBase64Images(card.front),
-                  back = AnkiDroidBridge.stripBase64Images(card.back),
-                )
-              }
-            val cleanedBatch = batch.copy(cards = cleanedCards)
-            val bytes = serializeDueBatch(cleanedBatch)
+            val bytes = serializeDueBatch(AnkiDroidBridge.stripBase64Batch(batch))
 
             val dataClient = Wearable.getDataClient(this@WearSyncService)
             val putDataMapReq =

@@ -18,6 +18,8 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import uniffi.wearos_core.WearosAnswer
+import uniffi.wearos_core.WearosCard
+import uniffi.wearos_core.WearosDueBatch
 
 /**
  * AnkiDroidBridge talks to AnkiDroid's ContentProvider. We drive it with MockK fakes for the
@@ -33,6 +35,50 @@ class AnkiDroidBridgeTest {
     assertFalse("base64 payload should be gone: $out", out.contains("AAAABBBB"))
     assertTrue(out.contains("data:image/placeholder"))
     assertTrue(out.contains("caption"))
+  }
+
+  @Test
+  fun stripBase64Batch_stripsEveryCardFrontAndBackButKeepsMetadata() {
+    val batch =
+      WearosDueBatch(
+        deckId = 7,
+        deckName = "Japani",
+        cards =
+          listOf(
+            WearosCard(
+              id = 1,
+              noteId = 1,
+              ord = 0,
+              front = "<img src=\"data:image/png;base64,AAAABBBBCCCC==\"> q1",
+              back = "a1 <img src=\"data:image/jpeg;base64,DDDDEEEE==\">",
+              buttonCount = 4,
+              nextReviewTimes = listOf("1m"),
+            ),
+            WearosCard(
+              id = 2,
+              noteId = 2,
+              ord = 1,
+              front = "plain q2",
+              back = "plain a2",
+              buttonCount = 3,
+              nextReviewTimes = emptyList(),
+            ),
+          ),
+      )
+
+    val cleaned = AnkiDroidBridge.stripBase64Batch(batch)
+
+    // Deck metadata + per-card fields (ids, counts, review times) are untouched.
+    assertEquals(7, cleaned.deckId)
+    assertEquals("Japani", cleaned.deckName)
+    assertEquals(listOf(1L, 2L), cleaned.cards.map { it.id })
+    assertEquals(listOf(4, 3), cleaned.cards.map { it.buttonCount })
+    // Base64 payloads are gone from both sides of every card; plain text is preserved.
+    assertFalse(cleaned.cards[0].front.contains("AAAABBBB"))
+    assertFalse(cleaned.cards[0].back.contains("DDDDEEEE"))
+    assertTrue(cleaned.cards[0].front.contains("q1"))
+    assertTrue(cleaned.cards[0].back.contains("a1"))
+    assertEquals("plain q2", cleaned.cards[1].front)
   }
 
   @Test
