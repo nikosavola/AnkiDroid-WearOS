@@ -22,6 +22,7 @@ import androidx.wear.compose.foundation.angularSize
 import androidx.wear.compose.foundation.background
 import androidx.wear.compose.foundation.curvedRow
 import androidx.wear.compose.foundation.padding
+import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.curvedText
 import uniffi.wearos_core.WearosCard
 
@@ -42,10 +43,17 @@ private const val TAP_STRIP_FRACTION = 0.42f
  * untouched. The interval preview is dropped so words fit; colour signals the grade.
  */
 @Composable
-fun GradeEdgeButtons(card: WearosCard, enabled: Boolean, onGrade: (ease: Int) -> Unit) {
+fun GradeEdgeButtons(
+  card: WearosCard,
+  enabled: Boolean,
+  colored: Boolean,
+  onGrade: (ease: Int) -> Unit,
+) {
   // Stable across recompositions of the same card so the pointerInput gesture isn't re-registered
   // each frame (gradeSpecs depends only on the button count).
   val grades = remember(card.buttonCount) { gradeSpecs(card) }
+  // Neutral color for the uncolored mode; read here (a @Composable context), not inside CurvedScope.
+  val neutral = MaterialTheme.colorScheme.onSurfaceVariant
   Box(modifier = Modifier.fillMaxSize()) {
     // Visual layer: curved pills sized to their text (so the label is centered inside each pill).
     CurvedLayout(
@@ -55,13 +63,14 @@ fun GradeEdgeButtons(card: WearosCard, enabled: Boolean, onGrade: (ease: Int) ->
     ) {
       grades.forEachIndexed { i, g ->
         if (i > 0) curvedRow(modifier = CurvedModifier.angularSize(GAP_SWEEP_DEG)) {}
+        val pill = if (colored) g.color else neutral
         curvedRow(
           radialAlignment = CurvedAlignment.Radial.Center,
           modifier =
-            CurvedModifier.background(color = g.color.copy(alpha = 0.32f), cap = StrokeCap.Round)
+            CurvedModifier.background(color = pill.copy(alpha = 0.32f), cap = StrokeCap.Round)
               .padding(angular = 6.dp, radial = 5.dp),
         ) {
-          curvedText(text = g.text, color = g.color, fontSize = 13.sp)
+          curvedText(text = g.text, color = pill, fontSize = 13.sp)
         }
       }
     }
