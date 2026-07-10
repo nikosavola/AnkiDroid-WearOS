@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
@@ -42,7 +43,9 @@ private const val TAP_STRIP_FRACTION = 0.42f
  */
 @Composable
 fun GradeEdgeButtons(card: WearosCard, enabled: Boolean, onGrade: (ease: Int) -> Unit) {
-  val grades = gradeSpecs(card)
+  // Stable across recompositions of the same card so the pointerInput gesture isn't re-registered
+  // each frame (gradeSpecs depends only on the button count).
+  val grades = remember(card.buttonCount) { gradeSpecs(card) }
   Box(modifier = Modifier.fillMaxSize()) {
     // Visual layer: curved pills sized to their text (so the label is centered inside each pill).
     CurvedLayout(
