@@ -810,6 +810,22 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /**
+   * A glanceable stat: a small caps label above a bold M3 Numeral (tabular digits). Used for the
+   * deck/session counts where the number is the point.
+   */
+  @Composable
+  private fun StatNumeral(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier) {
+      Text(
+        text = label.uppercase(),
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
+      Text(text = value, style = MaterialTheme.typography.numeralMedium, color = color)
+    }
+  }
+
   @Composable
   fun DeckScreen(session: ReviewSession) {
     var pickingNewCount by remember { mutableStateOf(false) }
@@ -845,22 +861,26 @@ class MainActivity : ComponentActivity() {
             modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
           ) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
+              Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+              ) {
+                StatNumeral(
+                  label = "Due",
+                  value = "${session.getTotalCards()}",
+                  color = MaterialTheme.colorScheme.primary,
+                )
+                if (reviewedToday > 0) {
+                  Spacer(modifier = Modifier.width(32.dp))
+                  StatNumeral(label = "Today", value = "$reviewedToday", color = Color(0xFFFFA726))
+                }
+              }
               Text(
-                text = "Due Cards: ${session.getTotalCards()}",
-                style = MaterialTheme.typography.bodyMedium,
-              )
-              Text(
-                text = "Progress: ${session.getProgressString()}",
+                text = "Progress ${session.getProgressString()}",
                 style = MaterialTheme.typography.labelSmall,
                 color = Color.LightGray,
               )
-              if (reviewedToday > 0) {
-                Text(
-                  text = "Reviewed today: $reviewedToday 🔥",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = Color(0xFFFFA726),
-                )
-              }
             }
           }
         }
@@ -1269,9 +1289,15 @@ class MainActivity : ComponentActivity() {
               modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
             ) {
               Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                StatNumeral(
+                  label = "Reviews",
+                  value = "${summary.total}",
+                  color = MaterialTheme.colorScheme.primary,
+                )
                 Text(
-                  text = "${summary.total} reviews · ${formatDuration(summary.totalTimeMs)}",
-                  style = MaterialTheme.typography.bodyMedium,
+                  text = "in ${formatDuration(summary.totalTimeMs)}",
+                  style = MaterialTheme.typography.labelSmall,
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
                 Text(
                   text =
