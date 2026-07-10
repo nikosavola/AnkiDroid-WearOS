@@ -10,10 +10,6 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
 import uniffi.wearos_core.deserializeAnswers
@@ -43,8 +39,6 @@ class WearSyncService : WearableListenerService() {
     private const val KEY_BATCH_ASSET = "batch_asset"
   }
 
-  private val job = SupervisorJob()
-  private val scope = CoroutineScope(Dispatchers.IO + job)
   private lateinit var bridge: AnkiDroidBridge
   private lateinit var renderer: CardBitmapRenderer
 
@@ -53,11 +47,6 @@ class WearSyncService : WearableListenerService() {
     bridge = AnkiDroidBridge(applicationContext)
     renderer = CardBitmapRenderer(applicationContext)
     Log.d(TAG, "WearSyncService created on Phone Companion.")
-  }
-
-  override fun onDestroy() {
-    super.onDestroy()
-    job.cancel()
   }
 
   override fun onDataChanged(dataEvents: DataEventBuffer) {
@@ -95,7 +84,12 @@ class WearSyncService : WearableListenerService() {
         val deckId = deckIdString.toLong()
         Log.i(TAG, "Smartwatch requested card batch sync for deck ID: $deckId")
 
-        scope.launch {
+        // Run synchronously: onMessageReceived is already on a background thread, and blocking here
+        // keeps the service alive through the whole fetch + batch send + bitmap render. Launching on a
+        // service-scoped job let onDestroy cancel it mid-flight ("Job was cancelled") right after the
+        // fast batch send but before syncBitmapsForBatch finished, so card images never reached the
+        // watch. Mirrors the /answers handshake fix in onDataChanged.
+        runBlocking {
           try {
             // 1. Fetch due cards for this specific deck (no mock forced, respect local available)
             val batch = bridge.fetchDueBatch(deckId = DeckId(deckId), limit = 20)
@@ -130,7 +124,8 @@ class WearSyncService : WearableListenerService() {
 
     if (messageEvent.path == PATH_REQUEST_DECKS) {
       Log.i(TAG, "Smartwatch requested fresh decks list refresh.")
-      scope.launch {
+      // Blocking (see /request_deck) so the send isn't cancelled when the service is torn down.
+      runBlocking {
         try {
           val decks = bridge.fetchAllDecks()
           val sharedPrefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
@@ -163,7 +158,8 @@ class WearSyncService : WearableListenerService() {
         val count = parts.getOrNull(1)?.toIntOrNull() ?: 10
         Log.i(TAG, "Smartwatch requested $count new cards for deck ID: $deckId")
 
-        scope.launch {
+        // Blocking (see /request_deck) so the bitmap render isn't cancelled at service teardown.
+        runBlocking {
           try {
             val batch = bridge.fetchNewCards(deckId = DeckId(deckId), limit = count)
             Log.d(TAG, "Fetched ${batch.cards.size} new cards for '${batch.deckName}'.")
