@@ -32,6 +32,9 @@ import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.AnchorType
 import androidx.wear.compose.foundation.CurvedDirection
 import androidx.wear.compose.foundation.CurvedLayout
+import androidx.wear.compose.foundation.CurvedModifier
+import androidx.wear.compose.foundation.CurvedTextStyle
+import androidx.wear.compose.foundation.padding
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.foundation.lazy.items
@@ -1005,6 +1008,7 @@ class MainActivity : ComponentActivity() {
           scrollState,
           cardStartTime,
           gradeEnabled = !isAnswering,
+          curvedStyle = curvedStyle,
         ) { ease, duration ->
           if (!isAnswering) {
             isAnswering = true
@@ -1020,6 +1024,23 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
+   * The N/M session progress as curved text hugging the top arc (matching the curved answer hint +
+   * grade buttons), inset radially so it clears the ScreenScaffold clock at the very top.
+   */
+  @Composable
+  private fun TopCurvedProgress(text: String, style: CurvedTextStyle) {
+    val color = MaterialTheme.colorScheme.onSurfaceVariant
+    CurvedLayout(modifier = Modifier.fillMaxSize(), anchor = 270f, anchorType = AnchorType.Center) {
+      curvedText(
+        text = text,
+        style = style,
+        color = color,
+        modifier = CurvedModifier.padding(outer = 22.dp, inner = 0.dp, before = 0.dp, after = 0.dp),
+      )
+    }
+  }
+
+  /**
    * Front of a review card: progress, an optional undo, the tappable card body, and a reveal hint.
    */
   @Composable
@@ -1031,14 +1052,7 @@ class MainActivity : ComponentActivity() {
     scrollState: androidx.compose.foundation.ScrollState,
     onReveal: () -> Unit,
   ) {
-    Text(
-      text = session.getProgressString(),
-      style = MaterialTheme.typography.labelSmall,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-      // Sit below the ScreenScaffold TimeText (the clock owns the very top center) so the two
-      // don't overlap into an unreadable smudge.
-      modifier = Modifier.align(Alignment.TopCenter).padding(top = 26.dp),
-    )
+    TopCurvedProgress(session.getProgressString(), curvedStyle)
     Column(
       modifier =
         Modifier.fillMaxSize()
@@ -1106,17 +1120,11 @@ class MainActivity : ComponentActivity() {
     scrollState: androidx.compose.foundation.ScrollState,
     cardStartTime: Long,
     gradeEnabled: Boolean,
+    curvedStyle: CurvedTextStyle,
     onGrade: (ease: Int, durationMs: Long) -> Unit,
   ) {
     val duration = System.currentTimeMillis() - cardStartTime
-    Text(
-      text = session.getProgressString(),
-      style = MaterialTheme.typography.labelSmall,
-      color = MaterialTheme.colorScheme.onSurfaceVariant,
-      // Sit below the ScreenScaffold TimeText (the clock owns the very top center) so the two
-      // don't overlap into an unreadable smudge.
-      modifier = Modifier.align(Alignment.TopCenter).padding(top = 26.dp),
-    )
+    TopCurvedProgress(session.getProgressString(), curvedStyle)
     Column(
       modifier =
         Modifier.fillMaxSize()
