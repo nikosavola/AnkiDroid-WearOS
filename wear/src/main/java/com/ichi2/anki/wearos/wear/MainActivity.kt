@@ -37,7 +37,6 @@ import androidx.core.text.HtmlCompat
 import androidx.wear.compose.foundation.AnchorType
 import androidx.wear.compose.foundation.CurvedDirection
 import androidx.wear.compose.foundation.CurvedLayout
-import androidx.wear.compose.foundation.curvedComposable
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.foundation.lazy.items
@@ -1150,58 +1149,6 @@ class MainActivity : ComponentActivity() {
       )
     }
     GradeEdgeButtons(card = card, enabled = gradeEnabled) { ease -> onGrade(ease, duration) }
-  }
-
-  private data class GradeSpec(val text: String, val color: Color, val ease: Int)
-
-  private fun gradeSpecs(card: WearosCard): List<GradeSpec> =
-    if (card.buttonCount == 3) {
-      listOf(
-        GradeSpec("Again", Color(0xFFEF5350), 1),
-        GradeSpec("Good", Color(0xFF66BB6A), 3),
-        GradeSpec("Easy", Color(0xFF42A5F5), 4),
-      )
-    } else {
-      listOf(
-        GradeSpec("Again", Color(0xFFEF5350), 1),
-        GradeSpec("Hard", Color(0xFFFFA726), 2),
-        GradeSpec("Good", Color(0xFF66BB6A), 3),
-        GradeSpec("Easy", Color(0xFF42A5F5), 4),
-      )
-    }
-
-  /**
-   * Grade buttons laid out along the bottom round edge with [CurvedLayout], so each chip is rotated
-   * tangent to the bezel and follows the arc. The interval preview is dropped so the words fit at
-   * this size (colour signals the grade); curvedComposable children stay clickable.
-   */
-  @Composable
-  private fun GradeEdgeButtons(card: WearosCard, enabled: Boolean, onGrade: (ease: Int) -> Unit) {
-    val grades = gradeSpecs(card)
-    CurvedLayout(
-      modifier = Modifier.fillMaxSize(),
-      anchor = 90f,
-      anchorType = AnchorType.Center,
-      angularDirection = CurvedDirection.Angular.Reversed,
-    ) {
-      grades.forEachIndexed { i, g ->
-        if (i > 0) {
-          curvedComposable { Spacer(modifier = Modifier.size(2.dp)) }
-        }
-        curvedComposable {
-          CompactButton(
-            onClick = { if (enabled) onGrade(g.ease) },
-            colors =
-              ButtonDefaults.buttonColors(
-                containerColor = g.color.copy(alpha = 0.32f),
-                contentColor = g.color,
-              ),
-          ) {
-            Text(g.text, maxLines = 1, style = MaterialTheme.typography.labelSmall)
-          }
-        }
-      }
-    }
   }
 
   /**
