@@ -238,6 +238,10 @@ class CardBitmapRenderer(private val context: Context) {
             PutDataMapRequest.create(imagePath)
               .apply {
                 dataMap.putAsset("image_asset", asset)
+                // Vary the item so re-rendering the same card still propagates; without this the Data
+                // Layer dedups a byte-identical re-send and the watch never receives it (same reason
+                // the due-batch path stamps synced_at).
+                dataMap.putLong("synced_at", System.currentTimeMillis())
                 setUrgent()
               }
               .asPutDataRequest()
@@ -256,6 +260,8 @@ class CardBitmapRenderer(private val context: Context) {
             PutDataMapRequest.create(imagePath)
               .apply {
                 dataMap.putAsset("image_asset", asset)
+                // See the front path: stamp the item so an identical re-render still reaches the watch.
+                dataMap.putLong("synced_at", System.currentTimeMillis())
                 setUrgent()
               }
               .asPutDataRequest()
