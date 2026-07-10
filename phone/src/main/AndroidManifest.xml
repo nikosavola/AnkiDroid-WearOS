@@ -14,6 +14,7 @@
     </queries>
 
     <application
+        android:name=".AnkiPhoneApp"
         android:allowBackup="true"
         android:enableOnBackInvokedCallback="true"
         android:icon="@android:drawable/sym_def_app_icon"
