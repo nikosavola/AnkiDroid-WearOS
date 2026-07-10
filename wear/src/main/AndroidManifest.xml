@@ -31,6 +31,10 @@
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/due_batch" />
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/decks" />
                 <data android:scheme="wear" android:host="*" android:pathPrefix="/clear_answers" />
+                <!-- Pre-rendered card bitmaps (rich cards: images, styled pitch-accent). Without this
+                     the /card_image data events are filtered out and never reach WearSyncService, so
+                     rich cards silently fall back to the stripped-text view. -->
+                <data android:scheme="wear" android:host="*" android:pathPrefix="/card_image" />
             </intent-filter>
         </service>
 
