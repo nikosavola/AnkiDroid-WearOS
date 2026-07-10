@@ -15,6 +15,9 @@ object WatchSettings {
   private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
   private const val KEY_TTS_ENABLED = "tts_enabled"
   private const val KEY_SPEECH_RATE = "speech_rate"
+  private const val KEY_HIDE_CLOCK = "hide_clock"
+  private const val KEY_HIDE_PROGRESS = "hide_progress"
+  private const val KEY_COLORED_GRADE_BUTTONS = "colored_grade_buttons"
 
   /** Theme selection. SYSTEM follows the OS light/dark setting where the platform reports one. */
   enum class ThemeMode {
@@ -88,5 +91,27 @@ object WatchSettings {
       .edit()
       .putFloat(KEY_SPEECH_RATE, rate.coerceIn(SPEECH_RATE_MIN, SPEECH_RATE_MAX))
       .apply()
+  }
+
+  /** Hide the clock (TimeText) on the review card, for a minimal look. Off by default. */
+  fun hideClock(context: Context): Boolean = prefs(context).getBoolean(KEY_HIDE_CLOCK, false)
+
+  fun setHideClock(context: Context, hide: Boolean) {
+    prefs(context).edit().putBoolean(KEY_HIDE_CLOCK, hide).apply()
+  }
+
+  /** Hide the N/M progress text on the review card, for a minimal look. Off by default. */
+  fun hideProgress(context: Context): Boolean = prefs(context).getBoolean(KEY_HIDE_PROGRESS, false)
+
+  fun setHideProgress(context: Context, hide: Boolean) {
+    prefs(context).edit().putBoolean(KEY_HIDE_PROGRESS, hide).apply()
+  }
+
+  /** Color the grade buttons per Anki's ease scheme (on by default); off renders them neutral. */
+  fun coloredGradeButtons(context: Context): Boolean =
+    prefs(context).getBoolean(KEY_COLORED_GRADE_BUTTONS, true)
+
+  fun setColoredGradeButtons(context: Context, colored: Boolean) {
+    prefs(context).edit().putBoolean(KEY_COLORED_GRADE_BUTTONS, colored).apply()
   }
 }

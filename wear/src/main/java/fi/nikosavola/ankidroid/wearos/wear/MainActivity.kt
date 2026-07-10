@@ -101,6 +101,9 @@ class MainActivity : ComponentActivity() {
   private var speechRate by mutableFloatStateOf(1.0f)
   private var cardFont by mutableStateOf(WatchSettings.CardFont.DEFAULT)
   private var keepScreenOn by mutableStateOf(false)
+  private var hideClock by mutableStateOf(false)
+  private var hideProgress by mutableStateOf(false)
+  private var coloredGradeButtons by mutableStateOf(true)
   private var showSettings by mutableStateOf(false)
 
   // Current folder in the deck picker's `::` hierarchy ("" = root). Descending sets it to a child
@@ -186,6 +189,9 @@ class MainActivity : ComponentActivity() {
     fontScale = WatchSettings.fontScale(this)
     cardFont = WatchSettings.cardFont(this)
     keepScreenOn = WatchSettings.keepScreenOn(this)
+    hideClock = WatchSettings.hideClock(this)
+    hideProgress = WatchSettings.hideProgress(this)
+    coloredGradeButtons = WatchSettings.coloredGradeButtons(this)
     ttsEnabled = WatchSettings.ttsEnabled(this)
     speechRate = WatchSettings.speechRate(this)
 
@@ -972,7 +978,11 @@ class MainActivity : ComponentActivity() {
       }
     }
 
-    ScreenScaffold(scrollState = scrollState) {
+    // Hide-clock: override the app's TimeText with an empty one for the review card only (null keeps
+    // the default clock from AppScaffold).
+    val emptyTimeText: @Composable () -> Unit = {}
+    val reviewTimeText = if (hideClock) emptyTimeText else null
+    ScreenScaffold(scrollState = scrollState, timeText = reviewTimeText) {
       if (!isRevealed) {
         ReviewFront(session, card, displayFront, curvedStyle, scrollState) {
           session.revealAnswer()
@@ -1031,7 +1041,7 @@ class MainActivity : ComponentActivity() {
     scrollState: androidx.compose.foundation.ScrollState,
     onReveal: () -> Unit,
   ) {
-    TopCurvedProgress(session.getProgressString(), curvedStyle)
+    if (!hideProgress) TopCurvedProgress(session.getProgressString(), curvedStyle)
     Column(
       modifier =
         Modifier.fillMaxSize()
@@ -1103,7 +1113,7 @@ class MainActivity : ComponentActivity() {
     onGrade: (ease: Int, durationMs: Long) -> Unit,
   ) {
     val duration = System.currentTimeMillis() - cardStartTime
-    TopCurvedProgress(session.getProgressString(), curvedStyle)
+    if (!hideProgress) TopCurvedProgress(session.getProgressString(), curvedStyle)
     Column(
       modifier =
         Modifier.fillMaxSize()
@@ -1135,7 +1145,9 @@ class MainActivity : ComponentActivity() {
         modifier = Modifier.fillMaxWidth(),
       )
     }
-    GradeEdgeButtons(card = card, enabled = gradeEnabled) { ease -> onGrade(ease, duration) }
+    GradeEdgeButtons(card = card, enabled = gradeEnabled, colored = coloredGradeButtons) { ease ->
+      onGrade(ease, duration)
+    }
   }
 
   /**
@@ -1393,6 +1405,37 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /** The minimal-view appearance toggles (grade-button color + hide clock/progress in review). */
+  private fun TransformingLazyColumnScope.appearanceToggles(transformSpec: TransformationSpec) {
+    settingSwitchItem(
+      checked = coloredGradeButtons,
+      label = "Grade colors",
+      secondaryLabel = "Color the buttons",
+      transformSpec = transformSpec,
+    ) {
+      coloredGradeButtons = it
+      WatchSettings.setColoredGradeButtons(this@MainActivity, it)
+    }
+    settingSwitchItem(
+      checked = hideProgress,
+      label = "Hide progress",
+      secondaryLabel = "The N/M count",
+      transformSpec = transformSpec,
+    ) {
+      hideProgress = it
+      WatchSettings.setHideProgress(this@MainActivity, it)
+    }
+    settingSwitchItem(
+      checked = hideClock,
+      label = "Hide clock",
+      secondaryLabel = "The time",
+      transformSpec = transformSpec,
+    ) {
+      hideClock = it
+      WatchSettings.setHideClock(this@MainActivity, it)
+    }
+  }
+
   @Composable
   fun SettingsScreen() {
     val listState = rememberTransformingLazyColumnState()
@@ -1503,6 +1546,7 @@ class MainActivity : ComponentActivity() {
           keepScreenOn = it
           WatchSettings.setKeepScreenOn(this@MainActivity, it)
         }
+        appearanceToggles(transformSpec)
         item { Spacer(modifier = Modifier.height(8.dp)) }
         item {
           EdgeButton(onClick = { showSettings = false }, buttonSize = EdgeButtonSize.Medium) {
