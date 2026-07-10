@@ -36,8 +36,7 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 
 /**
- * Material 3 **Expressive** deck tree for the phone — phase-1 of migrating the deck selector off
- * imperative Views. This is the piece the backlog specifically flagged as missing: real motion.
+ * Material 3 deck tree for the phone: phase-1 of migrating the deck selector off imperative Views.
  *
  * Folder rows sit on a tonal surface and carry a chevron that *spring-rotates* on toggle; a
  * folder's children expand/collapse with an animated height + fade instead of the current full-list
