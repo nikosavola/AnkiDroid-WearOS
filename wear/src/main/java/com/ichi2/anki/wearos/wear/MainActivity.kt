@@ -144,6 +144,10 @@ class MainActivity : ComponentActivity() {
           }
           WearSyncService.ACTION_ANSWERS_CLEARED -> {
             updateOutstandingCount()
+            // The phone just applied our answers to AnkiDroid; reconcile the last-reviewed deck's
+            // cached queue with AnkiDroid's real post-answer schedule (the in-session requeue was a
+            // local approximation).
+            activeDeckId?.let { silentlyRefreshDeck(it) }
           }
           WearSyncService.ACTION_DECKS_UPDATED -> {
             vm.loadDecks()
@@ -261,6 +265,29 @@ class MainActivity : ComponentActivity() {
       loadDeckSession(deckId)
     } else {
       requestDeckFromPhone(deckId)
+    }
+  }
+
+  /**
+   * Reconcile a deck's cached queue with AnkiDroid's real schedule: re-request its batch WITHOUT
+   * opening a session or showing the sync arc (no pendingDeckId). The arriving batch is fetched live
+   * from AnkiDroid - reflecting the answers just written back - and refreshes the local cache, so the
+   * next open shows the true next-due instead of the in-session requeue approximation. Best-effort:
+   * on failure the deck still converges on the next manual open/refresh.
+   */
+  private fun silentlyRefreshDeck(deckId: Long) {
+    scope.launch(Dispatchers.IO) {
+      try {
+        val nodes = Wearable.getNodeClient(this@MainActivity).connectedNodes.await()
+        if (nodes.isEmpty()) return@launch
+        val messageClient = Wearable.getMessageClient(this@MainActivity)
+        for (node in nodes) {
+          messageClient.sendMessage(node.id, "/request_deck", deckId.toString().toByteArray()).await()
+        }
+        Log.d(TAG, "Requested reconciled batch for deck $deckId after write-back.")
+      } catch (e: Exception) {
+        Log.w(TAG, "Reconcile refresh for deck $deckId failed; converges on next open: ${e.message}")
+      }
     }
   }
 
