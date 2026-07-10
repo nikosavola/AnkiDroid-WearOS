@@ -11,8 +11,7 @@ pub static DB_CONN: Mutex<Option<String>> = Mutex::new(None);
 
 #[uniffi::export]
 pub fn init_database(db_path: String) -> Result<(), CoreError> {
-    let conn = Connection::open(&db_path)
-        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    let conn = Connection::open(&db_path)?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS buffered_answers (
@@ -24,13 +23,11 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
             created_at INTEGER NOT NULL
         )",
         [],
-    )
-    .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    )?;
 
     // Append-only activity log for the "N reviewed today" counter. Independent of buffered_answers
     // so it survives sync-back clearing (buffered_answers is drained once the phone applies them).
-    conn.execute("CREATE TABLE IF NOT EXISTS review_log (answered_at INTEGER NOT NULL)", [])
-        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    conn.execute("CREATE TABLE IF NOT EXISTS review_log (answered_at INTEGER NOT NULL)", [])?;
 
     {
         let mut db = DB_CONN.lock().unwrap();
@@ -50,7 +47,7 @@ pub fn get_db_connection() -> Result<Connection, CoreError> {
                 .to_string(),
         });
     };
-    Connection::open(&path).map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })
+    Ok(Connection::open(&path)?)
 }
 
 #[uniffi::export]
@@ -69,12 +66,10 @@ pub fn save_answer(answer: WearosAnswer) -> Result<(), CoreError> {
             answer.time_taken_ms,
             now
         ],
-    )
-    .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    )?;
 
     // Log the activity for the daily counter (append-only; not undone/cleared).
-    conn.execute("INSERT INTO review_log (answered_at) VALUES (?1)", params![now])
-        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    conn.execute("INSERT INTO review_log (answered_at) VALUES (?1)", params![now])?;
 
     Ok(())
 }
@@ -84,38 +79,34 @@ pub fn save_answer(answer: WearosAnswer) -> Result<(), CoreError> {
 #[uniffi::export]
 pub fn reviews_since(since_secs: i64) -> Result<i32, CoreError> {
     let conn = get_db_connection()?;
-    let count: i64 = conn
-        .query_row(
-            "SELECT COUNT(*) FROM review_log WHERE answered_at >= ?1",
-            params![since_secs],
-            |r| r.get(0),
-        )
-        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM review_log WHERE answered_at >= ?1",
+        params![since_secs],
+        |r| r.get(0),
+    )?;
     Ok(count as i32)
 }
 
 #[uniffi::export]
 pub fn get_buffered_answers() -> Result<Vec<WearosAnswer>, CoreError> {
     let conn = get_db_connection()?;
-    let mut stmt = conn
-        .prepare("SELECT id, note_id, card_ord, ease, time_taken_ms FROM buffered_answers ORDER BY created_at ASC")
-        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    let mut stmt = conn.prepare(
+        "SELECT id, note_id, card_ord, ease, time_taken_ms FROM buffered_answers ORDER BY created_at ASC",
+    )?;
 
-    let rows = stmt
-        .query_map([], |row| {
-            Ok(WearosAnswer {
-                id: row.get(0)?,
-                note_id: row.get(1)?,
-                ord: row.get(2)?,
-                ease: row.get(3)?,
-                time_taken_ms: row.get(4)?,
-            })
+    let rows = stmt.query_map([], |row| {
+        Ok(WearosAnswer {
+            id: row.get(0)?,
+            note_id: row.get(1)?,
+            ord: row.get(2)?,
+            ease: row.get(3)?,
+            time_taken_ms: row.get(4)?,
         })
-        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    })?;
 
     let mut answers = Vec::new();
     for row in rows {
-        answers.push(row.map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?);
+        answers.push(row?);
     }
 
     Ok(answers)
@@ -134,11 +125,10 @@ pub struct BufferStats {
 #[uniffi::export]
 pub fn buffered_answer_stats() -> Result<BufferStats, CoreError> {
     let conn = get_db_connection()?;
-    let (count, oldest): (i64, Option<i64>) = conn
-        .query_row("SELECT COUNT(*), MIN(created_at) FROM buffered_answers", [], |row| {
+    let (count, oldest): (i64, Option<i64>) =
+        conn.query_row("SELECT COUNT(*), MIN(created_at) FROM buffered_answers", [], |row| {
             Ok((row.get(0)?, row.get(1)?))
-        })
-        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+        })?;
     let oldest_age_secs = oldest.map_or(0, |t| (unix_secs() - t).max(0));
     Ok(BufferStats { count: count as i32, oldest_age_secs })
 }
@@ -149,24 +139,20 @@ pub fn buffered_answer_stats() -> Result<BufferStats, CoreError> {
 pub fn average_answer_time_ms() -> Result<Option<i64>, CoreError> {
     let conn = get_db_connection()?;
     // AVG over no rows is SQL NULL, which maps cleanly to None via Option<f64>.
-    let avg: Option<f64> = conn
-        .query_row("SELECT AVG(time_taken_ms) FROM buffered_answers", [], |row| row.get(0))
-        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    let avg: Option<f64> =
+        conn.query_row("SELECT AVG(time_taken_ms) FROM buffered_answers", [], |row| row.get(0))?;
     Ok(avg.map(|a| a.round() as i64))
 }
 
 #[uniffi::export]
 pub fn remove_buffered_answers(ids: Vec<String>) -> Result<(), CoreError> {
     let mut conn = get_db_connection()?;
-    let tx = conn
-        .transaction()
-        .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    let tx = conn.transaction()?;
 
     for id in ids {
-        tx.execute("DELETE FROM buffered_answers WHERE id = ?1", params![id])
-            .map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+        tx.execute("DELETE FROM buffered_answers WHERE id = ?1", params![id])?;
     }
 
-    tx.commit().map_err(|e| CoreError::DatabaseError { error_message: e.to_string() })?;
+    tx.commit()?;
     Ok(())
 }
