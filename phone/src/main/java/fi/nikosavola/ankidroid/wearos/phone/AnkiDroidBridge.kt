@@ -377,27 +377,33 @@ class AnkiDroidBridge(private val context: Context) {
     // treated as transient and kept buffered for a later retry, so orphaned answers can't pile up.
     val settledIds = mutableListOf<String>()
     var applied = 0
-    var orphaned = 0
     val contentResolver: ContentResolver = context.contentResolver
 
-    for (answer in answers) {
+    // Drain the buffer in the scheduler's presentation order. The v3 backend answers whatever card
+    // the scheduler currently presents (the update uses a null selection), so we prime the scheduler,
+    // read the current card, and apply ONLY the buffered answer for that exact (note_id, ord). If the
+    // scheduler's order diverges from the buffer - a card relearned within one session (Again then
+    // Good), or an out-of-order buffer - blindly updating would grade the WRONG card. Answers we
+    // can't place this pass stay buffered for a later sync instead. Priming is also required for
+    // correctness: a bare update() no-ops on the rslib/v3 backend until a schedule query has reset
+    // the scheduler and rebuilt its queue (emulator-verified: query-then-update graduates the card,
+    // reps++ and a revlog row; a bare update leaves it due). Each iteration applies one answer or
+    // stops, so the loop is bounded by the buffer size.
+    val remaining = answers.toMutableList()
+    while (remaining.isNotEmpty()) {
+      val current = primeScheduler(contentResolver) ?: break
+      val idx = remaining.indexOfFirst { it.noteId == current.first && it.ord == current.second }
+      if (idx < 0) {
+        // The scheduler is presenting a card we have no buffered answer for; applying any of ours now
+        // would grade the wrong card. Keep the rest buffered and retry on a later sync.
+        Log.i(TAG, "Scheduler on note ${current.first}/${current.second} (not buffered); stopping.")
+        break
+      }
+      val answer = remaining[idx]
       try {
-        // Prime the scheduler BEFORE answering. A bare update() on ReviewInfo silently no-ops on the
-        // rslib/v3 backend (returns rows>0 but the answerCard call throws internally and is
-        // swallowed) unless a schedule query has first reset the scheduler and built its queue.
-        // Verified on an emulator: bare update leaves the card due (reps=0, no revlog), whereas
-        // query-then-update graduates it (reps++, revlog row, card leaves the due queue). Mirrors
-        // AnkiDroid's own ContentProviderTest, which fetches from the scheduler before answering.
-        //
-        // Known constraint (emulator-verified): the v3 backend only answers the card the scheduler
-        // currently presents, so answers must be applied in the scheduler's presentation order.
-        // That matches the normal flow (the watch batch is fetched in that order and graded/buffered
-        // in order, and this loop replays them in order). Out-of-order answers, or a second answer
-        // for the same card relearned in one session, may not all land - see TODO.md.
-        primeScheduler(contentResolver)
-
-        // Answer a card via FlashCardsContract.ReviewInfo: the fields go in ContentValues with a
-        // null selection. The provider calls the real scheduler (col.sched.answerCard).
+        // Answer via FlashCardsContract.ReviewInfo: fields in ContentValues, null selection. The
+        // provider calls the real scheduler (col.sched.answerCard) on the current card, which we've
+        // just confirmed is this answer's card.
         val values =
           ContentValues().apply {
             put(COL_REVIEW_NOTE_ID, answer.noteId)
@@ -406,40 +412,52 @@ class AnkiDroidBridge(private val context: Context) {
             put(COL_REVIEW_TIME_TAKEN, answer.timeTakenMs)
           }
         val rowsUpdated = contentResolver.update(SCHEDULE_URI, values, null, null)
+        remaining.removeAt(idx)
         settledIds.add(answer.id)
         if (rowsUpdated > 0) {
           applied++
         } else {
-          orphaned++
-          Log.w(TAG, "Answer for note ${answer.noteId} matched no card; dropping it.")
+          // Matched the current card but nothing was written (already answered / removed): terminal,
+          // so it can't pile up.
+          Log.w(TAG, "Answer for note ${answer.noteId} matched the current card but wrote 0 rows.")
         }
       } catch (e: Exception) {
         Log.e(
           TAG,
-          "Transient failure writing note ${answer.noteId}; keeping for retry: ${e.message}",
+          "Transient failure writing note ${answer.noteId}; keeping it + the rest for retry: " +
+            "${e.message}",
           e,
         )
+        break
       }
     }
 
-    Log.i(
-      TAG,
-      "Write-back: $applied applied, $orphaned dropped (no match), " +
-        "${answers.size - settledIds.size} kept for retry.",
-    )
+    Log.i(TAG, "Write-back: $applied applied, ${remaining.size} kept for retry/later.")
     return settledIds
   }
 
   /**
-   * Reset AnkiDroid's scheduler by querying the schedule URI. The returned cursor is discarded; the
-   * side effect (the provider calling col.sched.reset and rebuilding the review queue) is what makes
-   * the following ReviewInfo update actually answer the card. Without it the update no-ops.
+   * Reset AnkiDroid's scheduler by querying the schedule URI (the side effect - col.sched.reset +
+   * rebuilding the review queue - is what makes the following ReviewInfo update actually answer the
+   * card; without it the update no-ops), and return the card the scheduler now presents as
+   * (note_id, ord), or null if none is due / the query failed. The caller answers only the buffered
+   * answer matching this card, so it never grades the wrong one.
    */
-  private fun primeScheduler(contentResolver: ContentResolver) {
-    try {
-      contentResolver.query(SCHEDULE_URI, null, null, null, null)?.close()
+  private fun primeScheduler(contentResolver: ContentResolver): Pair<Long, Int>? {
+    return try {
+      contentResolver.query(SCHEDULE_URI, null, null, null, null)?.use { cursor ->
+        if (!cursor.moveToFirst()) return null
+        val noteIdIdx = cursor.getColumnIndex(COL_NOTE_ID)
+        val ordIdx = cursor.getColumnIndex(COL_CARD_ORD)
+        if (noteIdIdx < 0 || ordIdx < 0) {
+          null
+        } else {
+          cursor.getLong(noteIdIdx) to cursor.getInt(ordIdx)
+        }
+      }
     } catch (e: Exception) {
-      Log.w(TAG, "Scheduler prime query failed; the next answer may not persist: ${e.message}")
+      Log.w(TAG, "Scheduler prime query failed; skipping write-back this pass: ${e.message}")
+      null
     }
   }
 
