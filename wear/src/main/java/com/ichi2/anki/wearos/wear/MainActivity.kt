@@ -10,6 +10,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.ScrollableState
@@ -106,9 +107,9 @@ class MainActivity : ComponentActivity() {
   // path; the physical back button and the up row pop it one level.
   private var deckFolderPath by mutableStateOf("")
 
-  // Decks downloaded to the watch (switchable offline) and the full list known from the phone.
-  private var cachedDecks by mutableStateOf<List<DeckCache.CachedDeck>>(emptyList())
-  private var knownDecks by mutableStateOf<List<Pair<Long, String>>>(emptyList())
+  // Deck-list + settings state lives in the ViewModel (survives config changes); this Activity stays
+  // the review/sync controller (live session, TTS, Data Layer, receiver).
+  private val vm: WatchViewModel by viewModels()
 
   // Deck the user tapped to download; loaded automatically once its batch arrives from the phone.
   // Compose state so the UI can show a sync-progress arc while a download is in flight.
@@ -127,7 +128,7 @@ class MainActivity : ComponentActivity() {
         Log.d(TAG, "Sync broadcast received: ${intent?.action}")
         when (intent?.action) {
           WearSyncService.ACTION_BATCH_UPDATED -> {
-            loadDecks()
+            vm.loadDecks()
             val arrived = intent.getLongExtra(WearSyncService.EXTRA_DECK_ID, -1L)
             val pending = pendingDeckId
             if (
@@ -145,7 +146,7 @@ class MainActivity : ComponentActivity() {
             updateOutstandingCount()
           }
           WearSyncService.ACTION_DECKS_UPDATED -> {
-            loadDecks()
+            vm.loadDecks()
           }
         }
       }
@@ -185,7 +186,7 @@ class MainActivity : ComponentActivity() {
     speechRate = WatchSettings.speechRate(this)
 
     // 4. Load the list of decks (cached locally + known from the phone). Start on the picker.
-    loadDecks()
+    vm.loadDecks()
     updateOutstandingCount()
 
     // 5. Register Receiver
@@ -214,58 +215,6 @@ class MainActivity : ComponentActivity() {
   private fun clearSession() {
     reviewSession?.destroy()
     reviewSession = null
-  }
-
-  /**
-   * Refresh both the locally-downloaded decks and the full deck list synced from the phone. Reading
-   * + Rust-deserializing every cached deck (DeckCache.listCached) is real I/O, so do it off the
-   *   main thread and publish the Compose state back on the main thread.
-   */
-  private fun loadDecks() {
-    scope.launch {
-      val cached = withContext(Dispatchers.IO) { DeckCache.listCached(this@MainActivity) }
-      val known =
-        withContext(Dispatchers.IO) {
-          try {
-            val cacheFile = File(filesDir, "decks_cache.txt")
-            if (cacheFile.exists()) {
-              cacheFile
-                .readText(Charsets.UTF_8)
-                .split("\n")
-                .filter { it.isNotEmpty() }
-                .map {
-                  val parts = it.split(":", limit = 2)
-                  Pair(parts[0].toLong(), parts.getOrElse(1) { "Deck ${parts[0]}" })
-                }
-            } else {
-              emptyList()
-            }
-          } catch (e: Exception) {
-            Log.e(TAG, "Failed to load decks list: ${e.message}", e)
-            emptyList()
-          }
-        }
-      cachedDecks = cached
-      knownDecks = known
-      Log.d(TAG, "Loaded ${cached.size} cached decks, ${known.size} known decks.")
-    }
-  }
-
-  /**
-   * The picker list: every known deck plus any cached deck, annotated with its downloaded state.
-   */
-  private fun deckEntries(): List<DeckEntry> {
-    val cachedById = cachedDecks.associateBy { it.id }
-    val byId = LinkedHashMap<Long, DeckEntry>()
-    for ((id, name) in knownDecks) {
-      byId[id] = DeckEntry(id, name, cachedById[id]?.cardCount)
-    }
-    for (deck in cachedDecks) {
-      if (!byId.containsKey(deck.id)) {
-        byId[deck.id] = DeckEntry(deck.id, deck.name, deck.cardCount)
-      }
-    }
-    return byId.values.toList()
   }
 
   /** Parent of a `::` deck path; "" when already at a top-level segment. */
@@ -308,7 +257,7 @@ class MainActivity : ComponentActivity() {
 
   /** Pick a deck: open it offline if cached, otherwise download it from the phone. */
   private fun selectDeck(deckId: Long) {
-    if (cachedDecks.any { it.id == deckId }) {
+    if (vm.cachedDecks.any { it.id == deckId }) {
       loadDeckSession(deckId)
     } else {
       requestDeckFromPhone(deckId)
@@ -629,10 +578,10 @@ class MainActivity : ComponentActivity() {
   fun WelcomeScreen() {
     val listState = rememberTransformingLazyColumnState()
     val transformSpec = rememberEdgeMorphSpec()
-    // Memoize on the underlying deck state, not on a freshly-built list: deckEntries() returns a new
+    // Memoize on the underlying deck state, not on a freshly-built list: vm.deckEntries() returns a new
     // List each call, so keying the remembers on it would defeat them and re-run the deckChildren FFI
     // + the maps on every recomposition. Now they recompute only when the decks/folder actually change.
-    val entries = remember(cachedDecks, knownDecks) { deckEntries() }
+    val entries = remember(vm.cachedDecks, vm.knownDecks) { vm.deckEntries() }
     val countById = remember(entries) { entries.associate { it.id to it.cardCount } }
     // Resolve one folder level from the flat deck list in Rust; card counts stay a UI concern here.
     val level =
@@ -736,7 +685,7 @@ class MainActivity : ComponentActivity() {
           EdgeButton(
             onClick = {
               requestDecksFromPhone()
-              loadDecks()
+              vm.loadDecks()
             },
             buttonSize = EdgeButtonSize.Medium,
           ) {
