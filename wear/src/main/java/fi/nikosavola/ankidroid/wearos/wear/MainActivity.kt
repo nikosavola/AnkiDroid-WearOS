@@ -268,9 +268,6 @@ class MainActivity : ComponentActivity() {
     return byId.values.toList()
   }
 
-  /** Flatten the known/cached decks into the id+name pairs the Rust folder resolver expects. */
-  private fun deckInfos(): List<DeckInfo> = deckEntries().map { DeckInfo(it.id, it.name) }
-
   /** Parent of a `::` deck path; "" when already at a top-level segment. */
   private fun parentFolder(path: String): String = path.substringBeforeLast("::", "")
 
@@ -632,10 +629,16 @@ class MainActivity : ComponentActivity() {
   fun WelcomeScreen() {
     val listState = rememberTransformingLazyColumnState()
     val transformSpec = rememberEdgeMorphSpec()
-    val entries = deckEntries()
+    // Memoize on the underlying deck state, not on a freshly-built list: deckEntries() returns a new
+    // List each call, so keying the remembers on it would defeat them and re-run the deckChildren FFI
+    // + the maps on every recomposition. Now they recompute only when the decks/folder actually change.
+    val entries = remember(cachedDecks, knownDecks) { deckEntries() }
     val countById = remember(entries) { entries.associate { it.id to it.cardCount } }
     // Resolve one folder level from the flat deck list in Rust; card counts stay a UI concern here.
-    val level = remember(entries, deckFolderPath) { deckChildren(deckInfos(), deckFolderPath) }
+    val level =
+      remember(entries, deckFolderPath) {
+        deckChildren(entries.map { DeckInfo(it.id, it.name) }, deckFolderPath)
+      }
     // Reset scroll to the top whenever we descend into or pop out of a folder.
     LaunchedEffect(deckFolderPath) { listState.scrollToItem(0) }
 
