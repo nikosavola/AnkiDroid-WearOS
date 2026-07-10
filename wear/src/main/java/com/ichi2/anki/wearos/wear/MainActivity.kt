@@ -457,26 +457,11 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** Compact "5s"/"12m"/"3h"/"2d" age for the oldest un-synced review. */
-  private fun humanAge(secs: Long): String =
-    when {
-      secs < 60 -> "${secs}s"
-      secs < 3600 -> "${secs / 60}m"
-      secs < 86_400 -> "${secs / 3600}h"
-      else -> "${secs / 86_400}d"
-    }
-
   /**
    * Epoch seconds at the device's local midnight today (passed to the Rust "reviews today" count).
    */
   private fun todayMidnightSecs(): Long =
     java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond()
-
-  /** Human review duration: "45s" under a minute, else "3m 20s". */
-  private fun formatDuration(ms: Long): String {
-    val totalSecs = ms / 1000
-    return if (totalSecs < 60) "${totalSecs}s" else "${totalSecs / 60}m ${totalSecs % 60}s"
-  }
 
   private fun updateOutstandingCount() {
     scope.launch(Dispatchers.IO) {
