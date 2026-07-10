@@ -7,8 +7,6 @@ import android.content.IntentFilter
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.util.Log
-import android.view.Gravity
-import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -25,15 +23,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.text.HtmlCompat
 import androidx.wear.compose.foundation.AnchorType
 import androidx.wear.compose.foundation.CurvedDirection
 import androidx.wear.compose.foundation.CurvedLayout
@@ -457,26 +452,11 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /** Compact "5s"/"12m"/"3h"/"2d" age for the oldest un-synced review. */
-  private fun humanAge(secs: Long): String =
-    when {
-      secs < 60 -> "${secs}s"
-      secs < 3600 -> "${secs / 60}m"
-      secs < 86_400 -> "${secs / 3600}h"
-      else -> "${secs / 86_400}d"
-    }
-
   /**
    * Epoch seconds at the device's local midnight today (passed to the Rust "reviews today" count).
    */
   private fun todayMidnightSecs(): Long =
     java.time.LocalDate.now().atStartOfDay(java.time.ZoneId.systemDefault()).toEpochSecond()
-
-  /** Human review duration: "45s" under a minute, else "3m 20s". */
-  private fun formatDuration(ms: Long): String {
-    val totalSecs = ms / 1000
-    return if (totalSecs < 60) "${totalSecs}s" else "${totalSecs / 60}m ${totalSecs % 60}s"
-  }
 
   private fun updateOutstandingCount() {
     scope.launch(Dispatchers.IO) {
@@ -1183,38 +1163,11 @@ class MainActivity : ComponentActivity() {
           contentScale = androidx.compose.ui.layout.ContentScale.Fit,
         )
       } else {
-        HtmlText(html = fallbackHtml, modifier = modifier)
+        HtmlText(html = fallbackHtml, fontScale = fontScale, cardFont = cardFont, modifier = modifier)
       }
     } else {
-      HtmlText(html = fallbackHtml, modifier = modifier)
+      HtmlText(html = fallbackHtml, fontScale = fontScale, cardFont = cardFont, modifier = modifier)
     }
-  }
-
-  /**
-   * Renders sanitized card HTML (bold, colors, line breaks, etc.) via HtmlCompat in a TextView.
-   * Wear OS has no WebView, so this is the richest safe renderer available. Text color follows the
-   * active theme (so it stays legible in light mode) and size/typeface follow the user's settings.
-   */
-  @Composable
-  fun HtmlText(html: String, modifier: Modifier = Modifier) {
-    val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
-    val scale = fontScale
-    val font = cardFont
-    AndroidView(
-      modifier = modifier,
-      factory = { ctx -> TextView(ctx).apply { gravity = Gravity.CENTER } },
-      update = { tv ->
-        tv.setTextColor(textColor)
-        tv.textSize = 16f * scale
-        tv.typeface =
-          when (font) {
-            WatchSettings.CardFont.SERIF -> android.graphics.Typeface.SERIF
-            WatchSettings.CardFont.MONOSPACE -> android.graphics.Typeface.MONOSPACE
-            WatchSettings.CardFont.DEFAULT -> android.graphics.Typeface.DEFAULT
-          }
-        tv.text = HtmlCompat.fromHtml(html, HtmlCompat.FROM_HTML_MODE_COMPACT)
-      },
-    )
   }
 
   /** "Learn new cards" chip that expands into a 5/10/20 chooser; shared by Deck and Finished. */
