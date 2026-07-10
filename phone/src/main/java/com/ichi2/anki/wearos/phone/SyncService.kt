@@ -133,8 +133,36 @@ class SyncService : Service() {
       .setContentIntent(contentIntent)
       .setOngoing(ongoing)
       .setOnlyAlertOnce(true)
-      .apply { if (ongoing) setProgress(100, percent, indeterminate) else setProgress(0, 0, false) }
+      // Classic linear bar for pre-Android-16 shades; ProgressStyle below renders the segmented
+      // Android 16 bar on API 36+ and no-ops beneath it, so both are set on the ongoing notification.
+      .apply {
+        if (ongoing) {
+          setProgress(100, percent, indeterminate)
+          setStyle(progressStyle(percent, indeterminate))
+        } else {
+          setProgress(0, 0, false)
+        }
+      }
       .build()
+  }
+
+  /**
+   * Android 16 segmented progress bar. The two segments mirror [syncProgressPercent]'s phases -
+   * setup (0-15%) then the per-deck push (15-100%) - so the split in the bar lines up with where the
+   * work actually is. Renders on API 36+; the NotificationCompat wrapper degrades to nothing below,
+   * where the classic [setProgress] bar carries the display.
+   */
+  private fun progressStyle(percent: Int, indeterminate: Boolean): NotificationCompat.ProgressStyle {
+    val style = NotificationCompat.ProgressStyle()
+    if (indeterminate) return style.setProgressIndeterminate(true)
+    return style
+      .setProgressSegments(
+        listOf(
+          NotificationCompat.ProgressStyle.Segment(15).setColor(0xFF80CBC4.toInt()),
+          NotificationCompat.ProgressStyle.Segment(85).setColor(0xFF66BB6A.toInt()),
+        )
+      )
+      .setProgress(percent)
   }
 
   private fun notify(n: Notification) {
