@@ -45,6 +45,9 @@ pub fn clean_html(raw_html: String) -> String {
             match name.as_str() {
                 "rt" => clean.push(if closing { ')' } else { '(' }),
                 "rp" => in_rp = !closing,
+                // Table cells: separate with a space so a two-column vocab row reads "語 reading",
+                // not "語reading". The row itself breaks on </tr> below.
+                "td" | "th" if closing => clean.push(' '),
                 // Block-level elements Anki uses to lay out lines (it wraps most content in <div>s):
                 // break the line when they close so text/TTS doesn't run together.
                 "div" | "li" | "tr" | "blockquote" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
