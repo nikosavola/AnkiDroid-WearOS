@@ -151,9 +151,15 @@ pub fn html_for_display(raw_html: String) -> String {
 /// Anki emits question + `<hr id=answer>` + the answer, so return everything after that marker tag
 /// (or the whole string if it isn't present), which the watch then feeds through
 /// [`html_for_display`] / [`clean_html`].
+///
+/// The marker is usually unquoted (`id=answer`) but some emitters/templates quote it
+/// (`id="answer"` / `id='answer'`); accept all three so a quoted marker doesn't silently leave the
+/// whole back (question + answer) showing on the watch. Splits at the earliest marker found.
 #[uniffi::export]
 pub fn answer_html(back: String) -> String {
-    if let Some(marker) = back.find("id=answer")
+    let marker =
+        ["id=answer", "id=\"answer\"", "id='answer'"].iter().filter_map(|m| back.find(m)).min();
+    if let Some(marker) = marker
         && let Some(rel_end) = back[marker..].find('>')
     {
         return back[marker + rel_end + 1..].to_string();
