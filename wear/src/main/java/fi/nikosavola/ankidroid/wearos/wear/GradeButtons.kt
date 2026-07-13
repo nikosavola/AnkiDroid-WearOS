@@ -2,6 +2,7 @@ package fi.nikosavola.ankidroid.wearos.wear
 
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,6 +12,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.AnchorType
@@ -56,7 +61,10 @@ fun GradeEdgeButtons(
   val neutral = MaterialTheme.colorScheme.onSurfaceVariant
   Box(modifier = Modifier.fillMaxSize()) {
     // Visual layer: curved pills sized to their text (so the label is centered inside each pill).
+    // Decorative for a11y - curvedText would otherwise expose each label as its own node, duplicating
+    // the accessible overlay below; the overlay is the single labelled + activatable representation.
     CurvedLayout(
+      modifier = Modifier.clearAndSetSemantics {},
       anchor = 90f,
       anchorType = AnchorType.Center,
       angularDirection = CurvedDirection.Angular.Reversed,
@@ -89,6 +97,26 @@ fun GradeEdgeButtons(
               }
             }
       )
+      // Accessibility: the pointerInput strip is invisible to TalkBack, so overlay one focusable,
+      // activatable element per grade zone (same left->right order + equal widths as the tap
+      // mapping). They carry no pointer input, so sighted taps still fall through to the strip above.
+      Row(
+        modifier =
+          Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(TAP_STRIP_FRACTION)
+      ) {
+        grades.forEach { g ->
+          Box(
+            modifier =
+              Modifier.weight(1f).fillMaxHeight().semantics {
+                contentDescription = g.text
+                onClick(label = "Grade ${g.text}") {
+                  onGrade(g.ease)
+                  true
+                }
+              }
+          )
+        }
+      }
     }
   }
 }

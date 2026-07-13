@@ -5,9 +5,12 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
@@ -99,6 +102,19 @@ class GradeEdgeButtonsTest {
     assertEquals(1, graded)
     tapAtFraction(0.999f)
     assertEquals(4, graded)
+  }
+
+  @Test
+  fun accessibility_eachGradeIsAFocusableActivatableElement() {
+    var graded: Int? = null
+    setButtons(4) { graded = it }
+    // TalkBack sees one labelled element per grade (the pointerInput strip alone is invisible to it).
+    listOf("Again", "Hard", "Good", "Easy").forEach {
+      composeRule.onNodeWithContentDescription(it).assertExists()
+    }
+    // Activating one via its semantics onClick (what TalkBack invokes) grades that ease.
+    composeRule.onNodeWithContentDescription("Good").performSemanticsAction(SemanticsActions.OnClick)
+    assertEquals(3, graded)
   }
 
   @Test
