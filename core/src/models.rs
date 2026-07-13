@@ -27,6 +27,10 @@ pub struct WearosAnswer {
     pub ord: i32,
     pub ease: i32,
     pub time_taken_ms: i64,
+    /// Deck this card was reviewed in, so the phone can select the right deck before answering when a
+    /// buffer spans multiple decks (reviewed offline, synced together). 0 = unknown (older buffers /
+    /// cross-version wire): the phone falls back to whatever deck AnkiDroid currently has selected.
+    pub deck_id: i64,
 }
 
 /// A flat deck as AnkiDroid exposes it: an id plus a `::`-separated full name. Fed to

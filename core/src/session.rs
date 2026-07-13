@@ -56,6 +56,9 @@ struct GradeEvent {
 #[derive(uniffi::Object)]
 pub struct ReviewSession {
     deck_name: String,
+    /// The deck being reviewed, stamped onto each answer so the phone can select the right deck at
+    /// write-back time even when a buffer spans several decks reviewed offline.
+    deck_id: i64,
     /// Number of distinct due cards the session started with; the denominator of the progress string.
     initial_total: usize,
     /// Remaining cards, front = current. Learning-step grades push the card to the back.
@@ -75,6 +78,7 @@ impl ReviewSession {
             batch.cards.into_iter().map(|card| QueuedCard { card, learn_requeues: 0 }).collect();
         Self {
             deck_name: batch.deck_name,
+            deck_id: batch.deck_id,
             initial_total: queue.len(),
             queue: Mutex::new(queue),
             is_revealed: Mutex::new(false),
@@ -123,7 +127,14 @@ impl ReviewSession {
 
         let card = &front.card;
         let id = format!("{}_{}_{}", card.id, card.ord, unix_millis());
-        let answer = WearosAnswer { id, note_id: card.note_id, ord: card.ord, ease, time_taken_ms };
+        let answer = WearosAnswer {
+            id,
+            note_id: card.note_id,
+            ord: card.ord,
+            ease,
+            time_taken_ms,
+            deck_id: self.deck_id,
+        };
 
         // Buffer locally if a DB is configured (the answer still reaches AnkiDroid on sync).
         if get_db_connection().is_ok() {

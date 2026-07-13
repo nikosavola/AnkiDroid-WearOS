@@ -16,7 +16,7 @@ import uniffi.wearos_core.WearosAnswer
 @RunWith(RobolectricTestRunner::class)
 class WearSyncServiceTest {
   private fun answer(id: String) =
-    WearosAnswer(id = id, noteId = 111L, ord = 0, ease = 3, timeTakenMs = 1000L)
+    WearosAnswer(id = id, noteId = 111L, ord = 0, ease = 3, timeTakenMs = 1000L, deckId = 0L)
 
   @Test
   fun emptyBatch_clearsNothing_andNeverCallsWriteBack() {

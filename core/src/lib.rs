@@ -379,6 +379,7 @@ mod tests {
                 ord: 0,
                 ease: 1,
                 time_taken_ms: 4200,
+                deck_id: 42,
             },
             WearosAnswer {
                 id: "c2_1_2000".to_string(),
@@ -386,6 +387,7 @@ mod tests {
                 ord: 1,
                 ease: 4,
                 time_taken_ms: 900,
+                deck_id: 99,
             },
         ];
         let restored = deserialize_answers(serialize_answers(answers).unwrap()).unwrap();
@@ -394,8 +396,10 @@ mod tests {
         assert_eq!(restored[0].note_id, 11);
         assert_eq!(restored[0].ease, 1);
         assert_eq!(restored[0].time_taken_ms, 4200);
+        assert_eq!(restored[0].deck_id, 42, "deck_id must survive the wire");
         assert_eq!(restored[1].ord, 1);
         assert_eq!(restored[1].ease, 4);
+        assert_eq!(restored[1].deck_id, 99);
     }
 
     #[test]
@@ -707,6 +711,7 @@ mod tests {
                 ord: 0,
                 ease: 3,
                 time_taken_ms: 1000,
+                deck_id: 0,
             })
             .unwrap();
         }
@@ -757,6 +762,7 @@ mod tests {
                 ord: 0,
                 ease: 3,
                 time_taken_ms: *ms,
+                deck_id: 0,
             })
             .unwrap();
         }
@@ -784,6 +790,7 @@ mod tests {
             ord: 0,
             ease: 3,
             time_taken_ms: 1000,
+            deck_id: 0,
         })
         .unwrap();
         save_answer(WearosAnswer {
@@ -792,6 +799,7 @@ mod tests {
             ord: 0,
             ease: 2,
             time_taken_ms: 2000,
+            deck_id: 0,
         })
         .unwrap();
         let stats = buffered_answer_stats().unwrap();
@@ -818,7 +826,14 @@ mod tests {
     }
 
     fn sample_answer() -> WearosAnswer {
-        WearosAnswer { id: "s".to_string(), note_id: 1, ord: 0, ease: 3, time_taken_ms: 1000 }
+        WearosAnswer {
+            id: "s".to_string(),
+            note_id: 1,
+            ord: 0,
+            ease: 3,
+            time_taken_ms: 1000,
+            deck_id: 0,
+        }
     }
 
     #[test]
@@ -956,6 +971,7 @@ mod tests {
             ord: 0,
             ease: 3,
             time_taken_ms: 4500,
+            deck_id: 555,
         };
         let ans2 = WearosAnswer {
             id: "id_2".to_string(),
@@ -963,6 +979,7 @@ mod tests {
             ord: 1,
             ease: 1,
             time_taken_ms: 12000,
+            deck_id: 666,
         };
 
         save_answer(ans1).unwrap();
@@ -972,6 +989,8 @@ mod tests {
         assert_eq!(buffered.len(), 2);
         assert_eq!(buffered[0].id, "id_1");
         assert_eq!(buffered[1].id, "id_2");
+        assert_eq!(buffered[0].deck_id, 555, "deck_id must persist through the buffer");
+        assert_eq!(buffered[1].deck_id, 666);
 
         remove_buffered_answers(vec!["id_1".to_string()]).unwrap();
         let buffered_after = get_buffered_answers().unwrap();
@@ -979,6 +998,41 @@ mod tests {
         assert_eq!(buffered_after[0].id, "id_2");
 
         // Clean up
+        let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn test_buffer_migration_adds_deck_id_to_legacy_db() {
+        let _guard = db_test_guard();
+        let db_path =
+            std::env::temp_dir().join("test_wearos_legacy.db").to_string_lossy().to_string();
+        let _ = std::fs::remove_file(&db_path);
+
+        // Simulate a buffer created before deck_id existed: the old schema + a queued row.
+        {
+            let conn = rusqlite::Connection::open(&db_path).unwrap();
+            conn.execute(
+                "CREATE TABLE buffered_answers (id TEXT PRIMARY KEY, note_id INTEGER NOT NULL, \
+                 card_ord INTEGER NOT NULL, ease INTEGER NOT NULL, time_taken_ms INTEGER NOT NULL, \
+                 created_at INTEGER NOT NULL)",
+                [],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO buffered_answers (id, note_id, card_ord, ease, time_taken_ms, created_at) \
+                 VALUES ('legacy', 7, 0, 3, 1000, 1)",
+                [],
+            )
+            .unwrap();
+        }
+
+        // init_database must ADD COLUMN deck_id without dropping the pre-existing row.
+        init_database(db_path.clone()).unwrap();
+        let buffered = get_buffered_answers().unwrap();
+        assert_eq!(buffered.len(), 1, "legacy row must survive the migration");
+        assert_eq!(buffered[0].id, "legacy");
+        assert_eq!(buffered[0].deck_id, 0, "legacy rows default to unknown deck (0)");
+
         let _ = std::fs::remove_file(&db_path);
     }
 }
