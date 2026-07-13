@@ -12,8 +12,23 @@ import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
+import uniffi.wearos_core.WearosAnswer
 import uniffi.wearos_core.deserializeAnswers
 import uniffi.wearos_core.serializeDueBatch
+
+/**
+ * Decide which answer ids to clear from the watch buffer for a received batch. Empty batch -> clear
+ * nothing. Otherwise the settled ids from [writeBack] (applied, or terminally unmatched). A transient
+ * write failure returns fewer/no ids so those stay buffered for a retry; crucially, when nothing
+ * settles the result is empty, so the caller sends NO clear_answers - clearing a grade that wasn't
+ * applied would silently drop the user's review. Extracted from [WearSyncService.processAnswers] so
+ * this guard is unit-testable without the GMS node/message clients.
+ */
+internal fun settledIdsToClear(
+  answers: List<WearosAnswer>,
+  readOnly: Boolean,
+  writeBack: (List<WearosAnswer>, Boolean) -> List<String>,
+): List<String> = if (answers.isEmpty()) emptyList() else writeBack(answers, readOnly)
 
 class WearSyncService : WearableListenerService() {
   companion object {
@@ -194,30 +209,25 @@ class WearSyncService : WearableListenerService() {
       val answers = deserializeAnswers(bytes)
       Log.i(TAG, "Received ${answers.size} answers from Wear OS watch.")
 
-      if (answers.isNotEmpty()) {
-        val readOnly =
-          getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
-            .getBoolean(KEY_READ_ONLY, false)
-        // Returns the ids that reached a terminal state (applied or no-matching-card); transient
-        // failures are omitted so they stay buffered for a later retry. See writeAnswersBack.
-        val settledIds = bridge.writeAnswersBack(answers, readOnly = readOnly)
+      val readOnly =
+        getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE).getBoolean(KEY_READ_ONLY, false)
+      val settledIds = settledIdsToClear(answers, readOnly) { a, r -> bridge.writeAnswersBack(a, r) }
 
-        if (settledIds.isNotEmpty()) {
-          val idsString = settledIds.joinToString(",")
-          val nodeClient = Wearable.getNodeClient(this@WearSyncService)
-          val messageClient = Wearable.getMessageClient(this@WearSyncService)
+      if (settledIds.isNotEmpty()) {
+        val idsString = settledIds.joinToString(",")
+        val nodeClient = Wearable.getNodeClient(this@WearSyncService)
+        val messageClient = Wearable.getMessageClient(this@WearSyncService)
 
-          val nodes = nodeClient.connectedNodes.await()
-          Log.d(TAG, "Broadcasting clear_answers to ${nodes.size} nodes.")
-          for (node in nodes) {
-            try {
-              messageClient
-                .sendMessage(node.id, PATH_CLEAR_ANSWERS, idsString.toByteArray())
-                .await()
-              Log.d(TAG, "Sent clear_answers confirmation to node: ${node.displayName}")
-            } catch (e: Exception) {
-              Log.e(TAG, "Failed to send clear_answers to node ${node.id}: ${e.message}")
-            }
+        val nodes = nodeClient.connectedNodes.await()
+        Log.d(TAG, "Broadcasting clear_answers to ${nodes.size} nodes.")
+        for (node in nodes) {
+          try {
+            messageClient
+              .sendMessage(node.id, PATH_CLEAR_ANSWERS, idsString.toByteArray())
+              .await()
+            Log.d(TAG, "Sent clear_answers confirmation to node: ${node.displayName}")
+          } catch (e: Exception) {
+            Log.e(TAG, "Failed to send clear_answers to node ${node.id}: ${e.message}")
           }
         }
       }
