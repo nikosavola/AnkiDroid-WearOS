@@ -112,6 +112,15 @@ mod tests {
     }
 
     #[test]
+    fn test_clean_html_table_cells_are_space_separated() {
+        // Some note types lay vocab out in a table; cells must not run together, and rows break.
+        let html = "<table><tr><td>語</td><td>word</td></tr>\
+                    <tr><td>意味</td><td>meaning</td></tr></table>"
+            .to_string();
+        assert_eq!(clean_html(html), "語 word\n意味 meaning");
+    }
+
+    #[test]
     fn test_clean_html_font_and_color_tags_drop_to_text() {
         // Older note types wrap emphasis in <font>/<span style>; TTS/native text keeps just the text.
         let html = "<font color=\"red\"><b>重要</b></font>な<span style=\"color:#00f\">単語</span>"
