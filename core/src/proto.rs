@@ -103,6 +103,10 @@ struct AnswerPb {
     ease: i32,
     #[prost(int64, tag = "5")]
     time_taken_ms: i64,
+    // Additive field: an old encoder omits it (decodes to 0), an old decoder ignores it, so watch and
+    // phone stay wire-compatible across versions. 0 => unknown deck (phone falls back to selected).
+    #[prost(int64, tag = "6")]
+    deck_id: i64,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -119,6 +123,7 @@ impl From<WearosAnswer> for AnswerPb {
             ord: a.ord,
             ease: a.ease,
             time_taken_ms: a.time_taken_ms,
+            deck_id: a.deck_id,
         }
     }
 }
@@ -131,6 +136,7 @@ impl From<AnswerPb> for WearosAnswer {
             ord: a.ord,
             ease: a.ease,
             time_taken_ms: a.time_taken_ms,
+            deck_id: a.deck_id,
         }
     }
 }

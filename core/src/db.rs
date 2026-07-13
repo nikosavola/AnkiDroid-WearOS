@@ -20,10 +20,26 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
             card_ord INTEGER NOT NULL,
             ease INTEGER NOT NULL,
             time_taken_ms INTEGER NOT NULL,
-            created_at INTEGER NOT NULL
+            created_at INTEGER NOT NULL,
+            deck_id INTEGER NOT NULL DEFAULT 0
         )",
         [],
     )?;
+
+    // Migrate buffers created before deck_id existed: add the column (default 0 = unknown deck) so
+    // rows already queued on-device keep working. Guarded by a PRAGMA check since ADD COLUMN errors
+    // if it already exists (fresh DBs get it from CREATE TABLE above).
+    let has_deck_id = conn
+        .prepare("PRAGMA table_info(buffered_answers)")?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(Result::ok)
+        .any(|name| name == "deck_id");
+    if !has_deck_id {
+        conn.execute(
+            "ALTER TABLE buffered_answers ADD COLUMN deck_id INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
 
     // Append-only activity log for the "N reviewed today" counter. Independent of buffered_answers
     // so it survives sync-back clearing (buffered_answers is drained once the phone applies them).
@@ -56,15 +72,17 @@ pub fn save_answer(answer: WearosAnswer) -> Result<(), CoreError> {
     let now = unix_secs();
 
     conn.execute(
-        "INSERT OR REPLACE INTO buffered_answers (id, note_id, card_ord, ease, time_taken_ms, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT OR REPLACE INTO buffered_answers
+             (id, note_id, card_ord, ease, time_taken_ms, created_at, deck_id)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
         params![
             answer.id,
             answer.note_id,
             answer.ord,
             answer.ease,
             answer.time_taken_ms,
-            now
+            now,
+            answer.deck_id
         ],
     )?;
 
@@ -91,7 +109,8 @@ pub fn reviews_since(since_secs: i64) -> Result<i32, CoreError> {
 pub fn get_buffered_answers() -> Result<Vec<WearosAnswer>, CoreError> {
     let conn = get_db_connection()?;
     let mut stmt = conn.prepare(
-        "SELECT id, note_id, card_ord, ease, time_taken_ms FROM buffered_answers ORDER BY created_at ASC",
+        "SELECT id, note_id, card_ord, ease, time_taken_ms, deck_id
+         FROM buffered_answers ORDER BY created_at ASC",
     )?;
 
     let rows = stmt.query_map([], |row| {
@@ -101,6 +120,7 @@ pub fn get_buffered_answers() -> Result<Vec<WearosAnswer>, CoreError> {
             ord: row.get(2)?,
             ease: row.get(3)?,
             time_taken_ms: row.get(4)?,
+            deck_id: row.get(5)?,
         })
     })?;
 

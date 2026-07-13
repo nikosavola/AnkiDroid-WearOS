@@ -35,7 +35,7 @@ import uniffi.wearos_core.serializeAnswers
 @RunWith(RobolectricTestRunner::class)
 class AnswerSyncE2ETest {
   private fun answer(id: String, noteId: Long, ord: Int, ease: Int) =
-    WearosAnswer(id = id, noteId = noteId, ord = ord, ease = ease, timeTakenMs = 4200L)
+    WearosAnswer(id = id, noteId = noteId, ord = ord, ease = ease, timeTakenMs = 4200L, deckId = 0L)
 
   /** A schedule-query cursor presenting [noteId]/[ord] as the scheduler's current card. */
   private fun scheduleCursor(noteId: Long, ord: Int) =

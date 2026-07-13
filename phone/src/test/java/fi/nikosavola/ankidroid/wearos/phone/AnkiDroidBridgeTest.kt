@@ -122,7 +122,7 @@ class AnkiDroidBridgeTest {
   // are reported "settled" (safe to clear from the watch buffer) vs kept for retry.
 
   private fun answer(id: String, ease: Int, noteId: Long = 111L, ord: Int = 0) =
-    WearosAnswer(id = id, noteId = noteId, ord = ord, ease = ease, timeTakenMs = 4200L)
+    WearosAnswer(id = id, noteId = noteId, ord = ord, ease = ease, timeTakenMs = 4200L, deckId = 0L)
 
   /** A schedule-query cursor presenting [noteId]/[ord] as the current card (what primeScheduler reads). */
   private fun scheduleCursor(noteId: Long, ord: Int) =
@@ -172,7 +172,7 @@ class AnkiDroidBridgeTest {
     val settled =
       bridge(resolver)
         .writeAnswersBack(
-          listOf(WearosAnswer(id = "a1", noteId = 111L, ord = 2, ease = 3, timeTakenMs = 4200L)),
+          listOf(WearosAnswer(id = "a1", noteId = 111L, ord = 2, ease = 3, timeTakenMs = 4200L, deckId = 0L)),
           readOnly = false,
         )
 

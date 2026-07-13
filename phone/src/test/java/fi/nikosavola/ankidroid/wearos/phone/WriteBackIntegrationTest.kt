@@ -48,8 +48,8 @@ class WriteBackIntegrationTest {
       )
   }
 
-  private fun answer(id: String, noteId: Long, ord: Int, ease: Int) =
-    WearosAnswer(id = id, noteId = noteId, ord = ord, ease = ease, timeTakenMs = 3000L)
+  private fun answer(id: String, noteId: Long, ord: Int, ease: Int, deckId: Long = 0L) =
+    WearosAnswer(id = id, noteId = noteId, ord = ord, ease = ease, timeTakenMs = 3000L, deckId = deckId)
 
   /** Serialize on the watch side, deserialize on the phone side - the real Bluetooth payload. */
   private fun overTheWire(answers: List<WearosAnswer>): List<WearosAnswer> =
@@ -124,32 +124,66 @@ class WriteBackIntegrationTest {
     assertTrue("read-only must not touch the collection", provider.applied.isEmpty())
     assertEquals("head card still due", 111L, provider.headNoteId())
   }
+
+  @Test
+  fun drainsAcrossMultipleDecks_selectingEachBeforeAnswering() {
+    // The offline-durability case: two decks reviewed offline, buffered, then synced together. Each
+    // answer carries its deck_id, so write-back selects deck A, drains it, then selects deck B and
+    // drains it - both apply in one pass. Before deck_id, only the initially-selected deck's answer
+    // applied and the other lingered.
+    provider.seedDecks(mapOf(1783L to listOf(111L to 0), 1784L to listOf(222L to 0)))
+
+    val settled =
+      writeBack(listOf(answer("a1", 111L, 0, 3, deckId = 1783L), answer("a2", 222L, 0, 4, deckId = 1784L)))
+
+    assertEquals(listOf("a1", "a2"), settled)
+    assertEquals(listOf(Applied(111L, 0, 3), Applied(222L, 0, 4)), provider.applied)
+    assertTrue("both decks fully drained", provider.isEmpty())
+  }
+
+  @Test
+  fun unknownDeckId_fallsBackToTheSelectedDeck() {
+    // deck_id 0 (legacy/cross-version answer) must still apply against whatever deck is selected,
+    // preserving the pre-deck_id behaviour.
+    provider.seedDecks(mapOf(1783L to listOf(111L to 0)))
+    val settled = writeBack(listOf(answer("a1", 111L, 0, 3, deckId = 0L)))
+
+    assertEquals(listOf("a1"), settled)
+    assertEquals(listOf(Applied(111L, 0, 3)), provider.applied)
+  }
 }
 
 /** An answer the fake scheduler actually applied: which card, which ease. */
 data class Applied(val noteId: Long, val ord: Int, val ease: Int)
 
 /**
- * Minimal in-memory stand-in for AnkiDroid's schedule ContentProvider. Presents the head of a queue
- * on query (which also "primes" the scheduler) and answers it on update - but only if primed since
- * the last answer, mirroring the rslib/v3 backend where a bare update no-ops. Enough to drive
- * [AnkiDroidBridge.writeAnswersBack] end to end without a device.
+ * Minimal in-memory stand-in for AnkiDroid's schedule ContentProvider. Holds a per-deck queue and a
+ * selected-deck pointer: a `deckID=` query switches the selection (as AnkiDroid does); any query
+ * primes the selected deck's scheduler and presents its head card; update answers that head - but
+ * only if primed since the last answer, mirroring the rslib/v3 backend where a bare update no-ops.
+ * Enough to drive [AnkiDroidBridge.writeAnswersBack] - including its multi-deck selection - without a
+ * device.
  */
 class FakeAnkiSchedulerProvider : ContentProvider() {
-  private val queue = ArrayDeque<Pair<Long, Int>>()
+  private val decks = linkedMapOf<Long, ArrayDeque<Pair<Long, Int>>>()
+  private var selected: Long = 0
   private var primedSinceAnswer = false
   val applied = mutableListOf<Applied>()
 
-  fun seed(cards: List<Pair<Long, Int>>) {
-    queue.clear()
-    queue.addAll(cards)
+  /** Single-deck seed (deck id 0), for the tests that don't exercise deck selection. */
+  fun seed(cards: List<Pair<Long, Int>>) = seedDecks(mapOf(0L to cards))
+
+  fun seedDecks(deckCards: Map<Long, List<Pair<Long, Int>>>) {
+    decks.clear()
+    deckCards.forEach { (deckId, cards) -> decks[deckId] = ArrayDeque(cards) }
+    selected = deckCards.keys.firstOrNull() ?: 0
     applied.clear()
     primedSinceAnswer = false
   }
 
-  fun isEmpty() = queue.isEmpty()
+  fun isEmpty() = decks.values.all { it.isEmpty() }
 
-  fun headNoteId(): Long? = queue.firstOrNull()?.first
+  fun headNoteId(): Long? = decks[selected]?.firstOrNull()?.first
 
   override fun onCreate() = true
 
@@ -160,10 +194,14 @@ class FakeAnkiSchedulerProvider : ContentProvider() {
     selectionArgs: Array<out String>?,
     sortOrder: String?,
   ): Cursor {
-    // A schedule query resets/primes the scheduler and presents its current (head) card.
+    // A `deckID=` selection selects that deck (its id is the last selection arg, per fetchDueBatch's
+    // "limit=?,deckID=?" format). Either way the query primes the selected deck's scheduler.
+    if (selection?.contains("deckID") == true) {
+      selectionArgs?.lastOrNull()?.toLongOrNull()?.let { selected = it }
+    }
     primedSinceAnswer = true
     val cursor = MatrixCursor(arrayOf("note_id", "ord"))
-    queue.firstOrNull()?.let { (noteId, ord) -> cursor.addRow(arrayOf<Any>(noteId, ord)) }
+    decks[selected]?.firstOrNull()?.let { (noteId, ord) -> cursor.addRow(arrayOf<Any>(noteId, ord)) }
     return cursor
   }
 
@@ -175,6 +213,7 @@ class FakeAnkiSchedulerProvider : ContentProvider() {
   ): Int {
     // v3 backend quirk: answering no-ops until a schedule query has primed the scheduler.
     if (!primedSinceAnswer) return 0
+    val queue = decks[selected] ?: return 0
     val head = queue.firstOrNull() ?: return 0
     val ease = values?.getAsInteger("answer_ease") ?: return 0
     applied.add(Applied(head.first, head.second, ease))
