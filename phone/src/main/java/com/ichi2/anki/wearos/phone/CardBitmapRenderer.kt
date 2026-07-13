@@ -53,9 +53,11 @@ class CardBitmapRenderer(private val context: Context) {
       }
 
       val deferred = CompletableDeferred<ByteArray?>()
+      var webViewRef: WebView? = null
 
       try {
         val webView = WebView(context)
+        webViewRef = webView
         webView.isVerticalScrollBarEnabled = false
         webView.isHorizontalScrollBarEnabled = false
 
@@ -163,12 +165,15 @@ class CardBitmapRenderer(private val context: Context) {
           "UTF-8",
           null,
         )
+        deferred.await()
       } catch (e: Exception) {
         Log.e(TAG, "Failed to initialize and run WebView renderer: ${e.message}", e)
-        deferred.complete(null)
+        null
+      } finally {
+        // One WebView is created per card side; destroy it (native renderer + GL context) instead of
+        // leaking it. The PNG bytes are already captured by the time await() returns, so it's safe.
+        webViewRef?.destroy()
       }
-
-      deferred.await()
     }
   }
 
