@@ -89,6 +89,62 @@ mod tests {
         assert!(clean.contains("to answer"));
     }
 
+    // ---- Realistic Japanese-card rendering fidelity (the user's decks are Japani/Kaishi/RTK). ----
+
+    #[test]
+    fn test_clean_html_sentence_with_multiple_furigana() {
+        // A sentence with per-kanji furigana (very common in Core2000/Japani cards).
+        let html =
+            "<ruby>日<rt>に</rt></ruby><ruby>本<rt>ほん</rt></ruby><ruby>語<rt>ご</rt></ruby>\
+                    を<ruby>勉<rt>べん</rt></ruby><ruby>強<rt>きょう</rt></ruby>する"
+                .to_string();
+        assert_eq!(clean_html(html), "日(に)本(ほん)語(ご)を勉(べん)強(きょう)する");
+    }
+
+    #[test]
+    fn test_clean_html_cloze_front_and_back() {
+        // Anki renders cloze to a span; the front shows [...], the back the revealed text. The
+        // visible bracket/answer must survive for both.
+        let front = "これは<span class=\"cloze\">[...]</span>です".to_string();
+        assert_eq!(clean_html(front), "これは[...]です");
+        let back = "これは<span class=\"cloze\">ペン</span>です".to_string();
+        assert_eq!(clean_html(back), "これはペンです");
+    }
+
+    #[test]
+    fn test_clean_html_font_and_color_tags_drop_to_text() {
+        // Older note types wrap emphasis in <font>/<span style>; TTS/native text keeps just the text.
+        let html = "<font color=\"red\"><b>重要</b></font>な<span style=\"color:#00f\">単語</span>"
+            .to_string();
+        assert_eq!(clean_html(html), "重要な単語");
+    }
+
+    #[test]
+    fn test_full_back_answer_then_clean_pipeline() {
+        // The real watch pipeline for a card back: answer_html (split at the marker) -> clean_html.
+        let back = "質問<hr id=answer><div><ruby>答<rt>こた</rt></ruby>え</div>\
+                    [sound:answer.mp3]"
+            .to_string();
+        let answer = answer_html(back);
+        assert!(!answer.contains("質問"), "question leaked into the answer: {answer}");
+        assert_eq!(clean_html(answer), "答(こた)え");
+    }
+
+    #[test]
+    fn test_html_for_display_pitch_accent_span_survives_for_bitmap_fallback() {
+        // html_for_display keeps styled spans (the pitch-accent overline) + furigana, strips the
+        // hidden {{Pitch Accent}} comment and img. (Full CSS fidelity is the bitmap path's job; here
+        // we just verify nothing user-visible is lost and the hidden field never leaks.)
+        let html = "<span style=\"text-decoration:overline\"><ruby>橋<rt>はし</rt></ruby></span>\
+                    <!-- {{Pitch Accent}} --><img src=\"d.webp\">"
+            .to_string();
+        let out = html_for_display(html);
+        assert!(out.contains("<span"), "styled span dropped: {out}");
+        assert!(out.contains("橋(はし)"), "furigana not normalized: {out}");
+        assert!(!out.contains("Pitch Accent"), "hidden field leaked: {out}");
+        assert!(!out.contains("<img"), "img not stripped: {out}");
+    }
+
     fn sample_decks() -> Vec<DeckInfo> {
         // Mirrors the user's real collection shape: 文法 is both a folder and a studyable deck.
         [
