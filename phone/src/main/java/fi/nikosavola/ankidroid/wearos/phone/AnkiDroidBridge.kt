@@ -55,6 +55,13 @@ class AnkiDroidBridge(private val context: Context) {
 
     // Notes search endpoint: the selection string is an Anki browser query (col.findNotes).
     private val NOTES_URI = Uri.parse("content://$AUTHORITY/notes")
+
+    // Dedupe store: ids of answers already applied to the collection, so a re-send after a missed
+    // clear_answers can never double-apply (e.g. a relearn card re-presented in the same session).
+    // Persisted (re-sends span separate syncs / process restarts) and capped to the most recent N.
+    private const val DEDUPE_PREFS = "writeback_applied"
+    private const val KEY_APPLIED_IDS = "applied_ids"
+    private const val MAX_APPLIED_IDS = 500
   }
 
   /** Check if the AnkiDroid provider is installed and accessible. */
@@ -379,6 +386,22 @@ class AnkiDroidBridge(private val context: Context) {
     var applied = 0
     val contentResolver: ContentResolver = context.contentResolver
 
+    // Dedupe defense-in-depth: an answer id we've already applied must never be applied again, even
+    // if the watch re-sends it (a missed clear_answers) while its card happens to be presented again
+    // (a relearn re-presented this session). Pre-filter those out and report them settled so the
+    // watch buffer clears; the drain loop below then only sees not-yet-applied answers. The
+    // current-card gating already stops a mis-grade; this stops a *double*-grade of the same review.
+    val appliedIdStore = loadAppliedIds()
+    val remaining = mutableListOf<WearosAnswer>()
+    for (a in answers) {
+      if (a.id in appliedIdStore) {
+        Log.i(TAG, "Answer ${a.id} already applied (re-send); settling without re-writing.")
+        settledIds.add(a.id)
+      } else {
+        remaining.add(a)
+      }
+    }
+
     // Drain the buffer in the scheduler's presentation order. The v3 backend answers whatever card
     // the scheduler currently presents (the update uses a null selection), so we prime the scheduler,
     // read the current card, and apply ONLY the buffered answer for that exact (note_id, ord). If the
@@ -389,7 +412,6 @@ class AnkiDroidBridge(private val context: Context) {
     // the scheduler and rebuilt its queue (emulator-verified: query-then-update graduates the card,
     // reps++ and a revlog row; a bare update leaves it due). Each iteration applies one answer or
     // stops, so the loop is bounded by the buffer size.
-    val remaining = answers.toMutableList()
     while (remaining.isNotEmpty()) {
       val current = primeScheduler(contentResolver) ?: break
       val idx = remaining.indexOfFirst { it.noteId == current.first && it.ord == current.second }
@@ -416,6 +438,7 @@ class AnkiDroidBridge(private val context: Context) {
         settledIds.add(answer.id)
         if (rowsUpdated > 0) {
           applied++
+          appliedIdStore.add(answer.id)
         } else {
           // Matched the current card but nothing was written (already answered / removed): terminal,
           // so it can't pile up.
@@ -432,8 +455,26 @@ class AnkiDroidBridge(private val context: Context) {
       }
     }
 
+    if (applied > 0) saveAppliedIds(appliedIdStore)
     Log.i(TAG, "Write-back: $applied applied, ${remaining.size} kept for retry/later.")
     return settledIds
+  }
+
+  /** Ids of answers already applied to the collection, most-recent last. See [DEDUPE_PREFS]. */
+  private fun loadAppliedIds(): LinkedHashSet<String> {
+    val prefs = context.getSharedPreferences(DEDUPE_PREFS, Context.MODE_PRIVATE)
+    val raw = prefs.getString(KEY_APPLIED_IDS, "").orEmpty()
+    return LinkedHashSet(raw.split(",").filter { it.isNotEmpty() })
+  }
+
+  /** Persist [ids], trimmed to the most recent [MAX_APPLIED_IDS] so the store can't grow unbounded. */
+  private fun saveAppliedIds(ids: LinkedHashSet<String>) {
+    val trimmed = if (ids.size > MAX_APPLIED_IDS) ids.toList().takeLast(MAX_APPLIED_IDS) else ids
+    context
+      .getSharedPreferences(DEDUPE_PREFS, Context.MODE_PRIVATE)
+      .edit()
+      .putString(KEY_APPLIED_IDS, trimmed.joinToString(","))
+      .apply()
   }
 
   /**

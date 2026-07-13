@@ -6,9 +6,11 @@ import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
 import android.net.Uri
+import androidx.test.core.app.ApplicationProvider
 import io.mockk.every
 import io.mockk.mockk
 import io.mockk.slot
+import io.mockk.spyk
 import io.mockk.verify
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -179,6 +181,39 @@ class AnswerSyncE2ETest {
 
     verify(exactly = 0) { resendResolver.update(any(), any(), any(), any()) }
     assertTrue("a re-sent grade for a card no longer presented must not re-apply", resendSettled.isEmpty())
+  }
+
+  @Test
+  fun resend_afterApply_isDedupedById_evenWhenTheCardIsRepresented() {
+    // The case the current-card gating alone can't cover: card 111 was graded (applied), then it's a
+    // relearn re-presented THIS session so the scheduler shows 111 again, and a missed clear_answers
+    // makes the watch re-send the same grade (same answer id). Without id dedupe the re-send would
+    // match the presented card and apply a SECOND time (a corrupt double-grade). It must not.
+    // Real SharedPreferences (the dedupe store persists across the two syncs) + a mocked resolver.
+    val realCtx = ApplicationProvider.getApplicationContext<Context>()
+    realCtx.getSharedPreferences("writeback_applied", Context.MODE_PRIVATE).edit().clear().commit()
+
+    val resolver1 =
+      availableResolver {
+        every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
+        every { update(any(), any(), any(), any()) } returns 1
+      }
+    val ctx1 = spyk(realCtx) { every { contentResolver } returns resolver1 }
+    val first = AnkiDroidBridge(ctx1).writeAnswersBack(overTheWire(listOf(answer("a1", 111L, 0, 3))), false)
+    assertEquals(listOf("a1"), first)
+    verify(exactly = 1) { resolver1.update(any(), any(), any(), any()) }
+
+    // Same card still presented; re-send of the identical answer id.
+    val resolver2 =
+      availableResolver {
+        every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
+        every { update(any(), any(), any(), any()) } returns 1
+      }
+    val ctx2 = spyk(realCtx) { every { contentResolver } returns resolver2 }
+    val second = AnkiDroidBridge(ctx2).writeAnswersBack(overTheWire(listOf(answer("a1", 111L, 0, 3))), false)
+
+    verify(exactly = 0) { resolver2.update(any(), any(), any(), any()) }
+    assertEquals("re-sent already-applied grade is settled, not re-applied", listOf("a1"), second)
   }
 
   @Test
