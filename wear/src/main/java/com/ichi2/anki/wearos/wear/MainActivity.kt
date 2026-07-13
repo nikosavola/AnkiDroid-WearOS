@@ -13,7 +13,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.ScrollableState
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -21,7 +20,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -40,8 +38,6 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
-import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
-import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.material3.AppScaffold
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
@@ -54,10 +50,7 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
-import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
 import androidx.wear.compose.material3.lazy.TransformationSpec
-import androidx.wear.compose.material3.lazy.TransformationVariableSpec
-import androidx.wear.compose.material3.lazy.rememberTransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.curvedText
@@ -529,36 +522,6 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /**
-   * Route rotary bezel/crown input into [state] with animated scrolling and haptic detents (the
-   * built-in Wear behavior). Grabs focus when composed; only one screen shows at a time so they
-   * don't fight over focus.
-   */
-  @Composable
-  private fun Modifier.rotaryScroll(state: ScrollableState): Modifier {
-    val focusRequester = remember { FocusRequester() }
-    LaunchedEffect(Unit) { focusRequester.requestFocus() }
-    return this.rotaryScrollable(
-      RotaryScrollableDefaults.behavior(scrollableState = state),
-      focusRequester = focusRequester,
-    )
-  }
-
-  /**
-   * The M3 Expressive edge-morph spec for our lists. Same as the default TransformingLazyColumn
-   * transform but with a higher container/content alpha floor at the bezel (0.75 instead of the
-   * default 0.5), so cards, switches and buttons stay legible near the top/bottom edges rather than
-   * fading half-out. targetValue stays 1.0 (fully opaque at the vertical center).
-   */
-  @Composable
-  private fun rememberEdgeMorphSpec(): TransformationSpec {
-    val edgeAlpha = TransformationVariableSpec(0.75f)
-    return rememberTransformationSpec(
-      ResponsiveTransformationSpec.smallScreen(containerAlpha = edgeAlpha, contentAlpha = edgeAlpha),
-      ResponsiveTransformationSpec.largeScreen(containerAlpha = edgeAlpha, contentAlpha = edgeAlpha),
-    )
-  }
-
   @Composable
   fun WearAppScreen() {
     AnkiWearTheme(themeMode) {
@@ -683,11 +646,11 @@ class MainActivity : ComponentActivity() {
           level.ownDeck?.let { own ->
             item {
               DeckCard(
-                id = own.id,
                 label = "Study ${own.name}",
                 cardCount = countById[own.id],
                 transformation = SurfaceTransformation(transformSpec),
                 modifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec),
+                onClick = { selectDeck(own.id) },
               )
             }
           }
@@ -696,9 +659,20 @@ class MainActivity : ComponentActivity() {
             val transformation = SurfaceTransformation(transformSpec)
             val cardModifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec)
             if (node.isFolder) {
-              FolderCard(node, transformation, cardModifier)
+              FolderCard(
+                name = node.name,
+                transformation = transformation,
+                modifier = cardModifier,
+                onClick = { deckFolderPath = node.path },
+              )
             } else {
-              DeckCard(node.id, node.name, countById[node.id], transformation, cardModifier)
+              DeckCard(
+                label = node.name,
+                cardCount = countById[node.id],
+                transformation = transformation,
+                modifier = cardModifier,
+                onClick = { selectDeck(node.id) },
+              )
             }
           }
         }
@@ -729,88 +703,6 @@ class MainActivity : ComponentActivity() {
           }
         }
       }
-    }
-  }
-
-  /**
-   * A folder row in the deck picker: a Material folder icon + name; taps descend into the folder.
-   */
-  @Composable
-  private fun FolderCard(
-    node: DeckNodeInfo,
-    transformation: SurfaceTransformation,
-    modifier: Modifier,
-  ) {
-    Card(
-      onClick = { deckFolderPath = node.path },
-      transformation = transformation,
-      modifier = modifier,
-    ) {
-      Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(
-          painter = painterResource(id = R.drawable.ic_folder),
-          contentDescription = null,
-          modifier = Modifier.size(22.dp),
-          tint = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(modifier = Modifier.width(10.dp))
-        Column {
-          Text(
-            text = node.name,
-            style = MaterialTheme.typography.bodyMedium,
-            maxLines = 2,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-          )
-          Text(
-            text = "Folder",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-        }
-      }
-    }
-  }
-
-  /** A studyable deck row: taps open it offline if cached, else request it from the phone. */
-  @Composable
-  private fun DeckCard(
-    id: Long,
-    label: String,
-    cardCount: Int?,
-    transformation: SurfaceTransformation,
-    modifier: Modifier,
-  ) {
-    Card(onClick = { selectDeck(id) }, transformation = transformation, modifier = modifier) {
-      Column {
-        Text(
-          text = label,
-          style = MaterialTheme.typography.bodyMedium,
-          maxLines = 2,
-          overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-        )
-        Text(
-          text = if (cardCount != null) "$cardCount cards ready" else "Tap to download",
-          style = MaterialTheme.typography.labelSmall,
-          color =
-            if (cardCount != null) Color(0xFF66BB6A) else MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-      }
-    }
-  }
-
-  /**
-   * A glanceable stat: a small caps label above a bold M3 Numeral (tabular digits). Used for the
-   * deck/session counts where the number is the point.
-   */
-  @Composable
-  private fun StatNumeral(label: String, value: String, color: Color, modifier: Modifier = Modifier) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = modifier) {
-      Text(
-        text = label.uppercase(),
-        style = MaterialTheme.typography.labelSmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
-      Text(text = value, style = MaterialTheme.typography.numeralMedium, color = color)
     }
   }
 
@@ -1253,100 +1145,26 @@ class MainActivity : ComponentActivity() {
   @Composable
   fun FinishedScreen(session: ReviewSession) {
     var pickingNewCount by remember { mutableStateOf(false) }
-    val listState = rememberTransformingLazyColumnState()
     val transformSpec = rememberEdgeMorphSpec()
     // Tally what was graded this session (recomputed if an undo/answer changed it).
     val summary = remember(cardCompletedTrigger) { session.getSummary() }
-    ScreenScaffold(scrollState = listState) { contentPadding ->
-      TransformingLazyColumn(
-        state = listState,
-        contentPadding = contentPadding,
-        modifier = Modifier.fillMaxSize().rotaryScroll(listState),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-      ) {
-        item {
-          Text(
-            text = "Nice Job! 🎉",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(bottom = 8.dp),
-          )
-        }
-        item {
-          Text(
-            text = "You finished your study queue for now.",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(horizontal = 16.dp),
-          )
-        }
-        // Session recap: how many reviews (relearned cards count more than once), ease split, time.
-        if (summary.total > 0) {
-          item {
-            Card(
-              onClick = {},
-              transformation = SurfaceTransformation(transformSpec),
-              modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
-            ) {
-              Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                StatNumeral(
-                  label = "Reviews",
-                  value = "${summary.total}",
-                  color = MaterialTheme.colorScheme.primary,
-                )
-                Text(
-                  text = "in ${formatDuration(summary.totalTimeMs)}",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                  text =
-                    "Again ${summary.again} · Hard ${summary.hard} · " +
-                      "Good ${summary.good} · Easy ${summary.easy}",
-                  style = MaterialTheme.typography.labelSmall,
-                  color = MaterialTheme.colorScheme.onSurfaceVariant,
-                  textAlign = TextAlign.Center,
-                )
-                if (reviewedToday > 0) {
-                  Text(
-                    text = "Today: $reviewedToday 🔥",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFFFA726),
-                  )
-                }
-              }
-            }
-          }
-        }
-        item {
-          Text(
-            text = "Outstanding reviews: $outstandingAnswersCount",
-            style = MaterialTheme.typography.labelSmall,
-            color = Color.LightGray,
-            modifier = Modifier.padding(vertical = 8.dp),
-          )
-        }
-        // Learn new cards right after finishing the due queue.
-        if (activeDeckId != null) {
-          newCardControlItems(pickingNewCount, transformSpec) { pickingNewCount = it }
-        }
-        // Material 3 expressive edge button hugging the bottom bezel: sync answers and go back.
-        item {
-          EdgeButton(
-            onClick = {
-              triggerAnswersSync()
-              isReviewing = false
-              clearSession() // return to decks selector list
-            },
-            buttonSize = EdgeButtonSize.Medium,
-          ) {
-            Icon(
-              painter = painterResource(id = R.drawable.ic_check),
-              contentDescription = "Sync and back to decks",
-            )
-          }
-        }
-      }
-    }
+    FinishedScreenContent(
+      summary = summary,
+      reviewedToday = reviewedToday,
+      outstandingCount = outstandingAnswersCount,
+      transformSpec = transformSpec,
+      onSyncAndBack = {
+        triggerAnswersSync()
+        isReviewing = false
+        clearSession() // return to decks selector list
+      },
+      // Learn new cards right after finishing the due queue (needs the new-card request plumbing).
+      // Present only when a deck is active; null hides the controls.
+      newCardControls =
+        activeDeckId?.let {
+          { newCardControlItems(pickingNewCount, transformSpec) { picking -> pickingNewCount = picking } }
+        },
+    )
   }
 
   /**
