@@ -157,6 +157,17 @@ mod tests {
         let back2 = "Q<hr id=answer class=\"x\">A".to_string();
         assert_eq!(answer_html(back2), "A");
 
+        // Quoted marker variants (double + single) split just like the unquoted form.
+        assert_eq!(answer_html("Q<hr id=\"answer\">A".to_string()), "A");
+        assert_eq!(answer_html("Q<hr id='answer'>A".to_string()), "A");
+        assert_eq!(answer_html("Q<hr class=\"x\" id=\"answer\">A".to_string()), "A");
+
+        // Mixed markers: split at whichever appears first.
+        assert_eq!(
+            answer_html("Q<hr id=\"answer\">A1<hr id=answer>A2".to_string()),
+            "A1<hr id=answer>A2"
+        );
+
         // No marker: return the whole string unchanged.
         assert_eq!(answer_html("just a back".to_string()), "just a back");
     }
