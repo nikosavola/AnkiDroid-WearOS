@@ -49,6 +49,25 @@ To run self-contained, offline unit tests for our SQLite cache, state-machine tr
 cargo test --manifest-path core/Cargo.toml
 ```
 
+### Kotlin Unit Tests (phone + wear)
+Host-JVM tests (JUnit + Robolectric + MockK + Compose-under-Robolectric); no emulator or device
+needed, and CI runs them on every push/PR alongside the Rust tests:
+```bash
+JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :phone:testDebugUnitTest :wear:testDebugUnitTest
+```
+The full Rust FFI is callable from these tests: JNA loads the host-built `libwearos_core.so`
+(`compileRustHost` + `jna.library.path`), so serializers and the review session run for real, not
+mocked. Key suites and what they guard:
+- `WriteBackIntegrationTest` — real ContentResolver against a fake AnkiDroid scheduler provider:
+  prime-then-answer contract, multi-deck drain, current-card gating. The heaviest CI-runnable slice
+  of the sync; the watch<->phone GMS Data Layer hop itself cannot run headless (needs Play Services
+  + two paired devices) and is verified manually on hardware.
+- `AnswerSyncE2ETest` / `AnkiDroidBridgeTest` — wire round-trip fidelity, read-only mode, re-send
+  dedupe (never double-apply), settle-vs-retry semantics.
+- `WearSyncServiceTest` — never send clear_answers for grades that didn't settle.
+- `GradeEdgeButtonsTest` / `FinishedScreenTest` / `DeckListItemsTest` / `HtmlTextTest` — Compose
+  render + touch tests driving the real composables under Robolectric (NATIVE graphics).
+
 ### Clean Up Daemons After Toolchain Changes
 Gradle and Kotlin each spawn a long-lived background daemon (`GradleDaemon`, `KotlinCompileDaemon`)
 per distinct version they run. Bumping `gradle-wrapper.properties` or the Kotlin version during
