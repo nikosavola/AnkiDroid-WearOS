@@ -43,6 +43,25 @@ mod tests {
         DB_TEST_LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 
+    /// Guard for pure state-machine tests: locks the DB mutex AND clears the global path, so
+    /// answer_card skips buffering instead of inheriting (and now failing on) whatever stale DB a
+    /// previously-run test left in DB_CONN. save_answer failures are fatal since the durability fix.
+    fn no_db_guard() -> MutexGuard<'static, ()> {
+        let guard = db_test_guard();
+        *crate::db::DB_CONN.lock().unwrap() = None;
+        guard
+    }
+
+    /// Remove a test DB plus its WAL sidecars, restoring write perms first (the read-only test
+    /// leaves the file unwritable if it panics before its own cleanup).
+    fn cleanup_db(path: &str) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644));
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = std::fs::remove_file(format!("{path}{suffix}"));
+        }
+    }
+
     #[test]
     fn test_clean_html() {
         let html =
@@ -411,7 +430,7 @@ mod tests {
     #[test]
     fn test_review_session_state_machine() {
         // answer_card buffers into DB_CONN when a DB is configured; serialize with the buffer tests.
-        let _guard = db_test_guard();
+        let _guard = no_db_guard();
         let card1 = WearosCard {
             id: 1,
             note_id: 10,
@@ -555,7 +574,7 @@ mod tests {
 
     #[test]
     fn test_learning_step_requeues_until_graduated() {
-        let _guard = db_test_guard();
+        let _guard = no_db_guard();
         let session = single_card_session(learning_card(1));
 
         // Hard lands on "10m" (sub-day): the single card comes straight back, nothing graduates.
@@ -571,7 +590,7 @@ mod tests {
 
     #[test]
     fn test_interval_index_maps_ease_for_3_and_4_buttons() {
-        let _guard = db_test_guard();
+        let _guard = no_db_guard();
 
         // 4-button: Good is slot 2 ("4d"), so Good must graduate rather than read Hard's "10m".
         let s4 = single_card_session(learning_card(1));
@@ -600,7 +619,7 @@ mod tests {
 
     #[test]
     fn test_learning_requeue_cap_forces_graduation() {
-        let _guard = db_test_guard();
+        let _guard = no_db_guard();
         let session = single_card_session(learning_card(1));
 
         // The first few Hards ("10m") requeue; once the per-card cap is hit the card force-graduates
@@ -617,7 +636,7 @@ mod tests {
 
     #[test]
     fn test_again_requeues_without_hitting_the_cap() {
-        let _guard = db_test_guard();
+        let _guard = no_db_guard();
         let session = single_card_session(learning_card(1));
 
         // Again is a relearn step and may repeat freely: well past the cap, still not graduated.
@@ -656,7 +675,7 @@ mod tests {
     #[test]
     fn test_session_summary() {
         // answer_card buffers into DB_CONN when configured; serialize with the other DB tests.
-        let _guard = db_test_guard();
+        let _guard = no_db_guard();
         let mk = |id: i64| WearosCard {
             id,
             note_id: id,
@@ -999,6 +1018,72 @@ mod tests {
 
         // Clean up
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn test_db_connections_get_busy_timeout_and_wal() {
+        // Three components share this DB file via short-lived connections (Activity grading,
+        // WearSyncService clearing, Tile stats). SQLite's default 0ms busy timeout fails a write
+        // instantly on collision; every connection must come configured to wait instead.
+        let _guard = db_test_guard();
+        let db_path =
+            std::env::temp_dir().join("test_wearos_busy.db").to_string_lossy().to_string();
+        cleanup_db(&db_path);
+
+        init_database(db_path.clone()).unwrap();
+        let conn = crate::db::get_db_connection().unwrap();
+        let timeout_ms: i64 = conn.query_row("PRAGMA busy_timeout", [], |r| r.get(0)).unwrap();
+        assert_eq!(timeout_ms, 5000, "busy_timeout must be applied to every connection");
+        let mode: String = conn.query_row("PRAGMA journal_mode", [], |r| r.get(0)).unwrap();
+        assert_eq!(mode, "wal", "init must switch the DB to WAL journaling");
+
+        drop(conn);
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn test_deserialize_due_batch_rejects_decompression_bomb() {
+        use std::io::Read;
+        // A frame that inflates far past any real batch must be refused while decoding, not after
+        // the allocation. 40MB of zeros compresses to a few KB but exceeds the 32MB cap.
+        let bomb = zstd::encode_all(std::io::repeat(0u8).take(40 * 1024 * 1024), 3).unwrap();
+        let Err(err) = deserialize_due_batch(bomb) else {
+            panic!("a 40MB decompression bomb must be rejected");
+        };
+        assert!(err.to_string().contains("cap"), "expected the size-cap rejection, got: {err}");
+    }
+
+    #[test]
+    fn test_answer_card_fails_loudly_when_buffering_fails() {
+        use std::os::unix::fs::PermissionsExt;
+        // If the grade can't be persisted to the buffer, answer_card must surface the error and
+        // leave the card current for a re-grade - not march on with a review that will never sync.
+        let _guard = db_test_guard();
+        let db_path =
+            std::env::temp_dir().join("test_wearos_rofail.db").to_string_lossy().to_string();
+        cleanup_db(&db_path);
+        init_database(db_path.clone()).unwrap();
+
+        // Make writes fail by write-protecting the DB file. If the process can still write (e.g.
+        // running as root, where permissions don't bind), skip rather than assert a non-failure.
+        let ro = std::fs::Permissions::from_mode(0o444);
+        std::fs::set_permissions(&db_path, ro).unwrap();
+        let probe = std::fs::OpenOptions::new().append(true).open(&db_path);
+        if probe.is_ok() {
+            cleanup_db(&db_path);
+            return;
+        }
+
+        let session = single_card_session(learning_card(42));
+        let result = session.answer_card(3, 1000);
+        assert!(result.is_err(), "a grade whose buffering failed must return Err");
+        assert_eq!(
+            session.get_current_card().map(|c| c.id),
+            Some(42),
+            "the card must be restored to the front for a re-grade"
+        );
+
+        cleanup_db(&db_path);
     }
 
     #[test]
