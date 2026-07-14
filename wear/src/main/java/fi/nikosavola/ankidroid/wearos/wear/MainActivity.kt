@@ -192,6 +192,12 @@ class MainActivity : ComponentActivity() {
     vm.loadDecks()
     updateOutstandingCount()
 
+    // Catch-up flush: grades from a previous session that never got an explicit sync (backed out of
+    // a review, or the send failed with the phone out of range) would otherwise sit buffered until
+    // the user notices the nudge. Quiet: no-ops silently when the buffer is empty, and once the
+    // putDataItem succeeds the Data Layer guarantees delivery to the phone.
+    triggerAnswersSync(quiet = true)
+
     // 5. Register Receiver
     val filter =
       IntentFilter().apply {
@@ -447,19 +453,28 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  private fun triggerAnswersSync() {
+  /**
+   * Send every buffered answer to the phone over the Data Layer. [quiet] suppresses the toasts for
+   * automatic flushes (launch-time catch-up), where "No reviews to sync!" would be noise; failures
+   * are still logged and the answers stay buffered for the next manual or automatic attempt.
+   */
+  private fun triggerAnswersSync(quiet: Boolean = false) {
     scope.launch(Dispatchers.IO) {
       try {
         val answers = getBufferedAnswers()
         if (answers.isEmpty()) {
-          launch(Dispatchers.Main) {
-            Toast.makeText(this@MainActivity, "No reviews to sync!", Toast.LENGTH_SHORT).show()
+          if (!quiet) {
+            launch(Dispatchers.Main) {
+              Toast.makeText(this@MainActivity, "No reviews to sync!", Toast.LENGTH_SHORT).show()
+            }
           }
           return@launch
         }
 
-        launch(Dispatchers.Main) {
-          Toast.makeText(this@MainActivity, "Syncing reviews...", Toast.LENGTH_SHORT).show()
+        if (!quiet) {
+          launch(Dispatchers.Main) {
+            Toast.makeText(this@MainActivity, "Syncing reviews...", Toast.LENGTH_SHORT).show()
+          }
         }
 
         val bytes = serializeAnswers(answers)
@@ -479,8 +494,10 @@ class MainActivity : ComponentActivity() {
         Log.i(TAG, "Broadcasted ${answers.size} answers to Phone Companion.")
       } catch (e: Exception) {
         Log.e(TAG, "Sync back failed: ${e.message}", e)
-        launch(Dispatchers.Main) {
-          Toast.makeText(this@MainActivity, "Sync failed: ${e.message}", Toast.LENGTH_LONG).show()
+        if (!quiet) {
+          launch(Dispatchers.Main) {
+            Toast.makeText(this@MainActivity, "Sync failed: ${e.message}", Toast.LENGTH_LONG).show()
+          }
         }
       }
     }
