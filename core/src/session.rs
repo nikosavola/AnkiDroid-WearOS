@@ -136,9 +136,14 @@ impl ReviewSession {
             deck_id: self.deck_id,
         };
 
-        // Buffer locally if a DB is configured (the answer still reaches AnkiDroid on sync).
-        if get_db_connection().is_ok() {
-            let _ = save_answer(answer.clone());
+        // Buffer locally if a DB is configured (the answer still reaches AnkiDroid on sync). A grade
+        // that can't be persisted must fail loudly, not vanish: put the card back at the front and
+        // surface the error so the user re-grades, instead of the review silently never syncing.
+        if get_db_connection().is_ok()
+            && let Err(e) = save_answer(answer.clone())
+        {
+            self.queue.lock().unwrap().push_front(front);
+            return Err(e);
         }
 
         // Again is always a relearn step and may repeat freely; other buttons requeue only while the

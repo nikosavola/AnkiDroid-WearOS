@@ -10,10 +10,17 @@
 
 use crate::models::{CoreError, WearosAnswer, WearosDueBatch};
 use crate::proto;
+use std::io::Read;
 
 /// zstd level for the due batch. The payloads are small and infrequent, so a high level is cheap
 /// and maximizes the ratio (helps stay under the DataItem cap on dense decks).
 const ZSTD_LEVEL: i32 = 19;
+
+/// Cap on the decompressed due-batch size. Real batches are a few hundred KB at most (<=20 cards of
+/// stripped HTML), but zstd honours whatever size the frame *declares*, so a corrupt or hostile
+/// payload could otherwise balloon to gigabytes and OOM the watch. Generous headroom over any
+/// legitimate batch.
+const MAX_DECOMPRESSED_BYTES: u64 = 32 * 1024 * 1024;
 
 #[uniffi::export]
 pub fn serialize_due_batch(batch: WearosDueBatch) -> Result<Vec<u8>, CoreError> {
@@ -22,7 +29,19 @@ pub fn serialize_due_batch(batch: WearosDueBatch) -> Result<Vec<u8>, CoreError> 
 
 #[uniffi::export]
 pub fn deserialize_due_batch(bytes: Vec<u8>) -> Result<WearosDueBatch, CoreError> {
-    let proto_bytes = zstd::decode_all(bytes.as_slice())?;
+    // Stream-decode with a hard ceiling instead of decode_all, so the cap is enforced while
+    // decompressing rather than after the allocation already happened.
+    let mut proto_bytes = Vec::new();
+    let read = zstd::Decoder::new(bytes.as_slice())?
+        .take(MAX_DECOMPRESSED_BYTES + 1)
+        .read_to_end(&mut proto_bytes)?;
+    if read as u64 > MAX_DECOMPRESSED_BYTES {
+        return Err(CoreError::SerializationError {
+            error_message: format!(
+                "due batch decompresses past the {MAX_DECOMPRESSED_BYTES}-byte cap; refusing"
+            ),
+        });
+    }
     proto::decode_due_batch(&proto_bytes)
 }
 
