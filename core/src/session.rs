@@ -212,6 +212,15 @@ impl ReviewSession {
         format!("{}/{}", *self.graduated.lock().unwrap(), self.initial_total)
     }
 
+    /// Graduated-of-initial as a fraction in [0.0, 1.0], for the watch's circular progress ring
+    /// (get_progress_string gives the matching "N/M" label). 0.0 when the session started empty.
+    pub fn get_progress_fraction(&self) -> f32 {
+        if self.initial_total == 0 {
+            return 0.0;
+        }
+        *self.graduated.lock().unwrap() as f32 / self.initial_total as f32
+    }
+
     /// Tally of every review graded so far this session (after undo, reflects the current state).
     pub fn get_summary(&self) -> SessionSummary {
         let mut s =
