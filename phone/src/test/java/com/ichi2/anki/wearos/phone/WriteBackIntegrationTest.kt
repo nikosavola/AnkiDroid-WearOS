@@ -126,11 +126,13 @@ class WriteBackIntegrationTest {
   }
 
   @Test
-  fun drainsAcrossMultipleDecks_selectingEachBeforeAnswering() {
+  fun drainsAcrossMultipleDecks_primingEachDeckDirectly() {
     // The offline-durability case: two decks reviewed offline, buffered, then synced together. Each
-    // answer carries its deck_id, so write-back selects deck A, drains it, then selects deck B and
-    // drains it - both apply in one pass. Before deck_id, only the initially-selected deck's answer
-    // applied and the other lingered.
+    // answer carries its deck_id, so write-back primes deck A with deckID=, drains it, then primes
+    // deck B with deckID= and drains it - both apply in one pass. This only holds because primeScheduler
+    // queries with deckID= directly: the provider models the real rslib/v3 quirk that a null-selection
+    // prime reverts to the current deck, so the old "select once, then null-prime" drained only deck A
+    // (1783, seeded first = current) and left 1784's answer buffered. Regression guard for that bug.
     provider.seedDecks(mapOf(1783L to listOf(111L to 0), 1784L to listOf(222L to 0)))
 
     val settled =
@@ -157,16 +159,23 @@ class WriteBackIntegrationTest {
 data class Applied(val noteId: Long, val ord: Int, val ease: Int)
 
 /**
- * Minimal in-memory stand-in for AnkiDroid's schedule ContentProvider. Holds a per-deck queue and a
- * selected-deck pointer: a `deckID=` query switches the selection (as AnkiDroid does); any query
- * primes the selected deck's scheduler and presents its head card; update answers that head - but
- * only if primed since the last answer, mirroring the rslib/v3 backend where a bare update no-ops.
- * Enough to drive [AnkiDroidBridge.writeAnswersBack] - including its multi-deck selection - without a
- * device.
+ * Minimal in-memory stand-in for AnkiDroid's schedule ContentProvider, faithful to the rslib/v3
+ * quirk that bit multi-deck write-back on real hardware: a `deckID=` query presents THAT deck's head
+ * (as fetchDueBatch relies on), but a null-selection query reverts to the collection's *current*
+ * deck - a prior `deckID=` query does NOT persist the selection. So the deck a bare-null prime (and
+ * the update after it) acts on is [currentDeck], not whatever `deckID=` was last queried. The update
+ * grades the head of whichever deck the *last* query targeted, and only if primed since the last
+ * answer (a bare update no-ops). This is why write-back must prime each deck with deckID= directly
+ * rather than select-then-null-prime. Enough to drive [AnkiDroidBridge.writeAnswersBack] - including
+ * its multi-deck drain - without a device.
  */
 class FakeAnkiSchedulerProvider : ContentProvider() {
   private val decks = linkedMapOf<Long, ArrayDeque<Pair<Long, Int>>>()
-  private var selected: Long = 0
+  // The collection's current deck (col.decks.current). A null-selection query reverts to it; a
+  // deckID= query does not change it. Seeded to the first deck, mirroring "some deck is always current".
+  private var currentDeck: Long = 0
+  // The deck the most recent query targeted = the one the next update grades.
+  private var queriedDeck: Long = 0
   private var primedSinceAnswer = false
   val applied = mutableListOf<Applied>()
 
@@ -176,14 +185,15 @@ class FakeAnkiSchedulerProvider : ContentProvider() {
   fun seedDecks(deckCards: Map<Long, List<Pair<Long, Int>>>) {
     decks.clear()
     deckCards.forEach { (deckId, cards) -> decks[deckId] = ArrayDeque(cards) }
-    selected = deckCards.keys.firstOrNull() ?: 0
+    currentDeck = deckCards.keys.firstOrNull() ?: 0
+    queriedDeck = currentDeck
     applied.clear()
     primedSinceAnswer = false
   }
 
   fun isEmpty() = decks.values.all { it.isEmpty() }
 
-  fun headNoteId(): Long? = decks[selected]?.firstOrNull()?.first
+  fun headNoteId(): Long? = decks[currentDeck]?.firstOrNull()?.first
 
   override fun onCreate() = true
 
@@ -194,14 +204,21 @@ class FakeAnkiSchedulerProvider : ContentProvider() {
     selectionArgs: Array<out String>?,
     sortOrder: String?,
   ): Cursor {
-    // A `deckID=` selection selects that deck (its id is the last selection arg, per fetchDueBatch's
-    // "limit=?,deckID=?" format). Either way the query primes the selected deck's scheduler.
-    if (selection?.contains("deckID") == true) {
-      selectionArgs?.lastOrNull()?.toLongOrNull()?.let { selected = it }
-    }
+    // A `deckID=` selection scopes this query to that deck (its id is the last selection arg, per
+    // fetchDueBatch's "limit=?,deckID=?" format) WITHOUT persisting it as the current deck. A query
+    // with no deckID= reverts to the current deck - the exact behaviour that made select-then-null-
+    // prime drain only the current deck.
+    queriedDeck =
+      if (selection?.contains("deckID") == true) {
+        selectionArgs?.lastOrNull()?.toLongOrNull() ?: currentDeck
+      } else {
+        currentDeck
+      }
     primedSinceAnswer = true
     val cursor = MatrixCursor(arrayOf("note_id", "ord"))
-    decks[selected]?.firstOrNull()?.let { (noteId, ord) -> cursor.addRow(arrayOf<Any>(noteId, ord)) }
+    decks[queriedDeck]?.firstOrNull()?.let { (noteId, ord) ->
+      cursor.addRow(arrayOf<Any>(noteId, ord))
+    }
     return cursor
   }
 
@@ -213,7 +230,7 @@ class FakeAnkiSchedulerProvider : ContentProvider() {
   ): Int {
     // v3 backend quirk: answering no-ops until a schedule query has primed the scheduler.
     if (!primedSinceAnswer) return 0
-    val queue = decks[selected] ?: return 0
+    val queue = decks[queriedDeck] ?: return 0
     val head = queue.firstOrNull() ?: return 0
     val ease = values?.getAsInteger("answer_ease") ?: return 0
     applied.add(Applied(head.first, head.second, ease))
