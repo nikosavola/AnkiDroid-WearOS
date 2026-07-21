@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
@@ -87,7 +88,6 @@ private fun DeckNodeRow(
 ) {
   val indent = (depth * 16).dp
   val due = dueCountOf(node)
-  val dueLabel = if (due != null) "  ·  $due due" else ""
 
   if (node.children.isNotEmpty()) {
     val isExpanded = expanded[path] ?: false
@@ -118,11 +118,13 @@ private fun DeckNodeRow(
         Spacer(Modifier.width(4.dp))
         Checkbox(checked = allChecked, onCheckedChange = { onFolderChecked(node, it) })
         Text(
-          text = "📁 ${node.name}$dueLabel",
+          text = "📁 ${node.name}",
           style = MaterialTheme.typography.titleSmall,
           fontWeight = FontWeight.SemiBold,
           modifier = Modifier.padding(start = 4.dp),
         )
+        Spacer(Modifier.weight(1f))
+        if (due != null) DuePill(due)
       }
     }
     AnimatedVisibility(
@@ -153,11 +155,41 @@ private fun DeckNodeRow(
     ) {
       Checkbox(checked = checkedOf(id), onCheckedChange = { onDeckChecked(id, it) })
       Text(
-        text = "${node.name}$dueLabel",
+        text = node.name,
         style = MaterialTheme.typography.bodyLarge,
         modifier = Modifier.padding(start = 4.dp),
       )
+      Spacer(Modifier.weight(1f))
+      if (due != null) DuePill(due)
     }
+  }
+}
+
+/** A rounded due-count pill shown at the trailing edge of a deck/folder row. */
+@Composable
+private fun DuePill(count: Int) {
+  val zero = count == 0
+  Surface(
+    shape = RoundedCornerShape(percent = 50),
+    color =
+      if (zero) {
+        MaterialTheme.colorScheme.surfaceVariant
+      } else {
+        MaterialTheme.colorScheme.secondaryContainer
+      },
+  ) {
+    Text(
+      text = "$count due",
+      style = MaterialTheme.typography.labelMedium,
+      fontWeight = FontWeight.SemiBold,
+      color =
+        if (zero) {
+          MaterialTheme.colorScheme.onSurfaceVariant
+        } else {
+          MaterialTheme.colorScheme.onSecondaryContainer
+        },
+      modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+    )
   }
 }
 

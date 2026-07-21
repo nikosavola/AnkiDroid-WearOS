@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+  <!-- watch bezel ring -->
+  <path android:strokeColor="#FFFFFFFF" android:strokeWidth="5" android:strokeLineCap="round"
+        android:pathData="M23,54 A31,31 0 1 0 85,54 A31,31 0 1 0 23,54 Z" />
+  <!-- hour ticks -->
+  <path android:strokeColor="#FFFFFFFF" android:strokeWidth="1.2" android:strokeLineCap="round" android:strokeAlpha="0.5"
+        android:pathData="M54,31 L54,27 M65.5,34.08 L67.5,30.62 M73.92,42.5 L77.38,40.5 M77,54 L81,54 M73.92,65.5 L77.38,67.5 M65.5,73.92 L67.5,77.38 M54,77 L54,81 M42.5,73.92 L40.5,77.38 M34.08,65.5 L30.62,67.5 M31,54 L27,54 M34.08,42.5 L30.62,40.5 M42.5,34.08 L40.5,30.62" />
+  <!-- crown -->
+  <path android:fillColor="#FFFFFFFF" android:pathData="M83,52 L86,52 L86,56 L83,56 Z M88.5,49 L90.5,49 A2.5,2.5 0 0 1 93,51.5 L93,56.5 A2.5,2.5 0 0 1 90.5,59 L88.5,59 A2.5,2.5 0 0 1 86,56.5 L86,51.5 A2.5,2.5 0 0 1 88.5,49 Z" />
+  <!-- Anki five-point star (rounded via matching stroke) -->
+  <path android:fillColor="#FFFFFFFF" android:strokeColor="#FFFFFFFF" android:strokeWidth="3.5" android:strokeLineJoin="round"
+        android:pathData="M50.53,34.3 L57.95,45.91 L71.66,44.61 L62.91,55.25 L68.39,67.89 L55.56,62.86 L45.23,71.98 L46.05,58.23 L34.19,51.22 L47.53,47.75 Z" />
+</vector>
