@@ -18,17 +18,26 @@ import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
 import androidx.activity.viewModels
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -46,6 +55,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -143,13 +154,16 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
    */
   @Composable
   private fun PhoneScreen() {
-    val statusColor =
-      when (vm.statusTone) {
-        StatusTone.CONNECTED -> MaterialTheme.colorScheme.primary
-        StatusTone.ERROR -> MaterialTheme.colorScheme.error
-        StatusTone.NEUTRAL -> MaterialTheme.colorScheme.onSurfaceVariant
-      }
     val selectedCount = vm.allDecks.count { vm.deckSelection[it.first] ?: true }
+    // Sum of due counts across the selected decks; null when AnkiDroid didn't expose counts at all.
+    val cardsDue: Int? =
+      if (vm.deckCounts.isEmpty()) {
+        null
+      } else {
+        vm.allDecks
+          .filter { vm.deckSelection[it.first] ?: true }
+          .sumOf { vm.deckCounts[it.first] ?: 0 }
+      }
 
     // Host in a Surface so LocalContentColor is onBackground everywhere. Otherwise unstyled Text
     // (the deck-tree leaf rows, the headline) falls back to the default content color and is nearly
@@ -157,96 +171,210 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
       Column(
         modifier = Modifier.safeDrawingPadding().imePadding().padding(horizontal = 20.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
       ) {
+        BrandHeader()
+        StatusChip()
+        DueHeroCard(cardsDue = cardsDue, selectedCount = selectedCount)
+
         Row(
-          verticalAlignment = Alignment.Top,
-          modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+          verticalAlignment = Alignment.CenterVertically,
+          modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
         ) {
-        Column(modifier = Modifier.weight(1f)) {
           Text(
-            text = "ANKIDROID",
-            style = MaterialTheme.typography.labelMedium,
+            text = "Decks to sync",
+            style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.weight(1f),
           )
           Text(
-            text = "WearOS Companion",
-            style = MaterialTheme.typography.headlineMedium,
-            maxLines = 2,
+            text = "$selectedCount / ${vm.allDecks.size}",
+            style = MaterialTheme.typography.titleMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+          )
+        }
+        Text(
+          text = vm.lastSyncLabel,
+          style = MaterialTheme.typography.bodySmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        OutlinedTextField(
+          value = vm.deckFilter,
+          onValueChange = { vm.deckFilter = it.trim() },
+          label = { Text("Search decks") },
+          singleLine = true,
+          modifier = Modifier.fillMaxWidth(),
+        )
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+          OutlinedButton(onClick = { vm.setAllDecksSelected(true) }) { Text("Select all") }
+          OutlinedButton(onClick = { vm.setAllDecksSelected(false) }) { Text("Select none") }
+        }
+
+        DeckTreeContent(modifier = Modifier.weight(1f))
+
+        vm.syncStatusMessage?.let {
+          Text(
+            text = it,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            // Keep the sync status on one line; truncate rather than reflow and shove the button down.
+            maxLines = 1,
+            softWrap = false,
             overflow = TextOverflow.Ellipsis,
           )
         }
-        OverflowMenu()
-      }
+        if (vm.progressVisible) {
+          if (vm.progressIndeterminate) {
+            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+          } else {
+            LinearProgressIndicator(
+              progress = { vm.progressFraction },
+              modifier = Modifier.fillMaxWidth(),
+            )
+          }
+        }
 
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier =
-          Modifier.fillMaxWidth().clickable { showConnectionInfoDialog() }.padding(vertical = 4.dp),
-      ) {
-        Text(text = vm.statusMessage, color = statusColor, modifier = Modifier.weight(1f))
-        Icon(
-          painter = painterResource(id = R.drawable.ic_info),
-          contentDescription = "Connection details",
-          tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        Button(
+          onClick = { triggerSyncToWatch() },
+          enabled = vm.syncEnabled,
+          modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        ) {
+          Text(
+            if (cardsDue != null && cardsDue > 0) {
+              "Sync $cardsDue cards to watch"
+            } else {
+              "Sync due cards to watch"
+            }
+          )
+        }
       }
+    }
+  }
 
-      Text(
-        text = "Decks to sync ($selectedCount/${vm.allDecks.size})",
-        style = MaterialTheme.typography.titleLarge,
-        fontWeight = FontWeight.Bold,
+  /** Branded header: dynamic-colored app mark on a primary chip, the wordmark, and overflow menu. */
+  @Composable
+  private fun BrandHeader() {
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+    ) {
+      Surface(
+        shape = CircleShape,
         color = MaterialTheme.colorScheme.primary,
-      )
-      Text(
-        text = vm.lastSyncLabel,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-      )
-
-      OutlinedTextField(
-        value = vm.deckFilter,
-        onValueChange = { vm.deckFilter = it.trim() },
-        label = { Text("Search decks") },
-        singleLine = true,
-        modifier = Modifier.fillMaxWidth(),
-      )
-
-      Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(onClick = { vm.setAllDecksSelected(true) }) { Text("Select all") }
-        OutlinedButton(onClick = { vm.setAllDecksSelected(false) }) { Text("Select none") }
+        modifier = Modifier.size(44.dp),
+      ) {
+        Box(contentAlignment = Alignment.Center) {
+          // The monochrome launcher mark, tinted onPrimary, so the badge tracks the dynamic palette.
+          Icon(
+            painter = painterResource(id = R.drawable.ic_launcher_monochrome),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onPrimary,
+            modifier = Modifier.size(30.dp),
+          )
+        }
       }
-
-      DeckTreeContent(modifier = Modifier.weight(1f))
-
-      vm.syncStatusMessage?.let {
+      Spacer(Modifier.width(12.dp))
+      Column(modifier = Modifier.weight(1f)) {
         Text(
-          text = it,
-          style = MaterialTheme.typography.bodyMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          // Keep the sync status on one line; truncate rather than reflow and shove the button down.
-          maxLines = 1,
-          softWrap = false,
+          text = "ANKIDROID",
+          style = MaterialTheme.typography.labelMedium,
+          fontWeight = FontWeight.Bold,
+          color = MaterialTheme.colorScheme.primary,
+        )
+        Text(
+          text = "WearOS Companion",
+          style = MaterialTheme.typography.headlineSmall,
+          fontWeight = FontWeight.Bold,
+          maxLines = 2,
           overflow = TextOverflow.Ellipsis,
         )
       }
-      if (vm.progressVisible) {
-        if (vm.progressIndeterminate) {
-          LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-        } else {
-          LinearProgressIndicator(progress = { vm.progressFraction }, modifier = Modifier.fillMaxWidth())
-        }
-      }
+      OverflowMenu()
+    }
+  }
 
-      Button(
-        onClick = { triggerSyncToWatch() },
-        enabled = vm.syncEnabled,
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-      ) {
-        Text("Sync Due Cards to Watch")
+  /** Connection status as a rounded chip (colored dot + message); tapping opens the info dialog. */
+  @Composable
+  private fun StatusChip() {
+    val dark = isSystemInDarkTheme()
+    // "Connected" gets a semantic green (M3's dynamic palette has no success role); error + neutral
+    // reuse theme roles so they still track the wallpaper palette.
+    val bg: Color
+    val fg: Color
+    when (vm.statusTone) {
+      StatusTone.CONNECTED -> {
+        bg = if (dark) Color(0xFF14361F) else Color(0xFFDDF3E4)
+        fg = if (dark) Color(0xFF7CE0A3) else Color(0xFF12683B)
+      }
+      StatusTone.ERROR -> {
+        bg = MaterialTheme.colorScheme.errorContainer
+        fg = MaterialTheme.colorScheme.onErrorContainer
+      }
+      StatusTone.NEUTRAL -> {
+        bg = MaterialTheme.colorScheme.surfaceVariant
+        fg = MaterialTheme.colorScheme.onSurfaceVariant
       }
     }
+    Surface(
+      shape = RoundedCornerShape(percent = 50),
+      color = bg,
+      modifier = Modifier.fillMaxWidth().clickable { showConnectionInfoDialog() },
+    ) {
+      Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+      ) {
+        Box(Modifier.size(9.dp).clip(CircleShape).background(fg))
+        Spacer(Modifier.width(10.dp))
+        Text(
+          text = vm.statusMessage,
+          color = fg,
+          style = MaterialTheme.typography.bodyMedium,
+          fontWeight = FontWeight.Medium,
+          maxLines = 1,
+          overflow = TextOverflow.Ellipsis,
+          modifier = Modifier.weight(1f),
+        )
+        Icon(
+          painter = painterResource(id = R.drawable.ic_info),
+          contentDescription = "Connection details",
+          tint = fg,
+          modifier = Modifier.size(18.dp),
+        )
+      }
+    }
+  }
+
+  /** The "cards due to sync" hero: the due total across selected decks on a primary-colored card. */
+  @Composable
+  private fun DueHeroCard(cardsDue: Int?, selectedCount: Int) {
+    val onPrimary = MaterialTheme.colorScheme.onPrimary
+    Card(
+      colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
+      shape = RoundedCornerShape(24.dp),
+      modifier = Modifier.fillMaxWidth(),
+    ) {
+      Column(modifier = Modifier.padding(20.dp)) {
+        Text(
+          text = "Cards due to sync",
+          style = MaterialTheme.typography.titleMedium,
+          color = onPrimary.copy(alpha = 0.9f),
+        )
+        Text(
+          text = cardsDue?.toString() ?: "—",
+          style = MaterialTheme.typography.displayMedium,
+          fontWeight = FontWeight.Bold,
+          color = onPrimary,
+        )
+        val decks = "$selectedCount selected deck" + if (selectedCount == 1) "" else "s"
+        Text(
+          text = if (cardsDue != null) "across $decks" else "$decks · counts unavailable",
+          style = MaterialTheme.typography.bodyMedium,
+          color = onPrimary.copy(alpha = 0.9f),
+        )
+      }
     }
   }
 

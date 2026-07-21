@@ -24,3 +24,6 @@ captures/
 
 # Local-only symlink so Claude Code picks up AGENTS.md as project instructions
 /CLAUDE.md
+
+# Source asset drop (the extracted launcher-icon drawables are what's committed)
+/Anki WearOS app logo.zip
