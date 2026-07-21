@@ -573,6 +573,29 @@ mod tests {
     }
 
     #[test]
+    fn test_progress_fraction_tracks_graduated_over_initial() {
+        let _guard = no_db_guard();
+        let session = ReviewSession::new(WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![learning_card(1), learning_card(2), learning_card(3), learning_card(4)],
+        });
+        assert!(session.get_progress_fraction().abs() < f32::EPSILON);
+
+        // Good = "4d" (day+) graduates one of four cards -> 1/4.
+        session.answer_card(3, 0).unwrap();
+        assert!((session.get_progress_fraction() - 0.25).abs() < f32::EPSILON);
+
+        // An empty session reports 0.0 rather than dividing by zero.
+        let empty = ReviewSession::new(WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![],
+        });
+        assert!(empty.get_progress_fraction().abs() < f32::EPSILON);
+    }
+
+    #[test]
     fn test_learning_step_requeues_until_graduated() {
         let _guard = no_db_guard();
         let session = single_card_session(learning_card(1));

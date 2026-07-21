@@ -922,6 +922,20 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
+   * Determinate progress ring hugging the round edge, filling clockwise from the top in proportion to
+   * cards graduated this session (matching the N/M label from [TopCurvedProgress]). Drawn first in the
+   * review Box so the scrolling card body sits inside it; the theme primary keeps it consistent with
+   * the indeterminate download ring on the deck screen.
+   */
+  @Composable
+  private fun ReviewProgressRing(session: ReviewSession) {
+    androidx.wear.compose.material3.CircularProgressIndicator(
+      progress = { session.getProgressFraction() },
+      modifier = Modifier.fillMaxSize().padding(2.dp),
+    )
+  }
+
+  /**
    * The N/M session progress as curved text hugging the top arc (matching the curved answer hint +
    * grade buttons), inset radially so it clears the ScreenScaffold clock at the very top.
    */
@@ -950,7 +964,10 @@ class MainActivity : ComponentActivity() {
     scrollState: androidx.compose.foundation.ScrollState,
     onReveal: () -> Unit,
   ) {
-    if (!hideProgress) TopCurvedProgress(session.getProgressString(), curvedStyle)
+    if (!hideProgress) {
+      ReviewProgressRing(session)
+      TopCurvedProgress(session.getProgressString(), curvedStyle)
+    }
     Column(
       modifier =
         Modifier.fillMaxSize()
@@ -1022,7 +1039,10 @@ class MainActivity : ComponentActivity() {
     onGrade: (ease: Int, durationMs: Long) -> Unit,
   ) {
     val duration = System.currentTimeMillis() - cardStartTime
-    if (!hideProgress) TopCurvedProgress(session.getProgressString(), curvedStyle)
+    if (!hideProgress) {
+      ReviewProgressRing(session)
+      TopCurvedProgress(session.getProgressString(), curvedStyle)
+    }
     Column(
       modifier =
         Modifier.fillMaxSize()
