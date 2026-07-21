@@ -402,12 +402,13 @@ class AnkiDroidBridge(private val context: Context) {
       }
     }
 
-    // Drain the buffer one deck at a time. The v3 backend answers whatever card the *selected* deck's
-    // scheduler currently presents (the update uses a null selection), so for a buffer spanning decks
-    // (several reviewed offline, synced together) we must select each answer's deck before draining
-    // it - otherwise only the currently-selected deck's answers would ever apply and the rest would
-    // linger. deck_id 0 = unknown (older buffers / cross-version wire): drained first against whatever
-    // AnkiDroid currently has selected, preserving the pre-deck_id behaviour.
+    // Drain the buffer one deck at a time. To answer a card the scheduler must first be primed with a
+    // schedule query; we prime each answer's deck with a deckID= query (see primeScheduler) so the
+    // card the following update grades is THAT deck's head. A buffer can span decks (several reviewed
+    // offline, synced together), and priming per-deck is what lets every deck drain in one pass - not
+    // just whichever deck AnkiDroid currently has selected. deck_id 0 = unknown (older buffers /
+    // cross-version wire): primed with a null selection = whatever AnkiDroid currently has selected,
+    // preserving the pre-deck_id behaviour.
     //
     // Within a deck we prime the scheduler, read the current card, and apply ONLY the buffered answer
     // for that exact (note_id, ord). If the scheduler's order diverges from the buffer - a card
@@ -418,16 +419,8 @@ class AnkiDroidBridge(private val context: Context) {
     // a revlog row; a bare update leaves it due).
     val deckOrder = remaining.map { it.deckId }.distinct().sortedBy { if (it == 0L) 0 else 1 }
     deckLoop@ for (deckId in deckOrder) {
-      if (deckId != 0L) {
-        try {
-          selectDeckForWriteBack(contentResolver, deckId)
-        } catch (e: Exception) {
-          Log.w(TAG, "Couldn't select deck $deckId; leaving its answers buffered: ${e.message}")
-          continue@deckLoop
-        }
-      }
       while (remaining.isNotEmpty()) {
-        val current = primeScheduler(contentResolver) ?: break
+        val current = primeScheduler(contentResolver, deckId) ?: break
         val idx = remaining.indexOfFirst { it.noteId == current.first && it.ord == current.second }
         if (idx < 0) {
           // Scheduler presenting a card we have no buffered answer for: applying any of ours now would
@@ -492,15 +485,21 @@ class AnkiDroidBridge(private val context: Context) {
   }
 
   /**
-   * Reset AnkiDroid's scheduler by querying the schedule URI (the side effect - col.sched.reset +
-   * rebuilding the review queue - is what makes the following ReviewInfo update actually answer the
-   * card; without it the update no-ops), and return the card the scheduler now presents as
-   * (note_id, ord), or null if none is due / the query failed. The caller answers only the buffered
-   * answer matching this card, so it never grades the wrong one.
+   * Prime [deckId]'s scheduler and return the card it now presents as (note_id, ord), or null if none
+   * is due / the query failed. The schedule query does two jobs: its side effect (col.sched.reset +
+   * rebuilding the queue) is what makes the following ReviewInfo update actually answer the card (a
+   * bare update no-ops), and querying with the deckID= selection (the same call fetchDueBatch uses)
+   * presents THIS deck's head so the update grades it. We must prime with deckID= rather than select
+   * the deck once and then prime with a null selection: on the rslib/v3 provider a null-selection
+   * query reverts to the collection's current deck, so a multi-deck buffer would only ever drain
+   * whatever deck is current. deckId 0 (unknown) uses a null selection = whatever is currently
+   * selected. The caller answers only the buffered answer matching this card, never the wrong one.
    */
-  private fun primeScheduler(contentResolver: ContentResolver): Pair<Long, Int>? {
+  private fun primeScheduler(contentResolver: ContentResolver, deckId: Long): Pair<Long, Int>? {
+    val selection = if (deckId != 0L) "limit=?,deckID=?" else null
+    val selectionArgs = if (deckId != 0L) arrayOf("1", deckId.toString()) else null
     return try {
-      contentResolver.query(SCHEDULE_URI, null, null, null, null)?.use { cursor ->
+      contentResolver.query(SCHEDULE_URI, null, selection, selectionArgs, null)?.use { cursor ->
         if (!cursor.moveToFirst()) return null
         val noteIdIdx = cursor.getColumnIndex(COL_NOTE_ID)
         val ordIdx = cursor.getColumnIndex(COL_CARD_ORD)
@@ -514,18 +513,6 @@ class AnkiDroidBridge(private val context: Context) {
       Log.w(TAG, "Scheduler prime query failed; skipping write-back this pass: ${e.message}")
       null
     }
-  }
-
-  /**
-   * Make [deckId] AnkiDroid's selected deck before draining its buffered answers. Querying the
-   * schedule with a deckID selection has the side effect of selecting that deck (same call
-   * fetchDueBatch uses), so the following null-selection [primeScheduler] presents this deck's cards.
-   * The cursor's rows are irrelevant here - we only want the selection side effect.
-   */
-  private fun selectDeckForWriteBack(contentResolver: ContentResolver, deckId: Long) {
-    contentResolver
-      .query(SCHEDULE_URI, null, "limit=?,deckID=?", arrayOf("1", deckId.toString()), null)
-      ?.use {}
   }
 
   private fun getMockDueBatch(deckId: DeckId): WearosDueBatch {
