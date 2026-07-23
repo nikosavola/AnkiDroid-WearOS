@@ -21,11 +21,26 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// weekly/monthly stat wants it later.
 const REVIEW_LOG_RETENTION_SECS: i64 = 30 * 24 * 60 * 60;
 
+/// How many times a buffered answer may be sent to the phone without settling before it is
+/// discarded. A genuinely applicable answer clears within a sync or two; one that keeps coming back
+/// (card deleted / suspended / never reaching the deck head) would otherwise be re-sent forever.
+const MAX_SEND_ATTEMPTS: i64 = 8;
+
 /// Open a connection with the crate's shared settings applied (see [`BUSY_TIMEOUT`]).
 fn open_configured(path: &str) -> Result<Connection, CoreError> {
     let conn = Connection::open(path)?;
     conn.busy_timeout(BUSY_TIMEOUT)?;
     Ok(conn)
+}
+
+/// Whether `table` already has `column`. Used to make `ADD COLUMN` migrations idempotent (a bare
+/// ALTER errors if the column exists, and fresh DBs get every column from CREATE TABLE).
+fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, CoreError> {
+    Ok(conn
+        .prepare(&format!("PRAGMA table_info({table})"))?
+        .query_map([], |r| r.get::<_, String>(1))?
+        .filter_map(Result::ok)
+        .any(|name| name == column))
 }
 
 #[uniffi::export]
@@ -45,22 +60,23 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
             ease INTEGER NOT NULL,
             time_taken_ms INTEGER NOT NULL,
             created_at INTEGER NOT NULL,
-            deck_id INTEGER NOT NULL DEFAULT 0
+            deck_id INTEGER NOT NULL DEFAULT 0,
+            send_attempts INTEGER NOT NULL DEFAULT 0
         )",
         [],
     )?;
 
-    // Migrate buffers created before deck_id existed: add the column (default 0 = unknown deck) so
-    // rows already queued on-device keep working. Guarded by a PRAGMA check since ADD COLUMN errors
-    // if it already exists (fresh DBs get it from CREATE TABLE above).
-    let has_deck_id = conn
-        .prepare("PRAGMA table_info(buffered_answers)")?
-        .query_map([], |r| r.get::<_, String>(1))?
-        .filter_map(Result::ok)
-        .any(|name| name == "deck_id");
-    if !has_deck_id {
+    // Migrate older buffers by adding any missing columns (defaults keep already-queued rows valid).
+    // deck_id: 0 = unknown deck. send_attempts: the H4 orphan cap (see bump_send_attempts_and_prune).
+    if !column_exists(&conn, "buffered_answers", "deck_id")? {
         conn.execute(
             "ALTER TABLE buffered_answers ADD COLUMN deck_id INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+    }
+    if !column_exists(&conn, "buffered_answers", "send_attempts")? {
+        conn.execute(
+            "ALTER TABLE buffered_answers ADD COLUMN send_attempts INTEGER NOT NULL DEFAULT 0",
             [],
         )?;
     }
@@ -197,6 +213,25 @@ pub fn average_answer_time_ms() -> Result<Option<i64>, CoreError> {
     let avg: Option<f64> =
         conn.query_row("SELECT AVG(time_taken_ms) FROM buffered_answers", [], |row| row.get(0))?;
     Ok(avg.map(|a| a.round() as i64))
+}
+
+/// Count one send attempt against every buffered answer and drop those sent too many times.
+///
+/// Call once per sync, right before sending: an answer that reaches the phone and applies is cleared
+/// via `/clear_answers` before the next sync, so only genuinely unplaceable answers (orphans) ever
+/// accumulate [`MAX_SEND_ATTEMPTS`] attempts and get pruned. Returns how many were discarded so the
+/// caller can surface it.
+#[uniffi::export]
+pub fn bump_send_attempts_and_prune() -> Result<u32, CoreError> {
+    let mut conn = get_db_connection()?;
+    let tx = conn.transaction()?;
+    tx.execute("UPDATE buffered_answers SET send_attempts = send_attempts + 1", [])?;
+    let discarded = tx.execute(
+        "DELETE FROM buffered_answers WHERE send_attempts > ?1",
+        params![MAX_SEND_ATTEMPTS],
+    )?;
+    tx.commit()?;
+    Ok(discarded as u32)
 }
 
 #[uniffi::export]

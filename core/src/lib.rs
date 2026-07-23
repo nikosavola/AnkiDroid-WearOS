@@ -21,8 +21,8 @@ mod util;
 // stay unexported (reached via `crate::db::...`) — that keeps them plain `pub` in a private module
 // without tripping `redundant_pub_crate`.
 pub use db::{
-    BufferStats, average_answer_time_ms, buffered_answer_stats, get_buffered_answers,
-    init_database, remove_buffered_answers, reviews_since, save_answer,
+    BufferStats, average_answer_time_ms, buffered_answer_stats, bump_send_attempts_and_prune,
+    get_buffered_answers, init_database, remove_buffered_answers, reviews_since, save_answer,
 };
 pub use decks::*;
 pub use html::*;
@@ -1041,6 +1041,41 @@ mod tests {
 
         // Clean up
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    #[test]
+    fn test_send_attempts_prune_discards_only_unsettled_orphans() {
+        let _guard = db_test_guard();
+        let db_path =
+            std::env::temp_dir().join("test_wearos_attempts.db").to_string_lossy().to_string();
+        cleanup_db(&db_path);
+        init_database(db_path.clone()).unwrap();
+
+        let mk = |id: &str| WearosAnswer {
+            id: id.to_string(),
+            note_id: 1,
+            ord: 0,
+            ease: 3,
+            time_taken_ms: 100,
+            deck_id: 1,
+        };
+        save_answer(mk("orphan")).unwrap();
+
+        // An answer that never settles is pruned only after MAX_SEND_ATTEMPTS (8) sends; every send
+        // before that keeps it buffered and reports 0 discarded.
+        for _ in 0..8 {
+            assert_eq!(bump_send_attempts_and_prune().unwrap(), 0);
+            assert_eq!(get_buffered_answers().unwrap().len(), 1);
+        }
+        assert_eq!(bump_send_attempts_and_prune().unwrap(), 1, "9th send exceeds the cap");
+        assert_eq!(get_buffered_answers().unwrap().len(), 0);
+
+        // A fresh answer added later starts its own count from zero (it isn't collateral).
+        save_answer(mk("fresh")).unwrap();
+        assert_eq!(bump_send_attempts_and_prune().unwrap(), 0);
+        assert_eq!(get_buffered_answers().unwrap().len(), 1);
+
+        cleanup_db(&db_path);
     }
 
     #[test]

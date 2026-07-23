@@ -15,6 +15,12 @@ use crate::models::{CoreError, WearosAnswer, WearosCard, WearosDueBatch};
 use crate::util::unix_millis;
 use std::collections::VecDeque;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+/// Process-lifetime sequence appended to every answer id. `unix_millis` alone collides when two
+/// grades land in the same millisecond or the watch's clock steps backward (they resync constantly);
+/// a colliding id would `INSERT OR REPLACE` an earlier buffered review out of existence.
+static ANSWER_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Force a card to graduate after this many learning-step reappearances (excluding Again, which the
 /// user is actively failing and may repeat freely). Bounds the session since we can't advance
@@ -68,6 +74,10 @@ pub struct ReviewSession {
     graduated: Mutex<usize>,
     /// Every grade so far, newest last. Backs undo and the end-of-session summary.
     history: Mutex<Vec<GradeEvent>>,
+    /// Serializes the two multi-step mutations (`answer_card` / `undo_last_answer`). They each touch
+    /// `queue`, `history` and `graduated` under separate locks, so without this a grade+undo
+    /// double-tap could interleave and pop the wrong tail entry. Always acquired first, released last.
+    op_lock: Mutex<()>,
 }
 
 #[uniffi::export]
@@ -84,6 +94,7 @@ impl ReviewSession {
             is_revealed: Mutex::new(false),
             graduated: Mutex::new(0),
             history: Mutex::new(Vec::new()),
+            op_lock: Mutex::new(()),
         }
     }
 
@@ -113,6 +124,7 @@ impl ReviewSession {
         ease: i32,
         time_taken_ms: i64,
     ) -> Result<Option<WearosAnswer>, CoreError> {
+        let _op = self.op_lock.lock().unwrap();
         let front = {
             let mut queue = self.queue.lock().unwrap();
             match queue.pop_front() {
@@ -126,7 +138,8 @@ impl ReviewSession {
         };
 
         let card = &front.card;
-        let id = format!("{}_{}_{}", card.id, card.ord, unix_millis());
+        let seq = ANSWER_SEQ.fetch_add(1, Ordering::Relaxed);
+        let id = format!("{}_{}_{}_{}", card.id, card.ord, unix_millis(), seq);
         let answer = WearosAnswer {
             id,
             note_id: card.note_id,
@@ -180,10 +193,22 @@ impl ReviewSession {
     /// or un-graduate), restore the card to the front un-revealed, and drop its buffered answer so it
     /// never reaches the phone. Returns the card that is current again, or `None` if nothing to undo.
     pub fn undo_last_answer(&self) -> Result<Option<WearosCard>, CoreError> {
+        let _op = self.op_lock.lock().unwrap();
         let popped = self.history.lock().unwrap().pop();
         let Some(event) = popped else {
             return Ok(None);
         };
+
+        // Drop the buffered answer first. If it can't be removed it may still sync to AnkiDroid and
+        // reschedule the card, so fail loudly and leave the session exactly as it was (event back on
+        // history, queue untouched) rather than showing an undo that didn't really take. Symmetric
+        // with answer_card's loud-failure contract.
+        if get_db_connection().is_ok()
+            && let Err(e) = remove_buffered_answers(vec![event.answer.id.clone()])
+        {
+            self.history.lock().unwrap().push(event);
+            return Err(e);
+        }
 
         {
             let mut queue = self.queue.lock().unwrap();
@@ -196,10 +221,6 @@ impl ReviewSession {
         if !event.requeued {
             let mut graduated = self.graduated.lock().unwrap();
             *graduated = graduated.saturating_sub(1);
-        }
-
-        if get_db_connection().is_ok() {
-            let _ = remove_buffered_answers(vec![event.answer.id]);
         }
 
         *self.is_revealed.lock().unwrap() = false;
