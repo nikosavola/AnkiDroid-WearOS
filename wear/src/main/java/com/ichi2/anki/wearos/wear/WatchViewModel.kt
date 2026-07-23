@@ -44,9 +44,12 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
                 .readText(Charsets.UTF_8)
                 .split("\n")
                 .filter { it.isNotEmpty() }
-                .map {
+                // Skip only the malformed line, not the whole list: a single un-parseable id used to
+                // throw and blank every known deck until the next successful phone refresh.
+                .mapNotNull {
                   val parts = it.split(":", limit = 2)
-                  Pair(parts[0].toLong(), parts.getOrElse(1) { "Deck ${parts[0]}" })
+                  val id = parts[0].toLongOrNull() ?: return@mapNotNull null
+                  Pair(id, parts.getOrElse(1) { "Deck $id" })
                 }
             } else {
               emptyList()

@@ -399,11 +399,21 @@ class MainActivity : ComponentActivity() {
   internal fun triggerAnswersSync(quiet: Boolean = false) {
     scope.launch(Dispatchers.IO) {
       try {
+        // Count this send against every buffered answer and drop any that have failed to settle too
+        // many times (orphans: card deleted/suspended/never at the deck head), so they stop being
+        // re-sent forever. Runs before the read so pruned answers aren't sent this pass.
+        val discarded = bumpSendAttemptsAndPrune()
+        if (discarded > 0u) {
+          Log.w(TAG, "Discarded $discarded stuck review(s) that never settled.")
+        }
+
         val answers = getBufferedAnswers()
         if (answers.isEmpty()) {
           if (!quiet) {
             launch(Dispatchers.Main) {
-              Toast.makeText(this@MainActivity, "No reviews to sync!", Toast.LENGTH_SHORT).show()
+              val msg =
+                if (discarded > 0u) "Discarded $discarded stuck review(s)" else "No reviews to sync!"
+              Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
             }
           }
           return@launch
@@ -449,7 +459,13 @@ class MainActivity : ComponentActivity() {
         updateOutstandingCount()
         cardCompletedTrigger++ // Increment to force recomposition of the review screen!
       } catch (e: Exception) {
+        // The core restores the card on a failed buffer write (loud-failure contract) so the user
+        // can re-grade; tell them, otherwise the screen just sits on the same card looking dead.
         Log.e(TAG, "Failed to answer card securely via Rust FFI: ${e.message}", e)
+        launch(Dispatchers.Main) {
+          Toast.makeText(this@MainActivity, "Couldn't save review, try again", Toast.LENGTH_SHORT)
+            .show()
+        }
       } finally {
         onDone()
       }
