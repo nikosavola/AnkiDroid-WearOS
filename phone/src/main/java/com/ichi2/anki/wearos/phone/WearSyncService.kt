@@ -49,7 +49,7 @@ class WearSyncService : WearableListenerService() {
 
     // Batch is sent as an Asset (streamed over a side channel) rather than a DataMap byte array:
     // a putByteArray counts against the ~100KB DataItem limit and dense decks overflow it
-    // (DATA_ITEM_TOO_LARGE). Assets have no such cap. The bytes are gzipped inside
+    // (DATA_ITEM_TOO_LARGE). Assets have no such cap. The bytes are zstd-compressed inside
     // serializeDueBatch (Rust), so no compression happens here.
     private const val KEY_BATCH_ASSET = "batch_asset"
   }
@@ -83,7 +83,18 @@ class WearSyncService : WearableListenerService() {
             // service scope let onDestroy cancel it mid-flight ("Job was cancelled") before the
             // clear was sent, so the watch never cleared its buffer and re-sent the same answers -
             // the phone then applied them twice.
-            runBlocking { processAnswers(bytes) }
+            runBlocking {
+              processAnswers(bytes)
+              // Delete the processed item. It's otherwise retained on the Data Layer and redelivered
+              // to a reinstalled/updated listener, whose dedupe store (SharedPreferences) was wiped
+              // with the reinstall - so stale answers would replay and re-apply. The watch keeps its
+              // own buffered copy until clear_answers, so nothing is lost if write-back deferred them.
+              try {
+                Wearable.getDataClient(this@WearSyncService).deleteDataItems(uri).await()
+              } catch (e: Exception) {
+                Log.w(TAG, "Failed to delete processed /answers item: ${e.message}")
+              }
+            }
           }
         }
       }
