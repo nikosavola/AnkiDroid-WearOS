@@ -35,6 +35,10 @@ class CardBitmapRenderer(private val context: Context) {
     // Bounded poll for readiness (DOM complete + images loaded) instead of a flat post-load delay.
     private const val MAX_CAPTURE_ATTEMPTS = 20
     private const val CAPTURE_POLL_MS = 30L
+
+    // Schemes the offscreen render is allowed to load; anything else is blocked as egress. `about`
+    // covers WebView's own about:blank bootstrap.
+    private val ALLOWED_SCHEMES = setOf("file", "data", "content", "about")
   }
 
   suspend fun render(
@@ -129,6 +133,22 @@ class CardBitmapRenderer(private val context: Context) {
               request: WebResourceRequest?,
             ): WebResourceResponse? {
               val url = request?.url ?: return null
+
+              // Egress guard: the render needs only local content - bundled assets (file:), inline
+              // data: URIs, and the AnkiDroid media provider (handled below). Block every other
+              // scheme so a third-party shared-deck card's HTML/JS (JS stays enabled for layout)
+              // can't exfiltrate collection media or reach the network. The app declares no INTERNET
+              // permission today; this keeps the invariant if that ever changes.
+              val scheme = url.scheme?.lowercase()
+              if (scheme != null && scheme !in ALLOWED_SCHEMES) {
+                Log.w(TAG, "Blocked non-local WebView request: $url")
+                return WebResourceResponse(
+                  "text/plain",
+                  "UTF-8",
+                  java.io.ByteArrayInputStream(ByteArray(0)),
+                )
+              }
+
               val filename = url.lastPathSegment
               val imgExtensions = listOf(".png", ".jpg", ".jpeg", ".gif", ".webp")
               if (
@@ -222,12 +242,16 @@ class CardBitmapRenderer(private val context: Context) {
 
   fun needsRichRendering(html: String): Boolean {
     val lower = html.lowercase()
+    // Only signals native rendering genuinely can't reproduce: images and pitch-accent styling
+    // (overline / border-top / text-decoration), plus the Kaishi note type by name (its pitch line
+    // can arrive without any inline-style marker). A bare `style=` is deliberately NOT a trigger -
+    // nearly every card carries one, so matching it forced almost everything through the expensive
+    // WebView+PNG+asset path and defeated native rendering as the common case.
     return lower.contains("<img") ||
       lower.contains("overline") ||
       lower.contains("kaishi") ||
       lower.contains("border-top") ||
-      lower.contains("text-decoration") ||
-      lower.contains("style=")
+      lower.contains("text-decoration")
   }
 
   suspend fun syncBitmapsForBatch(batch: uniffi.wearos_core.WearosDueBatch) {
