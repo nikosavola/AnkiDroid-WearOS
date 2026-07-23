@@ -29,8 +29,7 @@ class CardBitmapRendererTest {
   }
 
   @Test
-  fun inlineStyleAndPitchAccentCss_needRichRendering() {
-    assertTrue(renderer.needsRichRendering("""<div style="color:red">x</div>"""))
+  fun pitchAccentCss_needsRichRendering() {
     assertTrue(renderer.needsRichRendering("""<span class="overline">は</span>"""))
     assertTrue(renderer.needsRichRendering("""<span style="border-top:1px solid">x</span>"""))
     assertTrue(renderer.needsRichRendering("""<span style="text-decoration:overline">x</span>"""))
@@ -43,6 +42,8 @@ class CardBitmapRendererTest {
     assertFalse(renderer.needsRichRendering("just a plain answer"))
     assertFalse(renderer.needsRichRendering("<b>bold</b> and <i>italic</i>"))
     assertFalse(renderer.needsRichRendering("<div>answer</div>"))
+    // A bare inline style with no pitch-accent marker is cosmetic; native text rendering is fine.
+    assertFalse(renderer.needsRichRendering("""<div style="color:red">x</div>"""))
     assertFalse(renderer.needsRichRendering(""))
   }
 
