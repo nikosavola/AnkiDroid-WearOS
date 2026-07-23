@@ -5,15 +5,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
-import android.graphics.Typeface
 import android.os.Bundle
-import android.text.SpannableStringBuilder
-import android.text.Spanned
-import android.text.style.BulletSpan
-import android.text.style.RelativeSizeSpan
-import android.text.style.StyleSpan
 import android.widget.Button
-import android.widget.LinearLayout
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.setContent
@@ -46,13 +39,27 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontStyle
+import kotlin.math.roundToInt
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -61,9 +68,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 
@@ -104,6 +109,17 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     }
 
   private val settings by lazy { getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE) }
+
+  // Which modal dialog is open, if any. Compose state so the dialogs are declared in PhoneScreen and
+  // shown/dismissed by flipping this, rather than imperatively built View trees.
+  private enum class PhoneDialog {
+    NONE,
+    SYNC_HELP,
+    SETTINGS,
+    CONNECTION_INFO,
+  }
+
+  private var activeDialog by mutableStateOf(PhoneDialog.NONE)
 
   private fun forceMock(): Boolean =
     settings.getBoolean(KEY_FORCE_MOCK, !vm.bridge.isAnkiDroidAvailable())
@@ -251,6 +267,13 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         }
       }
     }
+
+    when (activeDialog) {
+      PhoneDialog.SYNC_HELP -> SyncHelpDialog { activeDialog = PhoneDialog.NONE }
+      PhoneDialog.SETTINGS -> SettingsDialog { activeDialog = PhoneDialog.NONE }
+      PhoneDialog.CONNECTION_INFO -> ConnectionInfoDialog { activeDialog = PhoneDialog.NONE }
+      PhoneDialog.NONE -> {}
+    }
   }
 
   /** Branded header: dynamic-colored app mark on a primary chip, the wordmark, and overflow menu. */
@@ -320,7 +343,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     Surface(
       shape = RoundedCornerShape(percent = 50),
       color = bg,
-      modifier = Modifier.fillMaxWidth().clickable { showConnectionInfoDialog() },
+      modifier = Modifier.fillMaxWidth().clickable { activeDialog = PhoneDialog.CONNECTION_INFO },
     ) {
       Row(
         verticalAlignment = Alignment.CenterVertically,
@@ -394,14 +417,14 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
           text = { Text("How syncing works") },
           onClick = {
             expanded = false
-            showSyncHelpDialog()
+            activeDialog = PhoneDialog.SYNC_HELP
           },
         )
         DropdownMenuItem(
           text = { Text("Settings") },
           onClick = {
             expanded = false
-            showSettingsDialog()
+            activeDialog = PhoneDialog.SETTINGS
           },
         )
         DropdownMenuItem(
@@ -433,90 +456,100 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
   /**
    * Explains the sync model: what's pushed to the watch and how watch reviews return to AnkiDroid.
+   * Bold section headings, hanging-indented bullets, and a little italic emphasis on two phrases.
    */
-  private fun showSyncHelpDialog() {
-    com.google.android.material.dialog
-      .MaterialAlertDialogBuilder(this)
-      .setTitle("How syncing works")
-      .setMessage(buildSyncHelpText())
-      .setPositiveButton("Got it", null)
-      .show()
-  }
+  @Composable
+  private fun SyncHelpDialog(onDismiss: () -> Unit) {
+    val italic = SpanStyle(fontStyle = FontStyle.Italic)
 
-  /**
-   * Rich body for the sync-help dialog: bold section headings, a little italic emphasis, and
-   * hanging-indented bullets (BulletSpan is a leading-margin span, so wrapped lines line up under
-   * the text rather than back under the bullet).
-   */
-  private fun buildSyncHelpText(): CharSequence {
-    val gap = (12 * resources.displayMetrics.density).toInt()
-    val sb = SpannableStringBuilder()
-
-    fun heading(text: String) {
-      if (sb.isNotEmpty()) sb.append("\n\n")
-      val start = sb.length
-      sb.append(text).append('\n')
-      sb.setSpan(StyleSpan(Typeface.BOLD), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-      sb.setSpan(RelativeSizeSpan(1.1f), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-    }
-
-    fun bullet(text: String) {
-      val start = sb.length
-      sb.append(text).append('\n')
-      sb.setSpan(BulletSpan(gap), start, sb.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
-    }
-
-    fun emphasize(term: String) {
-      val i = sb.indexOf(term)
-      if (i >= 0) {
-        sb.setSpan(StyleSpan(Typeface.ITALIC), i, i + term.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    // Bullet, with an optional phrase italicized in place (was BulletSpan + StyleSpan(ITALIC)).
+    fun bullet(text: String, emphasize: String? = null): AnnotatedString = buildAnnotatedString {
+      append(text)
+      if (emphasize != null) {
+        val i = text.indexOf(emphasize)
+        if (i >= 0) addStyle(italic, i, i + emphasize.length)
       }
     }
+    val sections =
+      listOf(
+        "Phone → Watch" to
+          listOf(
+            bullet(
+              "The phone reads your due cards from AnkiDroid and pushes the selected decks to the " +
+                "watch (compressed, over Bluetooth). Only the decks you check are synced."
+            ),
+            bullet(
+              "This happens when you tap \"Sync Due Cards to Watch\", automatically in the " +
+                "background (if enabled), and when the watch requests a deck."
+            ),
+          ),
+        "Reviewing on the watch" to
+          listOf(
+            bullet(
+              "You review offline on the watch. Each grade is buffered locally, nothing is sent " +
+                "per-card."
+            ),
+            bullet(
+              "Scheduling mirrors Anki within the session: a card graded onto a learning step (a " +
+                "sub-day interval, e.g. Again always and Hard/Good while it is still in learning) " +
+                "goes back into the queue so you relearn it before the deck is done. A day-or-more " +
+                "interval graduates the card out. Progress counts graduated cards, so you can't " +
+                "finish without clearing the lapses.",
+              emphasize = "so you can't finish without clearing the lapses",
+            ),
+            bullet(
+              "The real schedule is still computed by AnkiDroid from the grades you send; the " +
+                "in-session repeats are a local approximation for offline use.",
+              emphasize = "a local approximation for offline use",
+            ),
+          ),
+        "Watch → Phone → AnkiDroid" to
+          listOf(
+            bullet(
+              "Buffered grades are sent back to the phone when a session finishes, when you tap " +
+                "\"Sync N reviews\", or on the next background sync."
+            ),
+            bullet(
+              "The phone writes them into AnkiDroid's scheduler (the same as answering in " +
+                "AnkiDroid), then tells the watch to clear its buffer."
+            ),
+          ),
+        "Read-only mode" to
+          listOf(
+            bullet(
+              "When enabled (Settings), the phone accepts the watch's reviews and clears the " +
+                "buffer but does not change AnkiDroid, useful for testing without affecting your " +
+                "scheduling."
+            )
+          ),
+      )
 
-    heading("Phone → Watch")
-    bullet(
-      "The phone reads your due cards from AnkiDroid and pushes the selected decks to the watch " +
-        "(compressed, over Bluetooth). Only the decks you check are synced."
+    AlertDialog(
+      onDismissRequest = onDismiss,
+      confirmButton = { TextButton(onClick = onDismiss) { Text("Got it") } },
+      title = { Text("How syncing works") },
+      text = {
+        Column(
+          modifier = Modifier.verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          sections.forEach { (heading, bullets) ->
+            Text(
+              text = heading,
+              style = MaterialTheme.typography.titleMedium,
+              fontWeight = FontWeight.Bold,
+              modifier = Modifier.padding(top = 6.dp),
+            )
+            bullets.forEach { b ->
+              Row {
+                Text("•  ", style = MaterialTheme.typography.bodyMedium)
+                Text(text = b, style = MaterialTheme.typography.bodyMedium)
+              }
+            }
+          }
+        }
+      },
     )
-    bullet(
-      "This happens when you tap \"Sync Due Cards to Watch\", automatically in the background " +
-        "(if enabled), and when the watch requests a deck."
-    )
-
-    heading("Reviewing on the watch")
-    bullet(
-      "You review offline on the watch. Each grade is buffered locally, nothing is sent per-card."
-    )
-    bullet(
-      "Scheduling mirrors Anki within the session: a card graded onto a learning step (a sub-day " +
-        "interval, e.g. Again always and Hard/Good while it is still in learning) goes back into " +
-        "the queue so you relearn it before the deck is done. A day-or-more interval graduates the " +
-        "card out. Progress counts graduated cards, so you can't finish without clearing the lapses."
-    )
-    bullet(
-      "The real schedule is still computed by AnkiDroid from the grades you send; the in-session " +
-        "repeats are a local approximation for offline use."
-    )
-
-    heading("Watch → Phone → AnkiDroid")
-    bullet(
-      "Buffered grades are sent back to the phone when a session finishes, when you tap " +
-        "\"Sync N reviews\", or on the next background sync."
-    )
-    bullet(
-      "The phone writes them into AnkiDroid's scheduler (the same as answering in AnkiDroid), then " +
-        "tells the watch to clear its buffer."
-    )
-
-    heading("Read-only mode")
-    bullet(
-      "When enabled (Settings), the phone accepts the watch's reviews and clears the buffer but " +
-        "does not change AnkiDroid, useful for testing without affecting your scheduling."
-    )
-
-    emphasize("so you can't finish without clearing the lapses")
-    emphasize("a local approximation for offline use")
-    return sb
   }
 
   private fun checkPermissions() {
@@ -603,173 +636,110 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     )
   }
 
-  /** Material 3 settings dialog opened from the top-bar gear. */
-  private fun showSettingsDialog() {
-    val pad = (24 * resources.displayMetrics.density).toInt()
-    val content =
-      LinearLayout(this).apply {
-        orientation = LinearLayout.VERTICAL
-        setPadding(pad, pad / 2, pad, 0)
-      }
-
-    val mockSwitch =
-      com.google.android.material.materialswitch.MaterialSwitch(this).apply {
-        text = "Force Mock Mode (Demo / Testing)"
-        isChecked = forceMock()
-      }
-    content.addView(mockSwitch)
-
-    val readOnlySwitch =
-      com.google.android.material.materialswitch.MaterialSwitch(this).apply {
-        text = "Read-only mode (don't write reviews back)"
-        isChecked = readOnly()
-        setPadding(0, pad / 2, 0, 0)
-      }
-    content.addView(readOnlySwitch)
-
-    val autoSyncSwitch =
-      com.google.android.material.materialswitch.MaterialSwitch(this).apply {
-        text = "Auto-sync decks in background"
-        isChecked = AutoSync.isEnabled(this@MainActivity)
-        setPadding(0, pad / 2, 0, 0)
-      }
-    content.addView(autoSyncSwitch)
-
-    val intervalLabel =
-      com.google.android.material.textview.MaterialTextView(this).apply {
-        textSize = 16f
-        setPadding(0, pad / 2, 0, 0)
-      }
-    content.addView(intervalLabel)
-
-    val intervalSlider =
-      com.google.android.material.slider.Slider(this).apply {
-        valueFrom = AutoSync.MIN_INTERVAL_HOURS.toFloat()
-        valueTo = AutoSync.MAX_INTERVAL_HOURS.toFloat()
-        stepSize = 1f
-        value = AutoSync.intervalHours(this@MainActivity).toFloat()
-      }
-
-    fun updateIntervalLabel(hours: Int) {
-      intervalLabel.text = "Auto-sync every: ${hours}h"
+  /** A label + trailing Material switch, filling the dialog row width. */
+  @Composable
+  private fun SettingSwitchRow(label: String, checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Row(
+      verticalAlignment = Alignment.CenterVertically,
+      modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp),
+    ) {
+      Text(text = label, modifier = Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
+      Switch(checked = checked, onCheckedChange = onCheckedChange)
     }
-    updateIntervalLabel(intervalSlider.value.toInt())
-    intervalSlider.addOnChangeListener { _, value, _ -> updateIntervalLabel(value.toInt()) }
+  }
 
-    // Dim the interval control when auto-sync is off, and keep it in sync with the toggle.
-    fun refreshIntervalEnabled(enabled: Boolean) {
-      intervalLabel.isEnabled = enabled
-      intervalSlider.isEnabled = enabled
-    }
-    refreshIntervalEnabled(autoSyncSwitch.isChecked)
-    autoSyncSwitch.setOnCheckedChangeListener { _, checked -> refreshIntervalEnabled(checked) }
-    content.addView(intervalSlider)
+  /** Settings dialog opened from the overflow menu: mock/read-only/auto-sync + interval and cap. */
+  @Composable
+  private fun SettingsDialog(onDismiss: () -> Unit) {
+    var mock by remember { mutableStateOf(forceMock()) }
+    var ro by remember { mutableStateOf(readOnly()) }
+    var auto by remember { mutableStateOf(AutoSync.isEnabled(this@MainActivity)) }
+    var interval by remember { mutableIntStateOf(AutoSync.intervalHours(this@MainActivity)) }
+    var cap by remember { mutableIntStateOf(prePushCap().coerceIn(PREPUSH_MIN, PREPUSH_MAX)) }
+    val dim = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
 
-    val capLabel =
-      com.google.android.material.textview.MaterialTextView(this).apply {
-        textSize = 16f
-        setPadding(0, pad, 0, 0)
-      }
-    content.addView(capLabel)
-
-    val capSlider =
-      com.google.android.material.slider.Slider(this).apply {
-        valueFrom = PREPUSH_MIN.toFloat()
-        valueTo = PREPUSH_MAX.toFloat()
-        stepSize = 5f
-        value = prePushCap().coerceIn(PREPUSH_MIN, PREPUSH_MAX).toFloat()
-      }
-
-    fun updateCapLabel(v: Int) {
-      capLabel.text = "Decks to pre-push on sync: $v"
-    }
-    updateCapLabel(capSlider.value.toInt())
-    capSlider.addOnChangeListener { _, value, _ -> updateCapLabel(value.toInt()) }
-    content.addView(capSlider)
-
-    com.google.android.material.dialog
-      .MaterialAlertDialogBuilder(this)
-      .setTitle("Settings")
-      .setView(content)
-      .setPositiveButton("Done") { _, _ ->
-        settings
-          .edit()
-          .putBoolean(KEY_FORCE_MOCK, mockSwitch.isChecked)
-          .putBoolean(KEY_READ_ONLY, readOnlySwitch.isChecked)
-          .putInt(KEY_PREPUSH_CAP, capSlider.value.toInt())
-          .apply()
-        // Persists the flag + interval and (re)schedules the WorkManager job.
-        AutoSync.apply(this, autoSyncSwitch.isChecked, intervalSlider.value.toInt())
-      }
-      .setNegativeButton("Cancel", null)
-      .show()
+    AlertDialog(
+      onDismissRequest = onDismiss,
+      title = { Text("Settings") },
+      text = {
+        Column(
+          modifier = Modifier.verticalScroll(rememberScrollState()),
+          verticalArrangement = Arrangement.spacedBy(4.dp),
+        ) {
+          SettingSwitchRow("Force Mock Mode (Demo / Testing)", mock) { mock = it }
+          SettingSwitchRow("Read-only mode (don't write reviews back)", ro) { ro = it }
+          SettingSwitchRow("Auto-sync decks in background", auto) { auto = it }
+          Text(
+            text = "Auto-sync every: ${interval}h",
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (auto) MaterialTheme.colorScheme.onSurface else dim,
+            modifier = Modifier.padding(top = 4.dp),
+          )
+          Slider(
+            value = interval.toFloat(),
+            onValueChange = { interval = it.roundToInt() },
+            valueRange = AutoSync.MIN_INTERVAL_HOURS.toFloat()..AutoSync.MAX_INTERVAL_HOURS.toFloat(),
+            steps = (AutoSync.MAX_INTERVAL_HOURS - AutoSync.MIN_INTERVAL_HOURS - 1).coerceAtLeast(0),
+            enabled = auto,
+          )
+          Text(
+            text = "Decks to pre-push on sync: $cap",
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = 8.dp),
+          )
+          Slider(
+            value = cap.toFloat(),
+            onValueChange = { cap = (it / 5).roundToInt() * 5 },
+            valueRange = PREPUSH_MIN.toFloat()..PREPUSH_MAX.toFloat(),
+            steps = ((PREPUSH_MAX - PREPUSH_MIN) / 5 - 1).coerceAtLeast(0),
+          )
+        }
+      },
+      confirmButton = {
+        TextButton(
+          onClick = {
+            settings
+              .edit()
+              .putBoolean(KEY_FORCE_MOCK, mock)
+              .putBoolean(KEY_READ_ONLY, ro)
+              .putInt(KEY_PREPUSH_CAP, cap)
+              .apply()
+            // Persists the flag + interval and (re)schedules the WorkManager job.
+            AutoSync.apply(this@MainActivity, auto, interval)
+            onDismiss()
+          }
+        ) {
+          Text("Done")
+        }
+      },
+      dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
   }
 
   /**
    * Debug info about the app, the AnkiDroid connection, the current settings, and the watch link,
-   * shown when the status line is tapped. Grouped into sections and copyable for bug reports. The
-   * cheap facts are gathered synchronously; the selected-deck ContentProvider query and the
-   * connected-watch list are filled in asynchronously so the dialog opens instantly.
+   * shown when the status chip is tapped. Grouped into sections and copyable for bug reports. The
+   * selected-deck ContentProvider query and the connected-watch list resolve asynchronously and fill
+   * in once ready; everything else is available immediately.
    */
-  private fun showConnectionInfoDialog() {
-    val available = vm.bridge.isAnkiDroidAvailable()
+  @Composable
+  private fun ConnectionInfoDialog(onDismiss: () -> Unit) {
+    val available = remember { vm.bridge.isAnkiDroidAvailable() }
     val permGranted = checkSelfPermission(PERMISSION_ANKIDROID) == PackageManager.PERMISSION_GRANTED
     val notifGranted =
       android.os.Build.VERSION.SDK_INT < 33 ||
         checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) ==
           PackageManager.PERMISSION_GRANTED
     val deckPrefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-    val selectedCount = vm.allDecks.count { deckPrefs.getBoolean("deck_${it.first}", true) }
+    // Key on the raw long (.value); "deck_$deckId" on the DeckId value class yields
+    // "deck_DeckId(value=123)", which never matches the write side, so every deck reads as selected.
+    val selectedCount = vm.allDecks.count { deckPrefs.getBoolean("deck_${it.first.value}", true) }
 
-    val lines =
-      mutableListOf(
-        "▸ App",
-        "   Version: ${appVersionString(packageName)}",
-        "   Android: ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})",
-        "   Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
-        "",
-        "▸ AnkiDroid",
-        "   Provider: ${if (available) "connected" else "not found"}",
-        "   App: ${appVersionString("com.ichi2.anki")}",
-        "   Authority: com.ichi2.anki.flashcards",
-        "   Read/write permission: ${if (permGranted) "granted" else "denied"}",
-        "   Selected deck: checking…",
-        "   Decks visible: ${vm.allDecks.size}",
-        "   Decks selected to sync: $selectedCount / ${vm.allDecks.size}",
-        "",
-        "▸ Settings",
-        "   Force mock mode: ${if (forceMock()) "on" else "off"}",
-        "   Read-only mode: ${if (readOnly()) "on" else "off"}",
-        "   Auto-sync (background): ${
-          if (AutoSync.isEnabled(this)) "every ${AutoSync.intervalHours(this)}h" else "off"
-        }",
-        "   Pre-push cap: ${prePushCap()} decks",
-        "   Notifications: ${if (notifGranted) "granted" else "denied"}",
-        "",
-        "▸ Watch link",
-        "   Connected watches: checking…",
-      )
+    var selectedDeck by remember { mutableStateOf("checking…") }
+    var watches by remember { mutableStateOf("checking…") }
 
-    // Update the value on the "label:" line in place, preserving section grouping.
-    fun setLine(label: String, value: String) {
-      val i = lines.indexOfFirst { it.trimStart().startsWith(label) }
-      if (i >= 0) lines[i] = "   $label $value"
-    }
-
-    val dialog =
-      com.google.android.material.dialog
-        .MaterialAlertDialogBuilder(this)
-        .setTitle("Connection info")
-        .setMessage(lines.joinToString("\n"))
-        .setPositiveButton("Close", null)
-        // Copy reads the current lines, so it includes whatever the async fill-in has resolved.
-        .setNeutralButton("Copy") { _, _ -> copyDebugInfo(lines.joinToString("\n")) }
-        .show()
-
-    // The selected deck (a ContentProvider query) and the connected-watch list are async; resolve
-    // them off the main thread, then refresh the dialog text once.
-    lifecycleScope.launch {
-      val selectedDeck =
+    LaunchedEffect(Unit) {
+      selectedDeck =
         withContext(Dispatchers.IO) {
           try {
             if (available) {
@@ -781,22 +751,69 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
             "error"
           }
         }
-      val watches =
+      watches =
         try {
           com.google.android.gms.wearable.Wearable.getNodeClient(this@MainActivity)
             .connectedNodes
             .await()
-            .joinToString(", ") { node ->
-              node.displayName + if (node.isNearby) " (nearby)" else ""
-            }
+            .joinToString(", ") { node -> node.displayName + if (node.isNearby) " (nearby)" else "" }
             .ifEmpty { "none" }
         } catch (e: Exception) {
           "error: ${e.message}"
         }
-      setLine("Selected deck:", selectedDeck)
-      setLine("Connected watches:", watches)
-      dialog.setMessage(lines.joinToString("\n"))
     }
+
+    val report =
+      remember(selectedDeck, watches, selectedCount) {
+        listOf(
+            "▸ App",
+            "   Version: ${appVersionString(packageName)}",
+            "   Android: ${android.os.Build.VERSION.RELEASE} (API ${android.os.Build.VERSION.SDK_INT})",
+            "   Device: ${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+            "",
+            "▸ AnkiDroid",
+            "   Provider: ${if (available) "connected" else "not found"}",
+            "   App: ${appVersionString("com.ichi2.anki")}",
+            "   Authority: com.ichi2.anki.flashcards",
+            "   Read/write permission: ${if (permGranted) "granted" else "denied"}",
+            "   Selected deck: $selectedDeck",
+            "   Decks visible: ${vm.allDecks.size}",
+            "   Decks selected to sync: $selectedCount / ${vm.allDecks.size}",
+            "",
+            "▸ Settings",
+            "   Force mock mode: ${if (forceMock()) "on" else "off"}",
+            "   Read-only mode: ${if (readOnly()) "on" else "off"}",
+            "   Auto-sync (background): ${
+              if (AutoSync.isEnabled(this@MainActivity)) {
+                "every ${AutoSync.intervalHours(this@MainActivity)}h"
+              } else {
+                "off"
+              }
+            }",
+            "   Pre-push cap: ${prePushCap()} decks",
+            "   Notifications: ${if (notifGranted) "granted" else "denied"}",
+            "",
+            "▸ Watch link",
+            "   Connected watches: $watches",
+          )
+          .joinToString("\n")
+      }
+
+    AlertDialog(
+      onDismissRequest = onDismiss,
+      title = { Text("Connection info") },
+      text = {
+        Text(
+          text = report,
+          style = MaterialTheme.typography.bodySmall,
+          fontFamily = FontFamily.Monospace,
+          modifier = Modifier.verticalScroll(rememberScrollState()),
+        )
+      },
+      confirmButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+      // Copy reads the current report, so it includes whatever the async fill-in has resolved.
+      dismissButton = { TextButton(onClick = { copyDebugInfo(report) }) { Text("Copy") } },
+    )
   }
 
   /** "versionName (versionCode)" for [pkg], or "not installed" when it isn't present. */
