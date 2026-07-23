@@ -21,7 +21,7 @@ We use **UniFFI** and **JNA** to auto-generate safe Kotlin interfaces from our R
 
 ## 3. Passive Background Sync Architecture
 - **Companion Sync Service (`:phone`):** A passive background `WearSyncService` intercepts watch grades on the `/answers` data layer path, processes them via Rust, and writes them back to AnkiDroid's content database. It returns a `/clear_answers` confirmation message back to the watch.
-- **Watch Sync Service (`:wear`):** Intercepts incoming `/due_batch` payloads from the phone, validates and deserializes them in Rust, and saves them locally as `due_batch.json` in local watch storage.
+- **Watch Sync Service (`:wear`):** Intercepts incoming `/due_batch` payloads from the phone, validates and deserializes them in Rust, and saves them locally per-deck as `deck_<id>.json` in local watch storage (so multiple decks can be cached and switched offline).
 
 ---
 
@@ -88,8 +88,11 @@ frequently ship **no WebView provider** (e.g. Galaxy Watch), so constructing a `
 - **Compose rendering:** the watch shows the cleaned text in a weighted, vertically-scrolling
   `Column` (never a nested scrollable that passes infinite constraints). Grade buttons are a
   centered 2x2 grid so all of Again/Hard/Good/Easy stay inside the round display.
-- **Not yet supported natively:** CSS-styled pitch-accent overlines and images. True fidelity for
-  those would require rendering on the phone (which has a WebView) into a bitmap sent to the watch.
+- **Rich fidelity via phone-rendered bitmaps:** CSS-styled pitch-accent overlines and images can't
+  render natively, so cards that need them (`CardBitmapRenderer.needsRichRendering`) are rendered on
+  the phone (which has a WebView) into a PNG, streamed to the watch as a per-card Data Layer asset,
+  cached (`CardImageCache`), and shown by `CardSideContent` in place of the cleaned text. The native
+  text path above remains the fallback when no bitmap is cached.
 
 ---
 
