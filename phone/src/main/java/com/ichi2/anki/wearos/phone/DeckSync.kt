@@ -21,7 +21,7 @@ data class SyncSummary(val decksPushed: Int, val cardsPushed: Int, val decksRema
  * (foreground, with a progress notification) and the background [AutoSyncWorker] (WorkManager).
  *
  * It reads the deck selection + settings, pushes the filtered deck list and each non-empty due
- * batch to the watch as a gzipped Asset (compression lives in the Rust `serializeDueBatch`),
+ * batch to the watch as a zstd-compressed Asset (compression lives in the Rust `serializeDueBatch`),
  * renders rich card bitmaps, and reports intermediate steps through [onProgress] (text, percent
  * 0..100).
  *
@@ -96,7 +96,7 @@ object DeckSync {
         .putDataItem(
           PutDataMapRequest.create("$PATH_DUE_BATCH/${deckId.value}")
             .apply {
-              // serializeDueBatch already gzips; ship the bytes straight into the Asset.
+              // serializeDueBatch already zstd-compresses; ship the bytes straight into the Asset.
               dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(bytes))
               dataMap.putLong("synced_at", System.currentTimeMillis())
               setUrgent()
