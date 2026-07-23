@@ -10,10 +10,7 @@ import com.google.android.gms.wearable.MessageEvent
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import java.io.File
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
 import uniffi.wearos_core.deserializeDueBatch
 import uniffi.wearos_core.initDatabase
@@ -37,9 +34,6 @@ class WearSyncService : WearableListenerService() {
     const val EXTRA_DECK_ID = "deck_id"
   }
 
-  private val job = SupervisorJob()
-  private val scope = CoroutineScope(Dispatchers.IO + job)
-
   override fun onCreate() {
     super.onCreate()
     Log.d(TAG, "WearSyncService created on Wear OS Watch.")
@@ -50,11 +44,6 @@ class WearSyncService : WearableListenerService() {
     } catch (e: Exception) {
       Log.e(TAG, "Failed to initialize Rust database: ${e.message}", e)
     }
-  }
-
-  override fun onDestroy() {
-    super.onDestroy()
-    job.cancel()
   }
 
   override fun onDataChanged(dataEvents: DataEventBuffer) {
@@ -70,15 +59,18 @@ class WearSyncService : WearableListenerService() {
           val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
           val asset = dataMap.getAsset(KEY_BATCH_ASSET)
           if (asset != null) {
-            scope.launch {
-              // Bytes are gzipped; deserializeDueBatch (Rust) inflates them, so pass them through.
+            // Run synchronously (this callback is already on a background thread) so the service
+            // survives long enough to finish the read + cache. Launching on a service scope let
+            // onDestroy cancel it mid-flight, dropping the batch. Mirrors the phone /answers fix.
+            runBlocking {
+              // deserializeDueBatch (Rust) inflates the compressed bytes, so pass them through.
               val raw = readAssetBytes(asset)
               if (raw != null) saveBatchCache(raw)
             }
           } else {
             val bytes = dataMap.getByteArray(KEY_BATCH_BYTES)
             if (bytes != null) {
-              scope.launch { saveBatchCache(bytes) }
+              runBlocking { saveBatchCache(bytes) }
             }
           }
         } else if (path == PATH_DECKS) {
@@ -86,7 +78,7 @@ class WearSyncService : WearableListenerService() {
           val bytes = dataMapItem.dataMap.getByteArray(KEY_DECKS_BYTES)
 
           if (bytes != null) {
-            scope.launch { saveDecksCache(bytes) }
+            saveDecksCache(bytes)
           }
         } else if (path != null && path.startsWith("/card_image/")) {
           val parts = path.split("/")
@@ -98,7 +90,7 @@ class WearSyncService : WearableListenerService() {
               val dataMapItem = DataMapItem.fromDataItem(event.dataItem)
               val asset = dataMapItem.dataMap.getAsset("image_asset")
               if (asset != null) {
-                scope.launch {
+                runBlocking {
                   Log.d(TAG, "Received image asset for card $cardId ($side) on path: $path")
                   CardImageCache.saveImage(this@WearSyncService, cardId, side, asset)
                 }
@@ -119,7 +111,10 @@ class WearSyncService : WearableListenerService() {
       Log.d(TAG, "Received request to clear ${ids.size} answers from SQLite buffer.")
 
       if (ids.isNotEmpty()) {
-        scope.launch {
+        // Synchronous: the buffer removal must not be cancelled at teardown, or the settled
+        // answers stay buffered and get re-sent, forcing the phone's dedupe store to be the only
+        // thing standing between them and a double-apply.
+        runBlocking {
           try {
             removeBufferedAnswers(ids)
             Log.i(TAG, "Successfully removed ${ids.size} synced answers from local cache.")
