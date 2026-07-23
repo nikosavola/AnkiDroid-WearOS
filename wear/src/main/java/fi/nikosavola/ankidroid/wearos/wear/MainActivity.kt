@@ -15,39 +15,25 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.platform.LocalHapticFeedback
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import androidx.wear.compose.foundation.AnchorType
 import androidx.wear.compose.foundation.CurvedDirection
 import androidx.wear.compose.foundation.CurvedLayout
 import androidx.wear.compose.foundation.CurvedModifier
 import androidx.wear.compose.foundation.CurvedTextStyle
 import androidx.wear.compose.foundation.padding
-import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
-import androidx.wear.compose.foundation.lazy.items
-import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.AppScaffold
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
-import androidx.wear.compose.material3.Card
 import androidx.wear.compose.material3.CompactButton
-import androidx.wear.compose.material3.EdgeButton
-import androidx.wear.compose.material3.EdgeButtonSize
-import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
 import androidx.wear.compose.material3.lazy.TransformationSpec
@@ -77,48 +63,48 @@ class MainActivity : ComponentActivity() {
     private const val KEY_ANSWERS_BYTES = "answers_bytes"
   }
 
-  private var reviewSession by mutableStateOf<ReviewSession?>(null)
-  private var cardCompletedTrigger by mutableStateOf(0)
-  private var outstandingAnswersCount by mutableStateOf(0)
+  internal var reviewSession by mutableStateOf<ReviewSession?>(null)
+  internal var cardCompletedTrigger by mutableStateOf(0)
+  internal var outstandingAnswersCount by mutableStateOf(0)
   // Age (seconds) of the oldest un-synced review, to nudge the user when reviews go stale.
-  private var outstandingOldestSecs by mutableLongStateOf(0L)
+  internal var outstandingOldestSecs by mutableLongStateOf(0L)
   // Reviews completed since local midnight (motivational counter).
-  private var reviewedToday by mutableStateOf(0)
-  private var isReviewing by mutableStateOf(false)
-  private var ttsEnabled by mutableStateOf(false)
+  internal var reviewedToday by mutableStateOf(0)
+  internal var isReviewing by mutableStateOf(false)
+  internal var ttsEnabled by mutableStateOf(false)
 
   // User settings mirrored into Compose state (persisted via WatchSettings). Changing any of these
   // recomposes the theme / card text immediately.
-  private var themeMode by mutableStateOf(WatchSettings.ThemeMode.DARK)
-  private var fontScale by mutableFloatStateOf(1.0f)
-  private var speechRate by mutableFloatStateOf(1.0f)
-  private var cardFont by mutableStateOf(WatchSettings.CardFont.DEFAULT)
-  private var keepScreenOn by mutableStateOf(false)
-  private var hideClock by mutableStateOf(false)
-  private var hideProgress by mutableStateOf(false)
-  private var coloredGradeButtons by mutableStateOf(true)
-  private var showSettings by mutableStateOf(false)
+  internal var themeMode by mutableStateOf(WatchSettings.ThemeMode.DARK)
+  internal var fontScale by mutableFloatStateOf(1.0f)
+  internal var speechRate by mutableFloatStateOf(1.0f)
+  internal var cardFont by mutableStateOf(WatchSettings.CardFont.DEFAULT)
+  internal var keepScreenOn by mutableStateOf(false)
+  internal var hideClock by mutableStateOf(false)
+  internal var hideProgress by mutableStateOf(false)
+  internal var coloredGradeButtons by mutableStateOf(true)
+  internal var showSettings by mutableStateOf(false)
 
   // Current folder in the deck picker's `::` hierarchy ("" = root). Descending sets it to a child
   // path; the physical back button and the up row pop it one level.
-  private var deckFolderPath by mutableStateOf("")
+  internal var deckFolderPath by mutableStateOf("")
 
   // Deck-list + settings state lives in the ViewModel (survives config changes); this Activity stays
   // the review/sync controller (live session, TTS, Data Layer, receiver).
-  private val vm: WatchViewModel by viewModels()
+  internal val vm: WatchViewModel by viewModels()
 
   // Deck the user tapped to download; loaded automatically once its batch arrives from the phone.
   // Compose state so the UI can show a sync-progress arc while a download is in flight.
-  private var pendingDeckId: Long? by mutableStateOf(null)
+  internal var pendingDeckId: Long? by mutableStateOf(null)
   // The deck currently open in a review session (for requesting more new cards of it).
-  private var activeDeckId by mutableStateOf<Long?>(null)
+  internal var activeDeckId by mutableStateOf<Long?>(null)
   // Whether the pending request was for new cards, so we can report when none came back.
-  private var pendingIsNew = false
+  internal var pendingIsNew = false
 
-  private var tts: TextToSpeech? = null
-  private val scope = CoroutineScope(Dispatchers.Main)
+  internal var tts: TextToSpeech? = null
+  internal val scope = CoroutineScope(Dispatchers.Main)
 
-  private val syncReceiver =
+  internal val syncReceiver =
     object : BroadcastReceiver() {
       override fun onReceive(context: Context?, intent: Intent?) {
         Log.d(TAG, "Sync broadcast received: ${intent?.action}")
@@ -221,13 +207,13 @@ class MainActivity : ComponentActivity() {
   }
 
   /** Free the native [ReviewSession] before dropping the reference (see onDestroy). */
-  private fun clearSession() {
+  internal fun clearSession() {
     reviewSession?.destroy()
     reviewSession = null
   }
 
   /** Parent of a `::` deck path; "" when already at a top-level segment. */
-  private fun parentFolder(path: String): String = path.substringBeforeLast("::", "")
+  internal fun parentFolder(path: String): String = path.substringBeforeLast("::", "")
 
   /**
    * Load an already-downloaded deck into a review session entirely offline. When [toastIfEmptyNew]
@@ -265,7 +251,7 @@ class MainActivity : ComponentActivity() {
   }
 
   /** Pick a deck: open it offline if cached, otherwise download it from the phone. */
-  private fun selectDeck(deckId: Long) {
+  internal fun selectDeck(deckId: Long) {
     if (vm.cachedDecks.any { it.id == deckId }) {
       loadDeckSession(deckId)
     } else {
@@ -280,68 +266,66 @@ class MainActivity : ComponentActivity() {
    * next open shows the true next-due instead of the in-session requeue approximation. Best-effort:
    * on failure the deck still converges on the next manual open/refresh.
    */
-  private fun silentlyRefreshDeck(deckId: Long) {
+  private fun toast(message: String, length: Int = Toast.LENGTH_SHORT) {
+    Toast.makeText(this, message, length).show()
+  }
+
+  /**
+   * Send [payload] to [path] on every connected phone node, off the main thread. Callbacks run on
+   * the main thread: [onNotConnected] when no node is reachable, [onSent] after a successful
+   * broadcast, [onError] on failure (all default to no-ops for fire-and-forget sends).
+   */
+  private fun sendToPhone(
+    path: String,
+    payload: ByteArray = ByteArray(0),
+    onNotConnected: () -> Unit = {},
+    onSent: () -> Unit = {},
+    onError: (Exception) -> Unit = {},
+  ) {
     scope.launch(Dispatchers.IO) {
       try {
         val nodes = Wearable.getNodeClient(this@MainActivity).connectedNodes.await()
-        if (nodes.isEmpty()) return@launch
+        if (nodes.isEmpty()) {
+          launch(Dispatchers.Main) { onNotConnected() }
+          return@launch
+        }
         val messageClient = Wearable.getMessageClient(this@MainActivity)
         for (node in nodes) {
-          messageClient.sendMessage(node.id, "/request_deck", deckId.toString().toByteArray()).await()
+          messageClient.sendMessage(node.id, path, payload).await()
+          Log.d(TAG, "Sent $path to node: ${node.displayName}")
         }
-        Log.d(TAG, "Requested reconciled batch for deck $deckId after write-back.")
+        launch(Dispatchers.Main) { onSent() }
       } catch (e: Exception) {
-        Log.w(TAG, "Reconcile refresh for deck $deckId failed; converges on next open: ${e.message}")
+        Log.e(TAG, "Failed to send $path to phone: ${e.message}", e)
+        launch(Dispatchers.Main) { onError(e) }
       }
     }
+  }
+
+  /** Silent reconcile refresh after write-back; failures converge on the next open, so no toasts. */
+  private fun silentlyRefreshDeck(deckId: Long) {
+    sendToPhone("/request_deck", deckId.toString().toByteArray())
   }
 
   private fun requestDeckFromPhone(deckId: Long) {
     pendingDeckId = deckId
     pendingIsNew = false
-    scope.launch(Dispatchers.IO) {
-      try {
-        val messageClient = Wearable.getMessageClient(this@MainActivity)
-        val nodeClient = Wearable.getNodeClient(this@MainActivity)
-        val nodes = nodeClient.connectedNodes.await()
-
-        if (nodes.isEmpty()) {
-          launch(Dispatchers.Main) {
-            pendingDeckId = null // stop the sync arc; nothing is coming
-            Toast.makeText(
-                this@MainActivity,
-                "Phone not connected! Check Bluetooth.",
-                Toast.LENGTH_SHORT,
-              )
-              .show()
-          }
-          return@launch
-        }
-
-        for (node in nodes) {
-          messageClient
-            .sendMessage(node.id, "/request_deck", deckId.toString().toByteArray())
-            .await()
-          Log.d(TAG, "Sent request_deck ($deckId) to node: ${node.displayName}")
-        }
-
-        launch(Dispatchers.Main) {
-          Toast.makeText(this@MainActivity, "Syncing deck from phone...", Toast.LENGTH_SHORT).show()
-          startDownloadTimeout(deckId)
-        }
-      } catch (e: Exception) {
-        Log.e(TAG, "Failed to request deck from phone: ${e.message}", e)
-        launch(Dispatchers.Main) {
-          pendingDeckId = null
-          Toast.makeText(
-              this@MainActivity,
-              "Failed to contact phone: ${e.message}",
-              Toast.LENGTH_SHORT,
-            )
-            .show()
-        }
-      }
-    }
+    sendToPhone(
+      "/request_deck",
+      deckId.toString().toByteArray(),
+      onNotConnected = {
+        pendingDeckId = null // stop the sync arc; nothing is coming
+        toast("Phone not connected! Check Bluetooth.")
+      },
+      onSent = {
+        toast("Syncing deck from phone...")
+        startDownloadTimeout(deckId)
+      },
+      onError = { e ->
+        pendingDeckId = null
+        toast("Failed to contact phone: ${e.message}")
+      },
+    )
   }
 
   /** Stop the sync-progress arc if the phone never sends the batch, instead of spinning forever. */
@@ -351,8 +335,7 @@ class MainActivity : ComponentActivity() {
       if (pendingDeckId == deckId) {
         pendingDeckId = null
         pendingIsNew = false
-        Toast.makeText(this@MainActivity, "Phone didn't respond — try again.", Toast.LENGTH_SHORT)
-          .show()
+        toast("Phone didn't respond — try again.")
       }
     }
   }
@@ -361,76 +344,31 @@ class MainActivity : ComponentActivity() {
   private fun requestNewCardsFromPhone(deckId: Long, count: Int) {
     pendingDeckId = deckId
     pendingIsNew = true
-    scope.launch(Dispatchers.IO) {
-      try {
-        val messageClient = Wearable.getMessageClient(this@MainActivity)
-        val nodeClient = Wearable.getNodeClient(this@MainActivity)
-        val nodes = nodeClient.connectedNodes.await()
-        if (nodes.isEmpty()) {
-          launch(Dispatchers.Main) {
-            pendingDeckId = null
-            Toast.makeText(this@MainActivity, "Phone not connected!", Toast.LENGTH_SHORT).show()
-          }
-          return@launch
-        }
-        for (node in nodes) {
-          messageClient.sendMessage(node.id, "/request_new", "$deckId:$count".toByteArray()).await()
-          Log.d(TAG, "Sent request_new ($deckId:$count) to node: ${node.displayName}")
-        }
-        launch(Dispatchers.Main) {
-          Toast.makeText(this@MainActivity, "Fetching $count new cards...", Toast.LENGTH_SHORT)
-            .show()
-          startDownloadTimeout(deckId)
-        }
-      } catch (e: Exception) {
-        Log.e(TAG, "Failed to request new cards: ${e.message}", e)
-        launch(Dispatchers.Main) {
-          pendingDeckId = null
-          Toast.makeText(this@MainActivity, "Failed to contact phone.", Toast.LENGTH_SHORT).show()
-        }
-      }
-    }
+    sendToPhone(
+      "/request_new",
+      "$deckId:$count".toByteArray(),
+      onNotConnected = {
+        pendingDeckId = null
+        toast("Phone not connected!")
+      },
+      onSent = {
+        toast("Fetching $count new cards...")
+        startDownloadTimeout(deckId)
+      },
+      onError = {
+        pendingDeckId = null
+        toast("Failed to contact phone.")
+      },
+    )
   }
 
-  private fun requestDecksFromPhone() {
-    scope.launch(Dispatchers.IO) {
-      try {
-        val messageClient = Wearable.getMessageClient(this@MainActivity)
-        val nodeClient = Wearable.getNodeClient(this@MainActivity)
-        val nodes = nodeClient.connectedNodes.await()
-
-        if (nodes.isEmpty()) {
-          launch(Dispatchers.Main) {
-            Toast.makeText(
-                this@MainActivity,
-                "Phone not connected! Check Bluetooth.",
-                Toast.LENGTH_SHORT,
-              )
-              .show()
-          }
-          return@launch
-        }
-
-        for (node in nodes) {
-          messageClient.sendMessage(node.id, "/request_decks", ByteArray(0)).await()
-          Log.d(TAG, "Sent request_decks to node: ${node.displayName}")
-        }
-
-        launch(Dispatchers.Main) {
-          Toast.makeText(this@MainActivity, "Refreshing decks list...", Toast.LENGTH_SHORT).show()
-        }
-      } catch (e: Exception) {
-        Log.e(TAG, "Failed to request decks from phone: ${e.message}", e)
-        launch(Dispatchers.Main) {
-          Toast.makeText(
-              this@MainActivity,
-              "Failed to contact phone: ${e.message}",
-              Toast.LENGTH_SHORT,
-            )
-            .show()
-        }
-      }
-    }
+  internal fun requestDecksFromPhone() {
+    sendToPhone(
+      "/request_decks",
+      onNotConnected = { toast("Phone not connected! Check Bluetooth.") },
+      onSent = { toast("Refreshing decks list...") },
+      onError = { e -> toast("Failed to contact phone: ${e.message}") },
+    )
   }
 
   /**
@@ -458,7 +396,7 @@ class MainActivity : ComponentActivity() {
    * automatic flushes (launch-time catch-up), where "No reviews to sync!" would be noise; failures
    * are still logged and the answers stay buffered for the next manual or automatic attempt.
    */
-  private fun triggerAnswersSync(quiet: Boolean = false) {
+  internal fun triggerAnswersSync(quiet: Boolean = false) {
     scope.launch(Dispatchers.IO) {
       try {
         val answers = getBufferedAnswers()
@@ -587,340 +525,6 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  @Composable
-  fun WelcomeScreen() {
-    val listState = rememberTransformingLazyColumnState()
-    val transformSpec = rememberEdgeMorphSpec()
-    // Memoize on the underlying deck state, not on a freshly-built list: vm.deckEntries() returns a new
-    // List each call, so keying the remembers on it would defeat them and re-run the deckChildren FFI
-    // + the maps on every recomposition. Now they recompute only when the decks/folder actually change.
-    val entries = remember(vm.cachedDecks, vm.knownDecks) { vm.deckEntries() }
-    val countById = remember(entries) { entries.associate { it.id to it.cardCount } }
-    // Resolve one folder level from the flat deck list in Rust; card counts stay a UI concern here.
-    val level =
-      remember(entries, deckFolderPath) {
-        deckChildren(entries.map { DeckInfo(it.id, it.name) }, deckFolderPath)
-      }
-    // Reset scroll to the top whenever we descend into or pop out of a folder.
-    LaunchedEffect(deckFolderPath) { listState.scrollToItem(0) }
-
-    val title =
-      if (deckFolderPath.isEmpty()) "AnkiDroid WearOS" else deckFolderPath.substringAfterLast("::")
-
-    ScreenScaffold(scrollState = listState) { contentPadding ->
-      // M3 Expressive edge-hugging list: TransformingLazyColumn morphs each item container toward the
-      // round bezel, so deck cards visibly widen and round as they approach the vertical center and
-      // shrink at the top/bottom edges. SurfaceTransformation + transformedHeight drive the morph.
-      TransformingLazyColumn(
-        state = listState,
-        contentPadding = contentPadding,
-        modifier = Modifier.fillMaxSize().rotaryScroll(listState),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-      ) {
-        item {
-          Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            maxLines = 2,
-            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-            textAlign = TextAlign.Center,
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
-          )
-        }
-
-        if (entries.isEmpty()) {
-          item {
-            Text(
-              text = "Tap Refresh to load your decks, or open the phone app and press Sync.",
-              style = MaterialTheme.typography.bodyMedium,
-              modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-              textAlign = TextAlign.Center,
-            )
-          }
-        } else {
-          // Up one folder. Only shown when we've descended below the root.
-          if (deckFolderPath.isNotEmpty()) {
-            item {
-              CompactButton(
-                onClick = { deckFolderPath = parentFolder(deckFolderPath) },
-                colors = ButtonDefaults.filledTonalButtonColors(),
-                icon = {
-                  Icon(
-                    painter = painterResource(id = R.drawable.ic_arrow_up),
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp),
-                  )
-                },
-                modifier = Modifier.fillMaxWidth(0.7f),
-              ) {
-                Text("Up")
-              }
-            }
-          }
-
-          // Studying the folder itself (Anki parent decks are real decks).
-          level.ownDeck?.let { own ->
-            item {
-              DeckCard(
-                label = "Study ${own.name}",
-                cardCount = countById[own.id],
-                transformation = SurfaceTransformation(transformSpec),
-                modifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec),
-                onClick = { selectDeck(own.id) },
-              )
-            }
-          }
-
-          items(level.children) { node ->
-            val transformation = SurfaceTransformation(transformSpec)
-            val cardModifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec)
-            if (node.isFolder) {
-              FolderCard(
-                name = node.name,
-                transformation = transformation,
-                modifier = cardModifier,
-                onClick = { deckFolderPath = node.path },
-              )
-            } else {
-              DeckCard(
-                label = node.name,
-                cardCount = countById[node.id],
-                transformation = transformation,
-                modifier = cardModifier,
-                onClick = { selectDeck(node.id) },
-              )
-            }
-          }
-        }
-
-        item {
-          CompactButton(
-            onClick = { showSettings = true },
-            colors = ButtonDefaults.filledTonalButtonColors(),
-            modifier = Modifier.fillMaxWidth(0.7f),
-          ) {
-            Text("Settings")
-          }
-        }
-
-        item { Spacer(modifier = Modifier.height(8.dp)) }
-        item {
-          EdgeButton(
-            onClick = {
-              requestDecksFromPhone()
-              vm.loadDecks()
-            },
-            buttonSize = EdgeButtonSize.Medium,
-          ) {
-            Icon(
-              painter = painterResource(id = R.drawable.ic_refresh),
-              contentDescription = "Refresh decks",
-            )
-          }
-        }
-      }
-    }
-  }
-
-  @Composable
-  fun DeckScreen(session: ReviewSession) {
-    var pickingNewCount by remember { mutableStateOf(false) }
-    val listState = rememberTransformingLazyColumnState()
-    val transformSpec = rememberEdgeMorphSpec()
-    ScreenScaffold(scrollState = listState) { contentPadding ->
-      TransformingLazyColumn(
-        state = listState,
-        contentPadding = contentPadding,
-        modifier = Modifier.fillMaxSize().rotaryScroll(listState),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-      ) {
-        item {
-          Text(
-            text = "📚 Deck Stats",
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 2.dp),
-          )
-        }
-        item {
-          Text(
-            text = session.getDeckName(),
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 4.dp),
-          )
-        }
-        item {
-          Card(
-            onClick = {},
-            transformation = SurfaceTransformation(transformSpec),
-            modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
-          ) {
-            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-              Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically,
-              ) {
-                StatNumeral(
-                  label = "Due",
-                  value = "${session.getTotalCards()}",
-                  color = MaterialTheme.colorScheme.primary,
-                )
-                if (reviewedToday > 0) {
-                  Spacer(modifier = Modifier.width(32.dp))
-                  StatNumeral(label = "Today", value = "$reviewedToday", color = Color(0xFFFFA726))
-                }
-              }
-              Text(
-                text = "Progress ${session.getProgressString()}",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.LightGray,
-              )
-            }
-          }
-        }
-        item {
-          Button(
-            onClick = { isReviewing = true },
-            colors = ButtonDefaults.buttonColors(),
-            transformation = SurfaceTransformation(transformSpec),
-            modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
-          ) {
-            Text("Start Review")
-          }
-        }
-        // Study new cards ahead of the daily queue limit. Only available when we know the deck id.
-        if (activeDeckId != null) {
-          newCardControlItems(pickingNewCount, transformSpec) { pickingNewCount = it }
-        }
-        item {
-          SwitchButton(
-            checked = ttsEnabled,
-            onCheckedChange = {
-              ttsEnabled = it
-              WatchSettings.setTtsEnabled(this@MainActivity, it)
-            },
-            label = { Text("Voice Reviews") },
-            secondaryLabel = { Text(if (ttsEnabled) "Speaker On 🔊" else "Speaker Off 🔇") },
-            transformation = SurfaceTransformation(transformSpec),
-            modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
-          )
-        }
-        if (outstandingAnswersCount > 0) {
-          item {
-            Button(
-              onClick = { triggerAnswersSync() },
-              colors =
-                ButtonDefaults.buttonColors(
-                  containerColor = Color(0xFF66BB6A).copy(alpha = 0.2f),
-                  contentColor = Color(0xFF66BB6A),
-                ),
-              transformation = SurfaceTransformation(transformSpec),
-              modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
-            ) {
-              Text("Sync $outstandingAnswersCount Reviews")
-            }
-          }
-          // Nudge when reviews have been waiting to reach the phone for a day or more.
-          if (outstandingOldestSecs >= 86_400) {
-            item {
-              Text(
-                text = "⚠ Oldest unsynced ${humanAge(outstandingOldestSecs)} ago",
-                style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFFFFA726),
-                textAlign = TextAlign.Center,
-                modifier = Modifier.padding(horizontal = 12.dp),
-              )
-            }
-          }
-        }
-        item { Spacer(modifier = Modifier.height(8.dp)) }
-        item {
-          EdgeButton(onClick = { clearSession() }, buttonSize = EdgeButtonSize.Medium) {
-            Text("Change Deck")
-          }
-        }
-      }
-    }
-  }
-
-  @Composable
-  fun ReviewCardScreen(session: ReviewSession, card: WearosCard) {
-    val cardStartTime = remember(card.id, card.ord) { System.currentTimeMillis() }
-    var isRevealed by remember(card.id, card.ord) { mutableStateOf(session.isRevealed()) }
-    var isAnswering by remember(card.id, card.ord) { mutableStateOf(false) }
-    val scrollState = rememberScrollState()
-    val haptics = LocalHapticFeedback.current
-
-    val labelStyle = MaterialTheme.typography.labelSmall
-    val curvedStyle =
-      remember(labelStyle) {
-        androidx.wear.compose.foundation.CurvedTextStyle(labelStyle.copy(fontSize = 11.sp))
-      }
-
-    // Anki answers embed the question followed by <hr id=answer>; the Rust core returns just the
-    // part after it so the answer view doesn't duplicate the front (whole back if no marker).
-    val answerBack = remember(card.back) { answerHtml(card.back) }
-
-    // Rich HTML for display; plain text for TTS.
-    val displayFront = remember(card.front) { htmlForDisplay(card.front) }
-    val displayBack = remember(answerBack) { htmlForDisplay(answerBack) }
-    val cleanFront = remember(card.front) { cleanHtml(card.front) }
-    val cleanBack = remember(answerBack) { cleanHtml(answerBack) }
-
-    // TTS voice effects triggered dynamically via state change
-    LaunchedEffect(card.id, card.ord) { speak(cleanFront) }
-    LaunchedEffect(isRevealed) {
-      if (isRevealed) {
-        speak(cleanBack)
-      }
-    }
-
-    // Optionally hold the screen on for the duration of the review (opt-in; battery cost). The flag
-    // is cleared when we leave the review screen.
-    if (keepScreenOn) {
-      DisposableEffect(Unit) {
-        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        onDispose { window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON) }
-      }
-    }
-
-    // Hide-clock: override the app's TimeText with an empty one for the review card only (null keeps
-    // the default clock from AppScaffold).
-    val emptyTimeText: @Composable () -> Unit = {}
-    val reviewTimeText = if (hideClock) emptyTimeText else null
-    ScreenScaffold(scrollState = scrollState, timeText = reviewTimeText) {
-      if (!isRevealed) {
-        ReviewFront(session, card, displayFront, curvedStyle, scrollState) {
-          session.revealAnswer()
-          isRevealed = true
-        }
-      } else {
-        ReviewAnswer(
-          session,
-          card,
-          displayFront,
-          displayBack,
-          scrollState,
-          cardStartTime,
-          gradeEnabled = !isAnswering,
-          curvedStyle = curvedStyle,
-        ) { ease, duration ->
-          if (!isAnswering) {
-            isAnswering = true
-            // Confirm the grade with a short haptic tick (eyes-free / glanceable feedback).
-            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-            // Answers just buffer locally here; they sync on the Finished screen, the deck-screen
-            // "Sync N reviews" action, or background sync — not after every grade (too noisy).
-            answerCardSafely(session, ease, duration) { isAnswering = false }
-          }
-        }
-      }
-    }
-  }
-
   /**
    * Determinate progress ring hugging the round edge, filling clockwise from the top in proportion to
    * cards graduated this session (matching the N/M label from [TopCurvedProgress]). Drawn first in the
@@ -956,7 +560,7 @@ class MainActivity : ComponentActivity() {
    * Front of a review card: progress, an optional undo, the tappable card body, and a reveal hint.
    */
   @Composable
-  private fun BoxScope.ReviewFront(
+  internal fun BoxScope.ReviewFront(
     session: ReviewSession,
     card: WearosCard,
     displayFront: String,
@@ -1027,7 +631,7 @@ class MainActivity : ComponentActivity() {
 
   /** Revealed card: front + answer scrolling under the curved grade buttons. */
   @Composable
-  private fun BoxScope.ReviewAnswer(
+  internal fun BoxScope.ReviewAnswer(
     session: ReviewSession,
     card: WearosCard,
     displayFront: String,
@@ -1119,7 +723,7 @@ class MainActivity : ComponentActivity() {
   }
 
   /** "Learn new cards" chip that expands into a 5/10/20 chooser; shared by Deck and Finished. */
-  private fun TransformingLazyColumnScope.newCardControlItems(
+  internal fun TransformingLazyColumnScope.newCardControlItems(
     picking: Boolean,
     transformSpec: TransformationSpec,
     setPicking: (Boolean) -> Unit,
@@ -1208,7 +812,7 @@ class MainActivity : ComponentActivity() {
    * A labelled row of mutually-exclusive choice chips; the active one is filled, the rest tonal.
    */
   @Composable
-  private fun <T> settingChoiceRow(
+  internal fun <T> settingChoiceRow(
     label: String,
     options: List<Pair<T, String>>,
     selected: T,
@@ -1241,7 +845,7 @@ class MainActivity : ComponentActivity() {
   }
 
   /** A full-width settings toggle row that morphs with the edge-hugging list like the other items. */
-  private fun TransformingLazyColumnScope.settingSwitchItem(
+  internal fun TransformingLazyColumnScope.settingSwitchItem(
     checked: Boolean,
     label: String,
     secondaryLabel: String,
@@ -1261,7 +865,7 @@ class MainActivity : ComponentActivity() {
   }
 
   /** The minimal-view appearance toggles (grade-button color + hide clock/progress in review). */
-  private fun TransformingLazyColumnScope.appearanceToggles(transformSpec: TransformationSpec) {
+  internal fun TransformingLazyColumnScope.appearanceToggles(transformSpec: TransformationSpec) {
     settingSwitchItem(
       checked = coloredGradeButtons,
       label = "Grade colors",
@@ -1288,127 +892,6 @@ class MainActivity : ComponentActivity() {
     ) {
       hideClock = it
       WatchSettings.setHideClock(this@MainActivity, it)
-    }
-  }
-
-  @Composable
-  fun SettingsScreen() {
-    val listState = rememberTransformingLazyColumnState()
-    val transformSpec = rememberEdgeMorphSpec()
-    ScreenScaffold(scrollState = listState) { contentPadding ->
-      TransformingLazyColumn(
-        state = listState,
-        contentPadding = contentPadding,
-        modifier = Modifier.fillMaxSize().rotaryScroll(listState),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-      ) {
-        item {
-          Text(
-            text = "Settings",
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(vertical = 6.dp).transformedHeight(this, transformSpec),
-          )
-        }
-        item {
-          settingChoiceRow(
-            label = "Theme",
-            options =
-              listOf(
-                WatchSettings.ThemeMode.SYSTEM to "Auto",
-                WatchSettings.ThemeMode.DARK to "Dark",
-                WatchSettings.ThemeMode.LIGHT to "Light",
-              ),
-            selected = themeMode,
-            modifier = Modifier.transformedHeight(this, transformSpec),
-          ) { mode ->
-            themeMode = mode
-            WatchSettings.setThemeMode(this@MainActivity, mode)
-          }
-        }
-        item {
-          settingChoiceRow(
-            label = "Text size",
-            options = listOf(0.9f to "S", 1.0f to "M", 1.3f to "L", 1.6f to "XL", 1.8f to "XXL"),
-            selected = fontScale,
-            modifier = Modifier.transformedHeight(this, transformSpec),
-          ) { scale ->
-            fontScale = scale
-            WatchSettings.setFontScale(this@MainActivity, scale)
-          }
-        }
-        item {
-          // Live preview at the chosen size + font.
-          val previewTypeface =
-            when (cardFont) {
-              WatchSettings.CardFont.SERIF -> androidx.compose.ui.text.font.FontFamily.Serif
-              WatchSettings.CardFont.MONOSPACE -> androidx.compose.ui.text.font.FontFamily.Monospace
-              WatchSettings.CardFont.DEFAULT -> androidx.compose.ui.text.font.FontFamily.Default
-            }
-          Text(
-            text = "あア 漢字 Aa 12",
-            style =
-              MaterialTheme.typography.bodyMedium.copy(
-                fontSize = (16 * fontScale).sp,
-                fontFamily = previewTypeface,
-              ),
-            modifier = Modifier.transformedHeight(this, transformSpec),
-          )
-        }
-        item {
-          settingChoiceRow(
-            label = "Card font",
-            options =
-              listOf(
-                WatchSettings.CardFont.DEFAULT to "Sans",
-                WatchSettings.CardFont.SERIF to "Serif",
-                WatchSettings.CardFont.MONOSPACE to "Mono",
-              ),
-            selected = cardFont,
-            modifier = Modifier.transformedHeight(this, transformSpec),
-          ) { font ->
-            cardFont = font
-            WatchSettings.setCardFont(this@MainActivity, font)
-          }
-        }
-        settingSwitchItem(
-          checked = ttsEnabled,
-          label = "Voice reviews",
-          secondaryLabel = "Read cards aloud (TTS)",
-          transformSpec = transformSpec,
-        ) {
-          ttsEnabled = it
-          WatchSettings.setTtsEnabled(this@MainActivity, it)
-        }
-        item {
-          settingChoiceRow(
-            label = "Speech rate",
-            options = listOf(0.7f to "Slow", 1.0f to "Normal", 1.4f to "Fast"),
-            selected = speechRate,
-            modifier = Modifier.transformedHeight(this, transformSpec),
-          ) { rate ->
-            speechRate = rate
-            WatchSettings.setSpeechRate(this@MainActivity, rate)
-            tts?.setSpeechRate(rate)
-          }
-        }
-        settingSwitchItem(
-          checked = keepScreenOn,
-          label = "Keep screen on",
-          secondaryLabel = "During review · uses battery",
-          transformSpec = transformSpec,
-        ) {
-          keepScreenOn = it
-          WatchSettings.setKeepScreenOn(this@MainActivity, it)
-        }
-        appearanceToggles(transformSpec)
-        item { Spacer(modifier = Modifier.height(8.dp)) }
-        item {
-          EdgeButton(onClick = { showSettings = false }, buttonSize = EdgeButtonSize.Medium) {
-            Icon(painter = painterResource(id = R.drawable.ic_check), contentDescription = "Done")
-          }
-        }
-      }
     }
   }
 }
