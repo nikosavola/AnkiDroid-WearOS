@@ -82,13 +82,9 @@ class AnkiDroidBridge(private val context: Context) {
   /** Query all available decks in AnkiDroid dynamically. */
   fun fetchAllDecks(): List<Pair<DeckId, String>> {
     val list = mutableListOf<Pair<DeckId, String>>()
-    if (!isAnkiDroidAvailable()) {
-      return listOf(
-        Pair(DeckId(1L), "WearOS Dev (Mock Deck)"),
-        Pair(DeckId(123L), "Japanese Vocab (Mock)"),
-        Pair(DeckId(456L), "Medical Anatomy (Mock)"),
-      )
-    }
+    // Unavailable provider returns an empty list, never fake decks: substituting mocks would
+    // overwrite the user's real cached decks and offer phantom decks to sync.
+    if (!isAnkiDroidAvailable()) return emptyList()
     try {
       val cursor = context.contentResolver.query(DECKS_URI, null, null, null, null)
       cursor?.use {
@@ -163,23 +159,35 @@ class AnkiDroidBridge(private val context: Context) {
     return Pair(DeckId(1L), "Default")
   }
 
-  /** Fetch the due cards batch. Automatically falls back to mock cards if AnkiDroid is missing. */
+  /** Fetch the due cards batch. Returns mock cards only when [forceMock] is set (offline demo). */
   fun fetchDueBatch(deckId: DeckId, limit: Int, forceMock: Boolean = false): WearosDueBatch {
-    if (forceMock || !isAnkiDroidAvailable()) {
-      Log.i(TAG, "AnkiDroid not found or Mock Mode forced. Falling back to Mock Due Batch.")
+    if (forceMock) {
+      Log.i(TAG, "Mock mode forced. Returning mock due batch.")
       return getMockDueBatch(deckId)
+    }
+    // Unavailable -> empty batch, never mocks: mock cards stamped with the real deck id would
+    // clobber the cached deck and, if graded, enter the buffer as answers that never settle.
+    if (!isAnkiDroidAvailable()) {
+      Log.w(TAG, "AnkiDroid unavailable; returning empty batch for deck ${deckId.value}.")
+      return WearosDueBatch(deckId = deckId.value, deckName = "Deck ${deckId.value}", cards = emptyList())
     }
 
     try {
       val allDecks = fetchAllDecks()
       val matchedDeck = allDecks.find { it.first == deckId }
-      val (resolvedDeckId, resolvedDeckName) =
-        if (matchedDeck != null) {
-          matchedDeck
-        } else {
-          getSelectedDeck()
-        }
-      Log.i(TAG, "Using AnkiDroid selected deck: $resolvedDeckName (ID: $resolvedDeckId)")
+      if (matchedDeck == null) {
+        // Requested deck no longer exists (deleted / deselected). Return an empty batch tagged with
+        // the REQUESTED id, never a substitute deck: the watch matches the arrival on the id it asked
+        // for, so a different deck just leaves it waiting out the full download timeout.
+        Log.w(TAG, "Requested deck ${deckId.value} not found; returning empty batch.")
+        return WearosDueBatch(
+          deckId = deckId.value,
+          deckName = "Deck ${deckId.value}",
+          cards = emptyList(),
+        )
+      }
+      val (resolvedDeckId, resolvedDeckName) = matchedDeck
+      Log.i(TAG, "Using AnkiDroid deck: $resolvedDeckName (ID: $resolvedDeckId)")
 
       val cards = mutableListOf<WearosCard>()
       val contentResolver: ContentResolver = context.contentResolver
@@ -255,8 +263,10 @@ class AnkiDroidBridge(private val context: Context) {
         cards = cards,
       )
     } catch (e: Exception) {
-      Log.e(TAG, "Failed to query AnkiDroid ContentProvider: ${e.message}. Using mocks.", e)
-      return getMockDueBatch(deckId)
+      // Return an empty batch (not mocks) so a transient provider error can't overwrite the
+      // real cached deck with phantom cards.
+      Log.e(TAG, "Failed to query AnkiDroid ContentProvider: ${e.message}. Returning empty batch.", e)
+      return WearosDueBatch(deckId = deckId.value, deckName = "Deck ${deckId.value}", cards = emptyList())
     }
   }
 
@@ -270,8 +280,11 @@ class AnkiDroidBridge(private val context: Context) {
    * since the Card projection doesn't expose per-card queue state.
    */
   fun fetchNewCards(deckId: DeckId, limit: Int, forceMock: Boolean = false): WearosDueBatch {
-    if (forceMock || !isAnkiDroidAvailable()) {
+    if (forceMock) {
       return getMockDueBatch(deckId).let { it.copy(deckName = "${it.deckName} (new)") }
+    }
+    if (!isAnkiDroidAvailable()) {
+      return WearosDueBatch(deckId = deckId.value, deckName = "New cards", cards = emptyList())
     }
     return try {
       val (resolvedDeckId, resolvedDeckName) =
@@ -296,7 +309,8 @@ class AnkiDroidBridge(private val context: Context) {
 
   /** Note ids of up to [limit] new cards in [deckName], via the notes search endpoint. */
   private fun searchNewCardNoteIds(deckName: String, limit: Int): List<Long> {
-    val escaped = deckName.replace("\"", "\\\"")
+    // Escape backslashes before quotes, or a deck name ending in '\' would break the quoted term.
+    val escaped = deckName.replace("\\", "\\\\").replace("\"", "\\\"")
     val search = "deck:\"$escaped\" is:new"
     Log.i(TAG, "Searching new cards: $search")
     val ids = mutableListOf<Long>()
@@ -371,11 +385,12 @@ class AnkiDroidBridge(private val context: Context) {
       return answers.map { it.id }
     }
     if (!isAnkiDroidAvailable()) {
-      Log.i(
-        TAG,
-        "Mock Writeback: Successfully simulated writing ${answers.size} answers to AnkiDroid.",
-      )
-      return answers.map { it.id }
+      // Provider unreachable (not installed, disabled, mid-update, or the read/write permission
+      // not yet granted - all normal first-run states). This is transient, NOT a terminal outcome:
+      // settling here would send clear_answers and permanently drop the user's buffered reviews.
+      // Keep everything buffered for a later retry.
+      Log.w(TAG, "AnkiDroid unavailable; keeping ${answers.size} answers buffered for retry.")
+      return emptyList()
     }
 
     // IDs to clear from the watch buffer = terminal outcomes: either applied (rows > 0) or the card
@@ -433,11 +448,13 @@ class AnkiDroidBridge(private val context: Context) {
           // Answer via FlashCardsContract.ReviewInfo: fields in ContentValues, null selection. The
           // provider calls the real scheduler (col.sched.answerCard) on the current card, which we've
           // just confirmed is this answer's card.
+          // Clamp ease to the 1..4 the scheduler accepts; a corrupt/out-of-range wire value must
+          // never reach col.sched.answerCard.
           val values =
             ContentValues().apply {
               put(COL_REVIEW_NOTE_ID, answer.noteId)
               put(COL_REVIEW_ORD, answer.ord)
-              put(COL_REVIEW_EASE, answer.ease)
+              put(COL_REVIEW_EASE, answer.ease.coerceIn(1, 4))
               put(COL_REVIEW_TIME_TAKEN, answer.timeTakenMs)
             }
           val rowsUpdated = contentResolver.update(SCHEDULE_URI, values, null, null)
@@ -446,6 +463,10 @@ class AnkiDroidBridge(private val context: Context) {
           if (rowsUpdated > 0) {
             applied++
             appliedIdStore.add(answer.id)
+            // Persist immediately: if the service is killed mid-drain, an applied-but-unrecorded id
+            // would be re-applied on the next sync (a relearn card back at the head defeats the
+            // current-card gate). Saving per-apply narrows that window to a single update.
+            saveAppliedIds(appliedIdStore)
           } else {
             // Matched the current card but nothing was written (already answered / removed): terminal.
             Log.w(TAG, "Answer for note ${answer.noteId} matched the current card but wrote 0 rows.")
@@ -462,7 +483,6 @@ class AnkiDroidBridge(private val context: Context) {
       }
     }
 
-    if (applied > 0) saveAppliedIds(appliedIdStore)
     Log.i(TAG, "Write-back: $applied applied, ${remaining.size} kept for retry/later.")
     return settledIds
   }
@@ -481,7 +501,10 @@ class AnkiDroidBridge(private val context: Context) {
       .getSharedPreferences(DEDUPE_PREFS, Context.MODE_PRIVATE)
       .edit()
       .putString(KEY_APPLIED_IDS, trimmed.joinToString(","))
-      .apply()
+      // commit() (not apply()): this is called per-apply so the id is durably recorded before the
+      // next scheduler update. An async apply() could lose the record if the service is killed
+      // between the update and the flush, reopening the double-apply window this store exists to close.
+      .commit()
   }
 
   /**

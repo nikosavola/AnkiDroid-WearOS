@@ -104,15 +104,17 @@ class AnkiDroidBridgeTest {
   }
 
   @Test
-  fun fetchAllDecks_fallsBackToMockWhenProviderUnavailable() {
+  fun fetchAllDecks_returnsEmptyWhenProviderUnavailable() {
     val resolver =
       mockk<ContentResolver>(relaxed = true) {
         every { acquireContentProviderClient(any<Uri>()) } returns null
       }
     val context = mockk<Context>(relaxed = true) { every { contentResolver } returns resolver }
 
+    // Unavailable provider must NOT synthesize phantom decks: mock decks would overwrite the
+    // user's real cached decks and offer non-existent decks to sync.
     val decks = AnkiDroidBridge(context).fetchAllDecks()
-    assertTrue("expected mock fallback decks", decks.any { it.second.contains("Mock") })
+    assertTrue("expected no decks when provider unavailable", decks.isEmpty())
   }
 
   // --- write-back (watch grades -> AnkiDroid) contract ---------------------------------------
