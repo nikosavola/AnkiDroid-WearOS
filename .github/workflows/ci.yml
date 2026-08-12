@@ -94,6 +94,10 @@ jobs:
         run: ./gradlew :phone:testDebugUnitTest :wear:testDebugUnitTest --no-daemon
       - name: Run Android Lint (phone + wear)
         run: ./gradlew :phone:lintDebug :wear:lintDebug --no-daemon
+      - name: Build Release (unsigned, exercises R8/minify)
+        # Neither module has a signingConfig on release, so this produces an unsigned APK - the
+        # point is exercising R8 with the JNA/UniFFI keep rules, not producing a distributable build.
+        run: ./gradlew :phone:assembleRelease :wear:assembleRelease --no-daemon
       - name: Upload Test/Lint Reports on Failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
