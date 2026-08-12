@@ -70,7 +70,6 @@ dependencies {
 
   implementation(libs.wear.compose.material3)
   implementation(libs.wear.compose.foundation)
-  implementation(libs.wear.compose.navigation)
   implementation(libs.wear.tiles)
   implementation(libs.wear.protolayout)
   implementation(libs.wear.protolayout.core)
