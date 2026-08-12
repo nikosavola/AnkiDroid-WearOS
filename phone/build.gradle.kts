@@ -64,8 +64,8 @@ dependencies {
   implementation(libs.kotlin.stdlib)
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.lifecycle.runtime.ktx)
-  implementation("androidx.appcompat:appcompat:1.7.0")
-  implementation("com.google.android.material:material:1.12.0")
+  implementation(libs.androidx.appcompat)
+  implementation(libs.material)
 
   // Jetpack Compose (Material 3) — phase-1 of the phone UI migration; hosts the animated deck tree.
   implementation(libs.androidx.activity.compose)
