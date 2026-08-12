@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Android 12+ (API 31+) backup/transfer rules. See backup_rules.xml for older devices. -->
+<data-extraction-rules>
+    <cloud-backup>
+        <!-- Ids of answers already written back to AnkiDroid (WearSyncService.processAnswers).
+             Restoring this without the watch's matching wearos_buffer.db would make the phone
+             re-apply already-settled grades that the watch re-sends as "unsettled". -->
+        <exclude domain="sharedpref" path="writeback_applied.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude domain="sharedpref" path="writeback_applied.xml" />
+    </device-transfer>
+</data-extraction-rules>
