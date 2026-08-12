@@ -175,6 +175,7 @@ class WearSyncService : WearableListenerService() {
         }
       sendBroadcast(intent)
       Log.d(TAG, "Broadcast sent: ACTION_BATCH_UPDATED for deck ${batch.deckId}")
+      WearSurfaceUpdater.requestRefresh(this)
     } catch (e: Exception) {
       Log.e(TAG, "Failed to cache received batch: ${e.message}", e)
     }
@@ -228,6 +229,8 @@ class WearSyncService : WearableListenerService() {
     val intent = Intent(ACTION_DECKS_UPDATED).apply { setPackage(packageName) }
     sendBroadcast(intent)
     Log.d(TAG, "Broadcast sent: ACTION_DECKS_UPDATED")
+    // Pruning can change the total due count summed across cached decks.
+    WearSurfaceUpdater.requestRefresh(this)
   }
 }
 
