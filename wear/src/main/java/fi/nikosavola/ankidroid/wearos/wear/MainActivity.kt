@@ -191,7 +191,14 @@ class MainActivity : ComponentActivity() {
         addAction(WearSyncService.ACTION_ANSWERS_CLEARED)
         addAction(WearSyncService.ACTION_DECKS_UPDATED)
       }
-    registerReceiver(syncReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+    // Context.RECEIVER_NOT_EXPORTED itself is API 33+; ContextCompat.registerReceiver handles the
+    // pre-33 case correctly instead of passing that flag straight to the platform (minSdk is 30).
+    androidx.core.content.ContextCompat.registerReceiver(
+      this,
+      syncReceiver,
+      filter,
+      androidx.core.content.ContextCompat.RECEIVER_NOT_EXPORTED,
+    )
 
     setContent { WearAppScreen() }
   }
