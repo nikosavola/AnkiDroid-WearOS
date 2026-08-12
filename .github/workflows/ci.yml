@@ -48,7 +48,7 @@ jobs:
       - name: Run Codebase Verification (Lint & Format Checks)
         run: ./gradlew lintAll --no-daemon
   test:
-    name: Test Suite (Rust & Kotlin)
+    name: Test Suite (Rust & Kotlin) + Android Lint
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -92,7 +92,9 @@ jobs:
         # Robolectric + host-JNA tests: the full FFI surface runs on the JVM (jna.library.path
         # points at the host-built libwearos_core.so via the compileRustHost task dependency).
         run: ./gradlew :phone:testDebugUnitTest :wear:testDebugUnitTest --no-daemon
-      - name: Upload Test Reports on Failure
+      - name: Run Android Lint (phone + wear)
+        run: ./gradlew :phone:lintDebug :wear:lintDebug --no-daemon
+      - name: Upload Test/Lint Reports on Failure
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
@@ -100,3 +102,5 @@ jobs:
           path: |
             phone/build/reports/tests/
             wear/build/reports/tests/
+            phone/build/reports/lint-results-debug.html
+            wear/build/reports/lint-results-debug.html

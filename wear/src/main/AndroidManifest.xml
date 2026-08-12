@@ -11,7 +11,12 @@
         android:label="AnkiDroid WearOS"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault">
-        
+
+        <!-- Requires the phone app for sync; not usable standalone. -->
+        <meta-data
+            android:name="com.google.android.wearable.standalone"
+            android:value="false" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

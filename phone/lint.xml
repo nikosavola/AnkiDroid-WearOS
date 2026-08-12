@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!-- Generated UniFFI/JNA bindings, not hand-written: guarded by a Class.forName runtime check
+         that lint's control-flow analysis can't see, so the API-level warning is a false positive.
+         Same source is excluded from ktlint/detekt in the root build.gradle.kts. -->
+    <issue id="NewApi">
+        <ignore path="**/bindings/**" />
+    </issue>
+</lint>
