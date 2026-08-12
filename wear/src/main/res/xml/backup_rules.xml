@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pre-Android 12 (API < 31) full-backup rules. See data_extraction_rules.xml for 31+. -->
+<full-backup-content>
+    <!-- Buffered-answer SQLite store (WearSyncService.onCreate). Restoring this without the
+         phone's matching dedupe store would replay already-applied answers as unsettled. -->
+    <exclude domain="file" path="wearos_buffer.db" />
+    <exclude domain="file" path="wearos_buffer.db-wal" />
+    <exclude domain="file" path="wearos_buffer.db-shm" />
+</full-backup-content>

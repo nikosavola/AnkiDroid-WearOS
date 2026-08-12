@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Pre-Android 12 (API < 31) full-backup rules. See data_extraction_rules.xml for 31+. -->
+<full-backup-content>
+    <!-- Ids of answers already written back to AnkiDroid (WearSyncService.processAnswers).
+         Restoring this without the watch's matching wearos_buffer.db would make the phone
+         re-apply already-settled grades that the watch re-sends as "unsettled". -->
+    <exclude domain="sharedpref" path="writeback_applied.xml" />
+</full-backup-content>
