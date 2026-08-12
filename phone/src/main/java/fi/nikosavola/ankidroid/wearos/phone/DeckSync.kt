@@ -33,7 +33,6 @@ object DeckSync {
   private const val PATH_DUE_BATCH = "/due_batch"
   private const val KEY_BATCH_ASSET = "batch_asset"
   private const val PATH_DECKS = "/decks"
-  private const val KEY_DECKS_BYTES = "decks_bytes"
 
   /** Epoch-millis of the last completed sync (foreground or background); 0 if never. */
   const val KEY_LAST_SYNC_MS = "last_sync_ms"
@@ -64,15 +63,18 @@ object DeckSync {
     onProgress("Syncing deck list…", 5)
 
     val decks = bridge.fetchAllDecks()
-    // .value everywhere: the prefs key ("deck_<id>") and the "id:name" wire format the watch parses
-    // must use the raw long, not DeckId.toString().
+    // .value everywhere: the prefs key ("deck_<id>") must use the raw long, not DeckId.toString().
     val filteredDecks = decks.filter { deckPrefs.getBoolean("deck_${it.first.value}", true) }
-    val decksStr = filteredDecks.joinToString("\n") { "${it.first.value}:${it.second}" }
     dataClient
       .putDataItem(
         PutDataMapRequest.create(PATH_DECKS)
           .apply {
-            dataMap.putByteArray(KEY_DECKS_BYTES, decksStr.toByteArray(Charsets.UTF_8))
+            // Legacy KEY_DECKS_BYTES text is intentionally not sent: dual-writing it alongside the
+            // protobuf payload roughly doubles the size of this DataMap, and this codebase has
+            // already hit DATA_ITEM_TOO_LARGE once (see the batch Asset comment above). The watch
+            // still knows how to read the legacy key if it ever receives it from an older-built
+            // phone.
+            dataMap.putByteArray(KEY_DECKS_PROTO_BYTES, encodeDecksProto(filteredDecks))
             setUrgent()
           }
           .asPutDataRequest()

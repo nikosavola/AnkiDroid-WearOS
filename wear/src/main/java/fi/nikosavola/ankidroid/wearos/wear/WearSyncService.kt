@@ -12,6 +12,7 @@ import com.google.android.gms.wearable.WearableListenerService
 import java.io.File
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
+import uniffi.wearos_core.deserializeDecks
 import uniffi.wearos_core.deserializeDueBatch
 import uniffi.wearos_core.initDatabase
 import uniffi.wearos_core.removeBufferedAnswers
@@ -26,7 +27,12 @@ class WearSyncService : WearableListenerService() {
     private const val KEY_BATCH_BYTES = "batch_bytes"
     private const val PATH_CLEAR_ANSWERS = "/clear_answers"
     private const val PATH_DECKS = "/decks"
+    // Legacy "id:name" text key. A phone built from this commit onward only sends
+    // KEY_DECKS_PROTO_BYTES (dual-writing both roughly doubles the DataMap size, and this codebase
+    // has already hit DATA_ITEM_TOO_LARGE once); this key is read only in case an older-built phone
+    // is still paired.
     private const val KEY_DECKS_BYTES = "decks_bytes"
+    private const val KEY_DECKS_PROTO_BYTES = "decks_proto_bytes"
 
     const val ACTION_BATCH_UPDATED = "fi.nikosavola.ankidroid.wearos.ACTION_BATCH_UPDATED"
     const val ACTION_ANSWERS_CLEARED = "fi.nikosavola.ankidroid.wearos.ACTION_ANSWERS_CLEARED"
@@ -74,11 +80,13 @@ class WearSyncService : WearableListenerService() {
             }
           }
         } else if (path == PATH_DECKS) {
-          val dataMapItem = DataMapItem.fromDataItem(event.dataItem)
-          val bytes = dataMapItem.dataMap.getByteArray(KEY_DECKS_BYTES)
-
-          if (bytes != null) {
-            saveDecksCache(bytes)
+          val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
+          val protoBytes = dataMap.getByteArray(KEY_DECKS_PROTO_BYTES)
+          if (protoBytes != null) {
+            saveDecksCacheProto(protoBytes)
+          } else {
+            val bytes = dataMap.getByteArray(KEY_DECKS_BYTES)
+            if (bytes != null) saveDecksCacheLegacyText(bytes)
           }
         } else if (path != null && path.startsWith("/card_image/")) {
           val parts = path.split("/")
@@ -172,30 +180,80 @@ class WearSyncService : WearableListenerService() {
     }
   }
 
-  private fun saveDecksCache(bytes: ByteArray) {
+  /** Preferred path: decode the protobuf deck list and cache it as-is (see [deserializeDecks]). */
+  private fun saveDecksCacheProto(bytes: ByteArray) {
     try {
-      val cacheFile = File(filesDir, "decks_cache.txt")
-      cacheFile.writeBytes(bytes)
-      Log.i(TAG, "Saved decks list cache locally.")
-
-      // Prune cached due batches for decks no longer in the list (deselected on the phone) so they
-      // stop showing as stray decks. Format is "id:name" per line. Guard against a malformed empty
-      // parse wiping everything: only prune when the list is genuinely empty or we parsed real ids.
-      val text = String(bytes, Charsets.UTF_8)
-      val validIds =
-        text.lineSequence().mapNotNull { it.substringBefore(':').trim().toLongOrNull() }.toSet()
-      if (text.isBlank() || validIds.isNotEmpty()) {
-        DeckCache.pruneOrphans(this, validIds)
-        // A pruned deck's card images are now orphans; drop them too.
-        CardImageCache.pruneImages(this, DeckCache.allCachedCardIds(this))
+      val decks = deserializeDecks(bytes)
+      if (!writeDecksCacheProto(filesDir, bytes)) {
+        // Rename failed; the previous cache (still valid) was deliberately left in place.
+        return
       }
+      Log.i(TAG, "Saved decks list cache locally (${decks.size} decks).")
 
-      // Broadcast to MainActivity that new decks list is ready
-      val intent = Intent(ACTION_DECKS_UPDATED).apply { setPackage(packageName) }
-      sendBroadcast(intent)
-      Log.d(TAG, "Broadcast sent: ACTION_DECKS_UPDATED")
+      pruneOrphanDecks(decks.map { it.id }.toSet())
+      broadcastDecksUpdated()
     } catch (e: Exception) {
       Log.e(TAG, "Failed to save decks list: ${e.message}", e)
     }
   }
+
+  /** Fallback for a not-yet-updated phone that only sends the legacy "id:name" text format. */
+  private fun saveDecksCacheLegacyText(bytes: ByteArray) {
+    try {
+      writeDecksCacheLegacyText(filesDir, bytes)
+      Log.i(TAG, "Saved legacy-text decks list cache locally.")
+
+      // Guard against a malformed empty parse wiping everything: only prune when the list is
+      // genuinely empty or we parsed real ids.
+      val text = String(bytes, Charsets.UTF_8)
+      val validIds =
+        text.lineSequence().mapNotNull { it.substringBefore(':').trim().toLongOrNull() }.toSet()
+      if (text.isBlank() || validIds.isNotEmpty()) {
+        pruneOrphanDecks(validIds)
+      }
+
+      broadcastDecksUpdated()
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to save legacy-text decks list: ${e.message}", e)
+    }
+  }
+
+  /** Drop cached due batches (and their card images) for decks no longer in [validIds]. */
+  private fun pruneOrphanDecks(validIds: Set<Long>) {
+    DeckCache.pruneOrphans(this, validIds)
+    CardImageCache.pruneImages(this, DeckCache.allCachedCardIds(this))
+  }
+
+  private fun broadcastDecksUpdated() {
+    val intent = Intent(ACTION_DECKS_UPDATED).apply { setPackage(packageName) }
+    sendBroadcast(intent)
+    Log.d(TAG, "Broadcast sent: ACTION_DECKS_UPDATED")
+  }
+}
+
+/**
+ * Writes the protobuf deck cache via write-then-rename, and clears the legacy text cache so it
+ * can't shadow it (mirrors [loadKnownDecks] preferring decks_cache.pb). Returns false if the
+ * rename failed, in which case the previous cache is left untouched - the caller should treat the
+ * whole update as failed rather than pruning/broadcasting against data that wasn't persisted.
+ */
+internal fun writeDecksCacheProto(filesDir: File, bytes: ByteArray): Boolean {
+  val cacheFile = File(filesDir, "decks_cache.pb")
+  val tmpFile = File(filesDir, "decks_cache.pb.tmp")
+  tmpFile.writeBytes(bytes)
+  if (!tmpFile.renameTo(cacheFile)) {
+    tmpFile.delete()
+    return false
+  }
+  File(filesDir, "decks_cache.txt").delete()
+  return true
+}
+
+/**
+ * Writes the legacy text deck cache, and clears the protobuf cache so a stale one doesn't keep
+ * shadowing the currently-paired (older-built) phone's data - see [loadKnownDecks].
+ */
+internal fun writeDecksCacheLegacyText(filesDir: File, bytes: ByteArray) {
+  File(filesDir, "decks_cache.txt").writeBytes(bytes)
+  File(filesDir, "decks_cache.pb").delete()
 }

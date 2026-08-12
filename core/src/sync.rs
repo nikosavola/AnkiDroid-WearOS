@@ -5,10 +5,10 @@
 //! Protobuf is far more compact than JSON and zstd compresses this text-heavy data well; both live
 //! here so the Kotlin sides just ship the bytes.
 //!
-//! Answers go over as protobuf too (no zstd: a buffered-answer list is tiny, so compression would
-//! only add framing overhead). Everything on the wire is protobuf; nothing uses JSON.
+//! Answers and the deck list go over as protobuf too (no zstd: both lists are tiny, so compression
+//! would only add framing overhead). Everything on the wire is protobuf; nothing uses JSON.
 
-use crate::models::{CoreError, WearosAnswer, WearosDueBatch};
+use crate::models::{CoreError, DeckInfo, WearosAnswer, WearosDueBatch};
 use crate::proto;
 use std::io::Read;
 
@@ -53,4 +53,14 @@ pub fn serialize_answers(answers: Vec<WearosAnswer>) -> Result<Vec<u8>, CoreErro
 #[uniffi::export]
 pub fn deserialize_answers(bytes: Vec<u8>) -> Result<Vec<WearosAnswer>, CoreError> {
     proto::decode_answers(&bytes)
+}
+
+#[uniffi::export]
+pub fn serialize_decks(decks: Vec<DeckInfo>) -> Result<Vec<u8>, CoreError> {
+    Ok(proto::encode_decks(decks))
+}
+
+#[uniffi::export]
+pub fn deserialize_decks(bytes: Vec<u8>) -> Result<Vec<DeckInfo>, CoreError> {
+    proto::decode_decks(&bytes)
 }

@@ -2,7 +2,7 @@
 //! and the codec is derived — no `protoc` and no `build.rs`, so it builds anywhere the crate does.
 //! `sync.rs` wraps [`encode_due_batch`]/[`decode_due_batch`] in zstd for the actual transfer.
 
-use crate::models::{CoreError, WearosAnswer, WearosCard, WearosDueBatch};
+use crate::models::{CoreError, DeckInfo, WearosAnswer, WearosCard, WearosDueBatch};
 use prost::Message;
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -149,4 +149,40 @@ pub fn encode_answers(answers: Vec<WearosAnswer>) -> Vec<u8> {
 /// Decode protobuf bytes produced by [`encode_answers`].
 pub fn decode_answers(bytes: &[u8]) -> Result<Vec<WearosAnswer>, CoreError> {
     Ok(AnswersPb::decode(bytes)?.answers.into_iter().map(WearosAnswer::from).collect())
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct DeckPb {
+    #[prost(int64, tag = "1")]
+    id: i64,
+    #[prost(string, tag = "2")]
+    full_name: String,
+}
+
+#[derive(Clone, PartialEq, prost::Message)]
+struct DecksPb {
+    #[prost(message, repeated, tag = "1")]
+    decks: Vec<DeckPb>,
+}
+
+impl From<DeckInfo> for DeckPb {
+    fn from(d: DeckInfo) -> Self {
+        Self { id: d.id, full_name: d.full_name }
+    }
+}
+
+impl From<DeckPb> for DeckInfo {
+    fn from(d: DeckPb) -> Self {
+        Self { id: d.id, full_name: d.full_name }
+    }
+}
+
+/// Encode the watch-visible deck list as protobuf bytes (infallible; prost encoding cannot fail).
+pub fn encode_decks(decks: Vec<DeckInfo>) -> Vec<u8> {
+    DecksPb { decks: decks.into_iter().map(DeckPb::from).collect() }.encode_to_vec()
+}
+
+/// Decode protobuf bytes produced by [`encode_decks`].
+pub fn decode_decks(bytes: &[u8]) -> Result<Vec<DeckInfo>, CoreError> {
+    Ok(DecksPb::decode(bytes)?.decks.into_iter().map(DeckInfo::from).collect())
 }

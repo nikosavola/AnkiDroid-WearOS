@@ -428,6 +428,34 @@ mod tests {
     }
 
     #[test]
+    fn test_decks_round_trip_via_proto() {
+        // Decks go over the wire as protobuf (not the old ad-hoc "id:name" text): a name containing
+        // a colon or newline must survive, which is exactly what broke the text format.
+        let decks = vec![
+            DeckInfo { id: 1, full_name: "Japani::文法".to_string() },
+            DeckInfo { id: 2, full_name: "Weird: Deck\nName".to_string() },
+        ];
+        let restored = deserialize_decks(serialize_decks(decks).unwrap()).unwrap();
+        assert_eq!(restored.len(), 2);
+        assert_eq!(restored[0].id, 1);
+        assert_eq!(restored[0].full_name, "Japani::文法");
+        assert_eq!(restored[1].id, 2);
+        assert_eq!(restored[1].full_name, "Weird: Deck\nName");
+    }
+
+    #[test]
+    fn test_empty_decks_round_trip() {
+        let restored = deserialize_decks(serialize_decks(vec![]).unwrap()).unwrap();
+        assert!(restored.is_empty());
+    }
+
+    #[test]
+    fn test_deserialize_decks_rejects_garbage() {
+        let result = deserialize_decks(vec![0xff, 0xff, 0xff, 0xff, 0xff]);
+        assert!(matches!(result, Err(CoreError::SerializationError { .. })));
+    }
+
+    #[test]
     fn test_review_session_state_machine() {
         // answer_card buffers into DB_CONN when a DB is configured; serialize with the buffer tests.
         let _guard = no_db_guard();

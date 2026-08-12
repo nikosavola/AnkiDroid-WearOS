@@ -40,7 +40,6 @@ class WearSyncService : WearableListenerService() {
     private const val PATH_REQUEST_DECKS = "/request_decks"
     private const val PATH_REQUEST_NEW = "/request_new"
     private const val PATH_DECKS = "/decks"
-    private const val KEY_DECKS_BYTES = "decks_bytes"
     private const val PATH_DUE_BATCH = "/due_batch"
 
     // Mirror of the phone MainActivity settings store; read-only mode skips write-back.
@@ -155,16 +154,19 @@ class WearSyncService : WearableListenerService() {
         try {
           val decks = bridge.fetchAllDecks()
           val sharedPrefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-          // .value: raw long for the prefs key and the "id:name" wire format the watch parses.
+          // .value: raw long for the prefs key.
           val filteredDecks = decks.filter { sharedPrefs.getBoolean("deck_${it.first.value}", true) }
-          val decksStr = filteredDecks.joinToString("\n") { "${it.first.value}:${it.second}" }
-          val deckBytes = decksStr.toByteArray(Charsets.UTF_8)
 
           val dataClient = Wearable.getDataClient(this@WearSyncService)
           val putDecksReq =
             PutDataMapRequest.create(PATH_DECKS)
               .apply {
-                dataMap.putByteArray(KEY_DECKS_BYTES, deckBytes)
+                // Legacy KEY_DECKS_BYTES text is intentionally not sent: dual-writing it alongside
+                // the protobuf payload roughly doubles the size of this DataMap, and this codebase
+                // has already hit DATA_ITEM_TOO_LARGE once (see the batch Asset comment above). The
+                // watch still knows how to read the legacy key if it ever receives it from an
+                // older-built phone.
+                dataMap.putByteArray(KEY_DECKS_PROTO_BYTES, encodeDecksProto(filteredDecks))
                 setUrgent()
               }
               .asPutDataRequest()
