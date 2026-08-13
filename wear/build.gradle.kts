@@ -80,7 +80,7 @@ dependencies {
   implementation(libs.wear.watchface.complications.data.source)
 
   implementation(libs.play.services.wearable)
-  implementation("net.java.dev.jna:jna:5.14.0@aar")
+  implementation("net.java.dev.jna:jna:5.19.1@aar")
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.play.services)
 
