@@ -78,7 +78,12 @@ fun DeckCard(
         overflow = TextOverflow.Ellipsis,
       )
       Text(
-        text = if (cardCount != null) "$cardCount cards ready" else "Tap to download",
+        text =
+          when (cardCount) {
+            null -> "Tap to download"
+            1 -> "1 card ready"
+            else -> "$cardCount cards ready"
+          },
         style = MaterialTheme.typography.labelSmall,
         color =
           if (cardCount != null) Color(0xFF66BB6A) else MaterialTheme.colorScheme.onSurfaceVariant,
