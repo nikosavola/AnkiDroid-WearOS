@@ -27,7 +27,7 @@ kotlinx-coroutines-play-services = { group = "org.jetbrains.kotlinx", name = "ko
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 
 # Android Core and Lifecycle
-androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version = "1.17.0" }
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version = "1.19.0" }
 androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecycle-runtime-ktx", version = "2.9.3" }
 androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version = "1.10.1" }
 androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version = "1.7.0" }
