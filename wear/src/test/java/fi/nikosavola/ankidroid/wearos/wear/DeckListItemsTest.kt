@@ -47,6 +47,16 @@ class DeckListItemsTest {
   }
 
   @Test
+  fun deckCard_cached_oneCard_usesSingular() {
+    composeRule.setContent {
+      MaterialTheme {
+        DeckCard(label = "Kaishi 1.5k", cardCount = 1, modifier = Modifier, onClick = {})
+      }
+    }
+    composeRule.onNodeWithText("1 card ready").assertIsDisplayed()
+  }
+
+  @Test
   fun deckCard_uncached_showsTapToDownload() {
     composeRule.setContent {
       MaterialTheme { DeckCard(label = "Yomitan", cardCount = null, modifier = Modifier, onClick = {}) }
