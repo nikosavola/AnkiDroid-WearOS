@@ -82,5 +82,4 @@ class LoadKnownDecksTest {
       !File(filesDir, "decks_cache.txt").exists(),
     )
   }
-
 }

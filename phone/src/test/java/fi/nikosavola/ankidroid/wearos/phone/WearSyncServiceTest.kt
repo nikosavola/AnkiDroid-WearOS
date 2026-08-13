@@ -21,7 +21,11 @@ class WearSyncServiceTest {
   @Test
   fun emptyBatch_clearsNothing_andNeverCallsWriteBack() {
     var called = false
-    val clear = settledIdsToClear(emptyList(), readOnly = false) { _, _ -> called = true; listOf("x") }
+    val clear =
+      settledIdsToClear(emptyList(), readOnly = false) { _, _ ->
+        called = true
+        listOf("x")
+      }
     assertTrue(clear.isEmpty())
     assertTrue("write-back must not run for an empty batch", !called)
   }
