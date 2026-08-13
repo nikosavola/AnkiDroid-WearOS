@@ -20,7 +20,7 @@ path = "uniffi-bindgen.rs"
 
 [dependencies]
 uniffi = { version = "0.28.1", features = ["cli"] }
-rusqlite = { version = "0.32.0", features = ["bundled"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
 serde = { version = "1.0.204", features = ["derive"] }
 serde_json = "1.0.120"
 thiserror = "1.0.63"
