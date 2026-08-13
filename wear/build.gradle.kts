@@ -15,7 +15,11 @@ android {
     applicationId = "com.ichi2.anki.wearos"
     minSdk = 30
     targetSdk = 36
-    versionCode = 2
+    // Play requires distinct versionCodes per form factor within one listing (same applicationId
+    // as phone/build.gradle.kts). Scheme: versionCode = release * 10 + formFactor (0 = phone, 1 =
+    // wear), so bumping "release" together on both sides keeps them numerically ordered and never
+    // collides. Release 2 -> phone 20, wear 21.
+    versionCode = 21
     versionName = "1.1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
