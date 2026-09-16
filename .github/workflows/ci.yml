@@ -27,7 +27,7 @@ jobs:
           distribution: 'temurin'
           cache: 'gradle'
       - name: Set up Rust Toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
           toolchain: stable
           components: clippy, rustfmt
@@ -66,7 +66,7 @@ jobs:
       # The Gradle unit tests compile the app, which triggers generateBindings ->
       # compileRustAndroid* via cargo-ndk, so the Android Rust targets are needed alongside host.
       - name: Set up Rust Toolchain
-        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # stable
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # stable
         with:
           toolchain: stable
           targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
