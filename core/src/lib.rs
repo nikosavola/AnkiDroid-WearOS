@@ -1254,6 +1254,7 @@ mod tests {
     fn review_state() -> CardScheduleState {
         CardScheduleState {
             queue: 2,
+            card_type: 2,
             interval_days: 10.0,
             learning_step: -1,
             ease_factor: 2.5,
@@ -1320,7 +1321,8 @@ mod tests {
     #[test]
     fn test_previews_walk_the_learning_ladder() {
         let config = parse_deck_schedule_config(fsrs_deck_options()).unwrap();
-        let new_card = CardScheduleState { queue: 0, learning_step: 0, ..Default::default() };
+        let new_card =
+            CardScheduleState { queue: 0, card_type: 0, learning_step: 0, ..Default::default() };
         // Again stays on the first step, Hard is the average of the first two steps (Anki's rule),
         // Good moves to the second step, and Easy graduates with the FSRS interval (15d for the
         // stock weights) rather than the SM-2 easy interval.
@@ -1452,8 +1454,10 @@ mod tests {
         )
         .unwrap();
         // A 10-day review card on its last relearning step: Good returns it to 10 * 0.5 = 5 days.
+        // A lapsed card: type 3 (relearning) sitting in the learning queue, as Anki stores it.
         let relearning = CardScheduleState {
-            queue: 3,
+            queue: 1,
+            card_type: 3,
             interval_days: 10.0,
             learning_step: 0,
             ease_factor: 2.5,
@@ -1769,5 +1773,28 @@ mod tests {
             vec!["1m", "10m", "4d"],
             "3-button cards drop the Hard slot"
         );
+    }
+
+    #[test]
+    fn test_just_due_review_is_not_an_early_review() {
+        // Regression from on-device validation: a card reviewed 23h59m ago (0.9998 days elapsed) with
+        // a 1-day interval was treated as an EARLY review, because its fractional elapsed time came
+        // out just below the interval. Anki counts whole days, so this is an ordinary due card:
+        // Hard 2d, Good 3d, Easy 4d - exactly what AnkiDroid reported.
+        let config = sm2_deck_config();
+        let just_due = CardScheduleState {
+            queue: 2,
+            card_type: 2,
+            interval_days: 1.0,
+            ease_factor: 2.5,
+            elapsed_days: 0.9998,
+            ..Default::default()
+        };
+        let secs = preview_interval_secs(&config, &just_due, 0);
+        let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
+
+        assert_eq!(days(1), 2, "Hard is interval * hardFactor, floored above the interval");
+        assert_eq!(days(2), 3, "Good is (interval + daysLate/2) * ease");
+        assert_eq!(days(3), 4, "Easy at least a day above Good");
     }
 }

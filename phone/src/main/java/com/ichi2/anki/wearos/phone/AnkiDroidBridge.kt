@@ -47,6 +47,9 @@ class AnkiDroidBridge(private val context: Context) {
     // Card scheduler-state columns (FlashCardsContract.Card). The watch recomputes interval
     // previews from these once a card is graded and requeued, since the shipped labels go stale.
     private const val COL_QUEUE = "queue"
+    // Card type (0 new / 1 learning / 2 review / 3 relearning): decides learn vs relearn steps, which
+    // the queue cannot (a lapsed card sits in the learning queue).
+    private const val COL_CARD_TYPE = "type"
     private const val COL_INTERVAL = "interval"
     private const val COL_LEFT = "left"
     private const val COL_FSRS_STABILITY = "fsrs_stability"
@@ -168,7 +171,14 @@ class AnkiDroidBridge(private val context: Context) {
 
     val queue = cursor.getInt(queueIdx)
     val leftIdx = cursor.getColumnIndex(COL_LEFT)
-    val stepCount = if (queue == 3) config?.relearnSteps?.size ?: 0 else config?.learnSteps?.size ?: 0
+    val typeIdxForSteps = cursor.getColumnIndex(COL_CARD_TYPE)
+    val cardType =
+      if (typeIdxForSteps != -1 && !cursor.isNull(typeIdxForSteps)) {
+        cursor.getInt(typeIdxForSteps)
+      } else {
+        -1
+      }
+    val stepCount = if (cardType == 3) config?.relearnSteps?.size ?: 0 else config?.learnSteps?.size ?: 0
     val learningStep =
       if (leftIdx != -1 && !cursor.isNull(leftIdx)) {
         learningStepFor(cursor.getLong(leftIdx), stepCount, queue)
@@ -176,8 +186,10 @@ class AnkiDroidBridge(private val context: Context) {
         -1
       }
 
+    val typeIdx = cursor.getColumnIndex(COL_CARD_TYPE)
     return CardScheduleState(
       queue = queue,
+      cardType = if (typeIdx != -1 && !cursor.isNull(typeIdx)) cursor.getInt(typeIdx) else -1,
       easeFactor =
         cursor.getColumnIndex(COL_SM2_FACTOR).let {
           if (it != -1 && !cursor.isNull(it)) cursor.getDouble(it) / 1000.0 else 0.0
@@ -394,6 +406,7 @@ class AnkiDroidBridge(private val context: Context) {
                 "question",
                 "answer",
                 COL_QUEUE,
+                COL_CARD_TYPE,
                 COL_INTERVAL,
                 COL_LEFT,
                 COL_FSRS_STABILITY,

@@ -155,7 +155,7 @@ class AnkiDroidProviderLiveTest {
       android.content.ContentValues().apply {
         put("mid", modelId)
         put("flds", "ANKIDROID-WEAROS TEST\u001fanswer")
-        put("tags", "wearos-live-test")
+        put("tags", TEST_TAG)
         put("allow_empty", true)
       }
     val uri =
@@ -267,6 +267,9 @@ class AnkiDroidProviderLiveTest {
   companion object {
     private const val TAG = "AnkiDroidLiveTest"
     private const val SECS_PER_DAY = 86_400.0
+
+    /** Tag on the fixture notes this suite creates, so cleanup never touches a real card. */
+    private const val TEST_TAG = "wearos-live-test"
   }
 
   /**
@@ -322,11 +325,129 @@ class AnkiDroidProviderLiveTest {
   }
 
   /**
+   * Compare previews for a card in the REVIEW queue, and then for the same card after a lapse.
+   *
+   * A graduated card is scheduled for tomorrow, so it only becomes due - and only then exposes labels
+   * at all - on a later day. This test therefore works across two runs, a day apart:
+   *
+   *   1. First run (no due fixture): it creates a card tagged [TEST_TAG], graduates it, and leaves it.
+   *   2. Advance the emulator's clock a day so that card is due:
+   *        adb root
+   *        adb shell date $(date -v+1d "+%m%d%H%M%Y.%S")
+   *        adb shell am force-stop com.ichi2.anki
+   *   3. Second run: it finds the due fixture, compares every button in the review state, fails it,
+   *      compares the relearning state, and deletes the note.
+   *
+   * It skips when AnkiDroid is absent, and in a normal run leaves nothing behind beyond the fixture
+   * it seeded for the next one.
+   */
+  @Test
+  fun previewsFollowTheReviewStateAfterADayBoundary() {
+    val deckId = assumeAnkiDroid()
+    val due = bridge.fetchDueBatch(deckId = DeckId(deckId), limit = 50)
+    val config = due.scheduleConfig
+    val fixture = due.cards.firstOrNull { it.state?.queue == 2 && isTestNote(it.noteId) }
+
+    if (fixture == null) {
+      // Seed the fixture: a card that will be due once the clock moves on.
+      val note = createTestNote(deckId)
+      assumeTrue("AnkiDroid provider refused the test note", note != null)
+      val (_, noteId) = note!!
+      // Skip rather than fail if the deck has other due cards in front of the fixture.
+      answerFirstCard(noteId, ease = 3, assumeSettle = true)
+      answerFirstCard(noteId, ease = 3, assumeSettle = true)
+      Log.i(TAG, "no due review fixture; graduated one for the next run (advance the clock a day)")
+      return
+    }
+
+    val reviewState = fixture.state ?: error("review fixture carries no state")
+    assertEquals("fixture must be a review card", 2, reviewState.cardType)
+    Log.i(
+      TAG,
+      "review state: queue=${reviewState.queue} interval=${reviewState.intervalDays} " +
+        "ease=${reviewState.easeFactor} elapsed=${reviewState.elapsedDays} " +
+        "stability=${reviewState.stability} difficulty=${reviewState.difficulty}",
+    )
+    val reviewed = previewIntervalSecs(config!!, reviewState, System.currentTimeMillis())
+    // Report every button before failing, so one mismatch doesn't hide the rest.
+    fixture.nextReviewTimes.forEachIndexed { button, shipped ->
+      Log.i(
+        TAG,
+        "review button $button: AnkiDroid '$shipped' vs ours " +
+          "${examined(reviewed[button], shipped)}",
+      )
+    }
+    fixture.nextReviewTimes.forEachIndexed { button, shipped ->
+      assertLabelMatches("review", button, shipped, reviewed[button])
+    }
+
+    // Everything from here on is the fixture's last act, so remove it however this ends.
+    try {
+      // Failing it should show the relearning steps and put the card back into today's queue. Anki
+      // keeps a lapsed card in the *learning* queue with type 3 (relearning), not queue 3 - queue 3
+      // is day-learning - so the type is what tells the two ladders apart.
+      answerFirstCard(fixture.noteId, ease = 1)
+      val lapsed = bridge.fetchDueBatch(deckId = DeckId(deckId), limit = 50)
+      val lapsedCard = lapsed.cards.firstOrNull { it.noteId == fixture.noteId }
+      assumeTrue("lapsed card left today's queue", lapsedCard != null)
+      val lapsedState = lapsedCard!!.state ?: error("lapsed card carries no state")
+      assertEquals("a lapsed card is relearning", 3, lapsedState.cardType)
+      Log.i(
+        TAG,
+        "lapsed state: queue=${lapsedState.queue} type=${lapsedState.cardType} " +
+          "interval=${lapsedState.intervalDays} ease=${lapsedState.easeFactor}",
+      )
+      val relearned = previewIntervalSecs(config, lapsedState, System.currentTimeMillis())
+      lapsedCard.nextReviewTimes.forEachIndexed { button, shipped ->
+        Log.i(
+          TAG,
+          "lapsed button $button: AnkiDroid '$shipped' vs ours ${examined(relearned[button], shipped)}",
+        )
+      }
+      lapsedCard.nextReviewTimes.forEachIndexed { button, shipped ->
+        assertLabelMatches("lapsed", button, shipped, relearned[button])
+      }
+    } finally {
+      deleteTestNote(fixture.noteId)
+    }
+  }
+
+  /** A comparison rendered for logging, with the allowed window, so a mismatch is diagnosable. */
+  private fun examined(oursSecs: Double, shipped: String): String {
+    val shippedSecs = parseLabelToSeconds(shipped) ?: return "unparseable label"
+    val fuzz = fuzzFactor(oursSecs / SECS_PER_DAY)
+    val unit = unitSeconds(shipped)
+    val lower = oursSecs * (1.0 - fuzz) - unit / 2.0
+    val upper = oursSecs * (1.0 + fuzz) + unit / 2.0
+    return "${oursSecs.toLong()}s (theirs ${shippedSecs.toLong()}s, allowed " +
+      "${lower.toLong()}..${upper.toLong()}s)"
+  }
+
+  /** Whether this note is one of ours, so a real collection is never graded by the fixture path. */
+  private fun isTestNote(noteId: Long): Boolean {
+    val uri = android.net.Uri.parse("content://com.ichi2.anki.flashcards/notes/$noteId")
+    return context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+      if (!cursor.moveToFirst()) return false
+      val tagsIdx = cursor.getColumnIndex("tags")
+      tagsIdx != -1 && cursor.getString(tagsIdx)?.contains(TEST_TAG) == true
+    } ?: false
+  }
+
+  /** Remove one of our fixture notes by id. */
+  private fun deleteTestNote(noteId: Long) {
+    context.contentResolver.delete(
+      android.net.Uri.parse("content://com.ichi2.anki.flashcards/notes/$noteId"),
+      null,
+      null,
+    )
+  }
+
+  /**
    * Answer the test note's card through the app's own write-back path (prime-then-answer).
    * [AnkiDroidBridge.writeAnswersBack] returns the ids it settled, so a missing id means the grade
    * never reached the collection.
    */
-  private fun answerFirstCard(noteId: Long, ease: Int) {
+  private fun answerFirstCard(noteId: Long, ease: Int, assumeSettle: Boolean = false) {
     val answer =
       uniffi.wearos_core.WearosAnswer(
         id = "live-test-$noteId-$ease-${System.currentTimeMillis()}",
@@ -337,6 +458,16 @@ class AnkiDroidProviderLiveTest {
         deckId = 1,
       )
     val settled = bridge.writeAnswersBack(listOf(answer))
+    if (assumeSettle) {
+      // Anki's write-back only answers the card the scheduler currently presents, so another due card
+      // in the deck can legitimately block ours. Callers that can wait for a quiet collection ask for
+      // this instead of failing.
+      assumeTrue(
+        "another card is ahead of the fixture in this deck; run against a quiet collection",
+        settled.contains(answer.id),
+      )
+      return
+    }
     assertTrue(
       "write-back did not apply the test answer (settled: $settled)",
       settled.contains(answer.id),

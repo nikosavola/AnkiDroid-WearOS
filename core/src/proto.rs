@@ -33,6 +33,9 @@ struct CardPb {
 struct CardStatePb {
     #[prost(int32, tag = "1")]
     queue: i32,
+    // Additive: an older encoder omits it (decodes to 0), so senders must set it explicitly.
+    #[prost(int32, tag = "8")]
+    card_type: i32,
     #[prost(double, tag = "2")]
     interval_days: f64,
     #[prost(int32, tag = "3")]
@@ -109,6 +112,7 @@ impl From<CardScheduleState> for CardStatePb {
     fn from(s: CardScheduleState) -> Self {
         Self {
             queue: s.queue,
+            card_type: s.card_type,
             interval_days: s.interval_days,
             learning_step: s.learning_step,
             stability: s.stability,
@@ -123,6 +127,7 @@ impl From<CardStatePb> for CardScheduleState {
     fn from(s: CardStatePb) -> Self {
         Self {
             queue: s.queue,
+            card_type: s.card_type,
             interval_days: s.interval_days,
             learning_step: s.learning_step,
             stability: s.stability,

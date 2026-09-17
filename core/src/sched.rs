@@ -102,8 +102,14 @@ impl DeckScheduleConfig {
 /// scheduler produces the card's previews.
 #[derive(uniffi::Record, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct CardScheduleState {
-    /// Anki queue: 0 = new, 1 = learning, 2 = review, 3 = relearning.
+    /// Anki's card *queue*: 0 = new, 1 = learning (which is also where a relearning card sits),
+    /// 2 = review, 3 = day-learning. Only used to tell whether the card is in today's queue; the
+    /// step ladder it follows comes from [card_type].
     pub queue: i32,
+    /// Anki's card *type*: 0 = new, 1 = learning, 2 = review, 3 = relearning. This, not the queue,
+    /// decides learn vs relearn steps (a lapsed card has queue 1 but type 3) and which FSRS state
+    /// the card is in. -1 when the phone did not send it.
+    pub card_type: i32,
     /// Current interval in days (0 for new and learning cards).
     pub interval_days: f64,
     /// Index into the deck's step list for learning/relearning cards; -1 when unknown.
@@ -301,7 +307,11 @@ fn preview_for_grade(
     now_unix_ms: i64,
     ease: i32,
 ) -> f64 {
-    let on_steps = matches!(state.queue, 0 | 1 | 3) || state.interval_days < 1.0;
+    // A card is working through a step ladder when Anki says so (new/learn/relearn) rather than
+    // holding a review interval. The interval check is a fallback for phones that sent no type.
+    let on_steps = matches!(state.card_type, 0 | 1 | 3)
+        || (state.card_type < 0 && matches!(state.queue, 0 | 1 | 3))
+        || state.interval_days < 1.0;
     if on_steps {
         steps_preview(config, state, ease, now_unix_ms)
     } else {
@@ -318,7 +328,7 @@ fn steps_preview(
     ease: i32,
     now_unix_ms: i64,
 ) -> f64 {
-    let steps = steps_for(config, state.queue);
+    let steps = steps_for(config, state.card_type);
     let last_index = steps.len().saturating_sub(1);
     let current = usize::try_from(state.learning_step.max(0)).unwrap_or(0).min(last_index);
 
@@ -394,8 +404,7 @@ fn fsrs_outcome(
     let fsrs = FSRS::new(params);
     let now =
         chrono::DateTime::<chrono::Utc>::from_timestamp_millis(now_unix_ms).unwrap_or_default();
-    let last_review =
-        now - chrono::Duration::milliseconds((state.elapsed_days * SECS_PER_DAY * 1000.0) as i64);
+    let last_review = now - chrono::Duration::days(elapsed_days(state));
 
     // A card that has never been answered carries no memory state (Anki stores it on first answer).
     // Presenting zeros as a memory state would divide by a zero stability, so such a card is offered
@@ -405,11 +414,11 @@ fn fsrs_outcome(
         due: now,
         stability: state.stability,
         difficulty: state.difficulty,
-        elapsed_days: state.elapsed_days.round() as i64,
+        elapsed_days: elapsed_days(state),
         scheduled_days: state.interval_days.round() as i64,
         reps: 0,
         lapses: 0,
-        state: if has_memory_state { fsrs_state(state.queue) } else { State::New },
+        state: if has_memory_state { fsrs_state(state.card_type) } else { State::New },
         last_review,
     };
 
@@ -439,8 +448,8 @@ fn fsrs_parameters(config: &DeckScheduleConfig) -> Option<Parameters> {
     })
 }
 
-fn fsrs_state(queue: i32) -> State {
-    match queue {
+fn fsrs_state(card_type: i32) -> State {
+    match card_type {
         1 => State::Learning,
         2 => State::Review,
         3 => State::Relearning,
@@ -475,7 +484,7 @@ fn graduation_secs(
         None
     };
     let days = fsrs_days.unwrap_or_else(|| {
-        if state.queue == 3 {
+        if state.card_type == 3 {
             // Relearning: back to the interval the lapse reduced the card to.
             let failing = failing_review_interval_days(config, state);
             if ease == 4 { failing + 1.0 } else { failing }
@@ -517,12 +526,12 @@ fn review_preview(
 fn sm2_passing_intervals(config: &DeckScheduleConfig, state: &CardScheduleState) -> [f64; 3] {
     let scheduled = state.interval_days.max(1.0);
     let ease = ease_factor(state);
-    let days_late = state.elapsed_days - state.interval_days;
+    let days_late = elapsed_days(state) as f64 - state.interval_days.round();
     let hard_multiplier = config.hard_multiplier;
     let easy_multiplier = config.easy_bonus;
 
     if days_late < 0.0 {
-        let elapsed = state.elapsed_days.max(0.0);
+        let elapsed = elapsed_days(state) as f64;
         let half_usual = hard_multiplier / 2.0;
         let hard = constrain_passing_interval(
             config,
@@ -573,6 +582,20 @@ fn constrain_passing_interval(
 fn review_interval_bounds(config: &DeckScheduleConfig, minimum: f64) -> (f64, f64) {
     let maximum = f64::from(config.max_interval_days.max(1));
     (minimum.clamp(1.0, maximum), maximum)
+}
+
+/// How many whole days have passed since the card was last reviewed.
+///
+/// Anki counts elapsed time in *collection days*, not wall-clock fractions: a card reviewed
+/// yesterday is one day elapsed whether that was at 8am or 11pm. Our value comes from a timestamp, so
+/// the fraction is rounded away here - otherwise a card reviewed 23h59m ago reads as "not yet
+/// elapsed", days_late goes negative, and Anki's early-review branch produces a shorter interval than
+/// Anki itself would (found on-device: Hard 1d where AnkiDroid said 2d).
+///
+/// Rounding up to the next day within an hour absorbs clock skew, so a nominal day reads as one.
+fn elapsed_days(state: &CardScheduleState) -> i64 {
+    let days = state.elapsed_days.max(0.0);
+    (days + 1.0 / 24.0).floor() as i64
 }
 
 /// The card's SM-2 ease factor, or Anki's initial 2.5 when the card carries none.
@@ -626,7 +649,7 @@ pub fn advance_state(
     ease: i32,
     now_unix_ms: i64,
 ) -> CardScheduleState {
-    let steps = steps_for(config, state.queue);
+    let steps = steps_for(config, state.card_type);
     let last_index = steps.len().saturating_sub(1);
     let current = usize::try_from(state.learning_step.max(0)).unwrap_or(0).min(last_index);
     let outcome =
@@ -639,13 +662,16 @@ pub fn advance_state(
         ..state.clone()
     };
 
-    if state.queue == 2 {
+    if state.card_type == 2 || (state.card_type < 0 && state.queue == 2) {
         // Review card: Again drops into relearning (the lapse also lowers the ease factor and the
         // reworked interval is applied when relearning finishes), everything else reschedules
         // within the review queue.
         return if ease == 1 {
             CardScheduleState {
-                queue: 3,
+                // A lapsed card is *relearning* (type 3) but sits in the learning queue, as Anki
+                // stores it.
+                queue: 1,
+                card_type: 3,
                 learning_step: 0,
                 ease_factor: ease_after(state, ease),
                 ..with_memory
@@ -653,6 +679,7 @@ pub fn advance_state(
         } else {
             CardScheduleState {
                 queue: 2,
+                card_type: 2,
                 learning_step: -1,
                 interval_days: review_days(config, state, ease, now_unix_ms, outcome.as_ref()),
                 ease_factor: ease_after(state, ease),
@@ -665,6 +692,7 @@ pub fn advance_state(
     match ease {
         1 => CardScheduleState {
             queue: state.queue.max(1),
+            card_type: state.card_type.max(1),
             learning_step: 0,
             ease_factor: ease_after(state, ease),
             ..with_memory
@@ -697,7 +725,7 @@ fn graduate(
 ) -> CardScheduleState {
     let days = match outcome.map(|o| o.days).filter(|d| *d >= 1.0) {
         Some(days) => days,
-        None if state.queue == 3 => {
+        None if state.card_type == 3 => {
             let failing = failing_review_interval_days(config, state);
             if ease == 4 { failing + 1.0 } else { failing }
         }
@@ -705,9 +733,10 @@ fn graduate(
         None => f64::from(config.graduating_interval_days),
     };
     graduated.queue = 2;
+    graduated.card_type = 2;
     graduated.learning_step = -1;
     graduated.interval_days = clamp_days(config, days);
-    if state.queue != 3 {
+    if state.card_type != 3 {
         graduated.ease_factor = INITIAL_EASE_FACTOR;
     }
     let _ = now_unix_ms;
@@ -735,7 +764,9 @@ fn review_days(
     clamp_days(config, sm2_passing_intervals(config, state)[ease_slot(ease)])
 }
 
-/// The step list that governs this card: relearning steps while relearning, learning steps otherwise.
-fn steps_for(config: &DeckScheduleConfig, queue: i32) -> &Vec<f64> {
-    if queue == 3 { &config.relearn_steps } else { &config.learn_steps }
+/// The step list that governs this card: the relearning ladder for a lapsed card (type 3), the
+/// learning ladder otherwise. A lapsed card sits in queue 1 like any learning card, so the queue
+/// cannot answer this.
+fn steps_for(config: &DeckScheduleConfig, card_type: i32) -> &Vec<f64> {
+    if card_type == 3 { &config.relearn_steps } else { &config.learn_steps }
 }
