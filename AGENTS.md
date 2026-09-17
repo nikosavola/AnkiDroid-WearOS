@@ -28,19 +28,19 @@ We use **UniFFI** and **JNA** to auto-generate safe Kotlin interfaces from our R
 ## 4. Build and Compilation Workflows
 
 ### Prerequisites
-- **Android SDK & NDK (r28+)** are required for compilation.
-- **Java JDK 21** must be set as the default compiler JVM.
+- **Android SDK & NDK** are required for compilation: SDK platform 36, build-tools 36.x, and the pinned `ndk;27.0.12077973` (install via `sdkmanager`; SDK lives at `~/Library/Android/sdk` on macOS, `~/Android/Sdk` on Linux).
+- **Java JDK 21** must be set as `JAVA_HOME` for Gradle. macOS: `brew install openjdk@21` then `JAVA_HOME=/opt/homebrew/opt/openjdk@21`; Linux: `/usr/lib/jvm/java-21-openjdk-amd64`. Don't run Gradle on a newer launcher JDK — the toolchain-resolver plugin in `settings.gradle.kts` trips over a removed Gradle API when the launcher JVM isn't 21.
 
 ### Automatic Binder & Library Compilation
 To cross-compile the Rust `.so` libraries for Android (`arm64-v8a`, `x86_64`) and generate the Kotlin bindings in one command, run:
 ```bash
-JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew generateBindings
+JAVA_HOME=<jdk21> ./gradlew generateBindings
 ```
 
 ### Full Verification Compile
 To verify that all Android subprojects and Kotlin layouts compile without error, run:
 ```bash
-JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew compileDebugKotlin
+JAVA_HOME=<jdk21> ./gradlew compileDebugKotlin
 ```
 
 ### Rust Core Unit Testing
@@ -53,7 +53,7 @@ cargo test --manifest-path core/Cargo.toml
 Host-JVM tests (JUnit + Robolectric + MockK + Compose-under-Robolectric); no emulator or device
 needed, and CI runs them on every push/PR alongside the Rust tests:
 ```bash
-JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew :phone:testDebugUnitTest :wear:testDebugUnitTest
+JAVA_HOME=<jdk21> ./gradlew :phone:testDebugUnitTest :wear:testDebugUnitTest
 ```
 The full Rust FFI is callable from these tests: JNA loads the host-built `libwearos_core.so`
 (`compileRustHost` + `jna.library.path`), so serializers and the review session run for real, not
