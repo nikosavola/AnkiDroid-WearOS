@@ -78,7 +78,35 @@ you tried and reverted — kill those directly since `--stop` won't reach them.
 
 ---
 
-## 5. Card Rendering (native, no WebView)
+## 5. Interval Previews (offline, AnkiDroid still owns scheduling)
+
+AnkiDroid computes the real schedule (rslib: SM-2 or FSRS) and ships per-button interval labels with
+each due batch — those are exact and are what the watch uses first. They go stale the moment a card
+is graded and requeued inside a session: the requeued card keeps the labels fetched before the
+grade, so a card that advanced a learning step or graduated would still show pre-grade numbers.
+
+`core/src/sched.rs` recomputes them offline from what the deck exposes through the ContentProvider:
+
+- **Config** comes from the deck's `OPTIONS` payload (`FlashCardsContract.Deck`): `new.delays` /
+  `lapse.delays` (learning steps, stored in **minutes**), `new.ints` (graduating/easy days),
+  `rev.*` factors, and the FSRS keys (`fsrs_params_6`, `desired_retention`). The dict mixes camelCase
+  and snake_case — read rslib's `deckconfig/schema11.rs` before touching the parser.
+- **Per-card state** comes from `FlashCardsContract.Card`: `queue`, `interval`, `left`
+  (`left % 1000` = reps before graduation, which gives the learning-step index), `fsrs_stability`,
+  `fsrs_difficulty`, `last_review_time_secs`.
+- **Math**: learning steps are a plain ladder; day-or-longer intervals come from FSRS-6 via the
+  `rs-fsrs` crate (chosen over the `fsrs` crate rslib uses — same formula family, no
+  ndarray/rayon/Burn dependency in a watch `.so`). Decks without weights fall back to SM-2 factors.
+- **Session use**: `ReviewSession` advances the card's state on each grade and recomputes the
+  requeued copy's labels, so a card worked through its ladder shows the numbers for the state it is
+  actually in. Without a config (older phone build, mock cards) the shipped labels are left alone.
+
+AnkiDroid remains the authority: previews are advisory, every grade is reconciled by AnkiDroid on
+write-back, and the previews are unfuzzed where AnkiDroid's own labels are fuzzed. Agreement with
+AnkiDroid is checked on-device by `AnkiDroidProviderLiveTest` (shadow mode); outstanding gaps in the
+modelled subset are tracked in issue #24.
+
+## 6. Card Rendering (native, no WebView)
 AnkiDroid's `CardContentProvider` compiles flashcard templates and outputs HTML. Wear OS devices
 frequently ship **no WebView provider** (e.g. Galaxy Watch), so constructing a `WebView` throws
 `UnsupportedOperationException` and crashes the app. We therefore render cards natively.
@@ -96,13 +124,13 @@ frequently ship **no WebView provider** (e.g. Galaxy Watch), so constructing a `
 
 ---
 
-## 6. Stand-Alone Refresh Handshake & Selective Sync
+## 7. Stand-Alone Refresh Handshake & Selective Sync
 - **Refresh Handshake (`/request_decks`):** To support independent Wear OS operation, the watch can broadcast a `/request_decks` refresh message over Bluetooth. The phone background service intercepts this, queries the available decks, applies user-selected filters, and pushes back a filtered `/decks` dataset asynchronously.
 - **Selective Sync Configuration:** The phone companion app displays a dynamic, scrollable checkbox list of all available AnkiDroid decks. Checkbox preferences are persisted in `SharedPreferences`, and both background syncs and manual syncs filter out unchecked decks, keeping the watch's deck list clean and uncluttered.
 
 ---
 
-## 7. Unified Code Formatting and Linting
+## 8. Unified Code Formatting and Linting
 - **Modern Kotlin Tooling Suite:** The project standardizes on `ktfmt` (Facebook/Google style) as the sole formatter, and `ktlint` as the code-quality linter. Style conflicts (such as `function-signature` and `parameter-list-wrapping` rules) are resolved via custom `.editorconfig` rules, with `ktfmt` operating as the absolute formatting authority.
 - **Parallel Pre-commit Runner (`prek`):** A `.pre-commit-config.yaml` file configures local format and lint tasks on concurrent pipelines using priority keys (formatting at `priority: 10` and linting at `priority: 20`), executed via:
 ```bash
