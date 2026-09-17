@@ -13,6 +13,8 @@ import io.mockk.verify
 import io.mockk.verifyOrder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -410,5 +412,79 @@ class AnkiDroidBridgeTest {
     assertEquals(-1, AnkiDroidBridge.learningStepFor(left = 1, stepCount = 0, queue = 1))
     // A stale/oversized counter clamps into the ladder rather than going negative.
     assertEquals(0, AnkiDroidBridge.learningStepFor(left = 99, stepCount = 3, queue = 1))
+  }
+
+  @Test
+  fun fetchDueBatch_readsDeckOptionsFromTheDeckListingItAlreadyDoes() {
+    // The scheduling config must not cost an extra provider query: the deck listing carries every
+    // column, OPTIONS included, so one /decks query serves both.
+    val decks =
+      mockk<Cursor>(relaxed = true) {
+        every { getColumnIndex("deck_id") } returns 0
+        every { getColumnIndex("deck_name") } returns 1
+        every { getColumnIndex("options") } returns 2
+        every { moveToNext() } returnsMany listOf(true, false)
+        every { getLong(0) } returns 42L
+        every { getString(1) } returns "Japani"
+        every { isNull(2) } returns false
+        every { getString(2) } returns
+          """{"new":{"delays":[1.0,10.0],"ints":[1,4]},"rev":{},"lapse":{}}"""
+      }
+    val schedule =
+      mockk<Cursor>(relaxed = true) {
+        every { getColumnIndex("note_id") } returns 0
+        every { getColumnIndex("ord") } returns 1
+        every { getColumnIndex("button_count") } returns -1
+        every { getColumnIndex("next_review_times") } returns -1
+        every { moveToNext() } returnsMany listOf(true, false)
+        every { getLong(0) } returns 1001L
+        every { getInt(1) } returns 0
+      }
+    val resolver =
+      dueBatchResolver(
+        deck = decks,
+        schedule = schedule,
+        card = cardCursor(555L, "Q", "A"),
+      )
+
+    val batch = bridge(resolver).fetchDueBatch(deckId = DeckId(42L), limit = 10)
+
+    assertEquals(1, batch.cards.size)
+    val config = batch.scheduleConfig
+    assertNotNull("the deck listing supplies the config", config)
+    assertEquals(listOf(60.0, 600.0), config!!.learnSteps)
+    verify(exactly = 1) { resolver.query(match { it.toString().endsWith("/decks") }, any(), any(), any(), any()) }
+  }
+
+  @Test
+  fun fetchDueBatch_survivesADeckRowWithoutOptions() {
+    // A deck row with a null OPTIONS value must not break the sync, and must not be re-queried.
+    val decks =
+      mockk<Cursor>(relaxed = true) {
+        every { getColumnIndex("deck_id") } returns 0
+        every { getColumnIndex("deck_name") } returns 1
+        every { getColumnIndex("options") } returns 2
+        every { moveToNext() } returnsMany listOf(true, false)
+        every { getLong(0) } returns 42L
+        every { getString(1) } returns "Japani"
+        every { isNull(2) } returns true
+      }
+    val schedule =
+      mockk<Cursor>(relaxed = true) {
+        every { getColumnIndex("note_id") } returns 0
+        every { getColumnIndex("ord") } returns 1
+        every { getColumnIndex("button_count") } returns -1
+        every { getColumnIndex("next_review_times") } returns -1
+        every { moveToNext() } returnsMany listOf(true, false)
+        every { getLong(0) } returns 1001L
+        every { getInt(1) } returns 0
+      }
+    val resolver = dueBatchResolver(deck = decks, schedule = schedule, card = cardCursor(555L, "Q", "A"))
+
+    val batch = bridge(resolver).fetchDueBatch(deckId = DeckId(42L), limit = 10)
+
+    assertEquals(1, batch.cards.size)
+    assertNull("no options means no config, not a failed sync", batch.scheduleConfig)
+    verify(exactly = 1) { resolver.query(match { it.toString().endsWith("/decks") }, any(), any(), any(), any()) }
   }
 }

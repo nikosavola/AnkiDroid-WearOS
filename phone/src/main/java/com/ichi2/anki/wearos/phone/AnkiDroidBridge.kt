@@ -100,40 +100,57 @@ class AnkiDroidBridge(private val context: Context) {
   }
 
   /**
+   * Deck OPTIONS payloads captured while listing decks, keyed by deck id (null = that deck row has
+   * none). Replaced wholesale after each listing, so readers see either the previous map or the new
+   * one, never a half-updated one.
+   */
+  @Volatile private var deckOptionsByDeck: Map<Long, String?> = emptyMap()
+
+  /**
    * The deck's scheduling config from the deck's OPTIONS column. AnkiDroid exposes deck options
    * only through the all-decks URI (there is no per-deck item URI), so this scans the deck list for
    * our id. Returns null (previews stay as fetched) when the deck is missing or unparseable.
    */
-  private fun fetchDeckScheduleConfig(deckId: Long): DeckScheduleConfig? =
+  private fun fetchDeckScheduleConfig(deckId: Long): DeckScheduleConfig? {
+    // A deck missing from the map was never listed (fetch it); a deck mapped to null was listed
+    // and genuinely has no options.
+    val raw =
+      if (deckOptionsByDeck.containsKey(deckId)) {
+        deckOptionsByDeck[deckId]
+      } else {
+        readDeckOptions(deckId)
+      }
+    if (raw == null) {
+      Log.w(TAG, "No deck options for deck $deckId; interval previews stay as AnkiDroid sent them.")
+      return null
+    }
+    return try {
+      val config = parseDeckScheduleConfig(raw)
+      // One line per sync: the watch's offline previews are only as correct as this config.
+      Log.i(
+        TAG,
+        "Deck config: steps=${config.learnSteps}, relearn=${config.relearnSteps}, " +
+          "ints=${config.graduatingIntervalDays}/${config.easyIntervalDays}, " +
+          "fsrs=${config.fsrsEnabled()} (${config.fsrsWeights.size} weights, " +
+          "retention=${config.desiredRetention})",
+      )
+      config
+    } catch (e: Exception) {
+      Log.w(TAG, "Deck options unparseable (${e.message}); previews stay as fetched.", e)
+      null
+    }
+  }
+
+  /** Fallback for a deck that was never listed: read its OPTIONS row directly. */
+  private fun readDeckOptions(deckId: Long): String? =
     try {
-      // Null projection on purpose: the provider selects its own deck columns (fetchAllDecks reads
-      // every column for the same reason).
       context.contentResolver.query(DECKS_URI, null, null, null, null)?.use { cursor ->
         val idIdx = cursor.getColumnIndex(COL_DECK_ID)
         val optionsIdx = cursor.getColumnIndex(COL_DECK_OPTIONS)
-        if (idIdx == -1 || optionsIdx == -1) {
-          Log.w(TAG, "Deck options column unavailable (id=$idIdx, options=$optionsIdx).")
-          return null
-        }
         while (cursor.moveToNext()) {
           if (cursor.getLong(idIdx) != deckId) continue
-          val raw = cursor.getString(optionsIdx)
-          if (raw == null) {
-            Log.w(TAG, "Deck $deckId row carries no options; previews stay as fetched.")
-            return null
-          }
-          val config = parseDeckScheduleConfig(raw)
-          // One line per sync: the watch's offline previews are only as correct as this config.
-          Log.i(
-            TAG,
-            "Deck config: steps=${config.learnSteps}, relearn=${config.relearnSteps}, " +
-              "ints=${config.graduatingIntervalDays}/${config.easyIntervalDays}, " +
-              "fsrs=${config.fsrsEnabled()} (${config.fsrsWeights.size} weights, " +
-              "retention=${config.desiredRetention})",
-          )
-          return config
+          return if (cursor.isNull(optionsIdx)) null else cursor.getString(optionsIdx)
         }
-        Log.w(TAG, "Deck $deckId not in the deck list; previews stay as fetched.")
         null
       }
     } catch (e: Exception) {
@@ -209,6 +226,9 @@ class AnkiDroidBridge(private val context: Context) {
   /** Query all available decks in AnkiDroid dynamically. */
   fun fetchAllDecks(): List<Pair<DeckId, String>> {
     val list = mutableListOf<Pair<DeckId, String>>()
+    // The deck listing already carries every column, including OPTIONS, so the scheduling config
+    // costs no extra provider query: capture it here and let fetchDeckScheduleConfig reuse it.
+    val options = mutableMapOf<Long, String?>()
     // Unavailable provider returns an empty list, never fake decks: substituting mocks would
     // overwrite the user's real cached decks and offer phantom decks to sync.
     if (!isAnkiDroidAvailable()) return emptyList()
@@ -217,11 +237,15 @@ class AnkiDroidBridge(private val context: Context) {
       cursor?.use {
         val idIdx = it.getColumnIndex(COL_DECK_ID)
         val nameIdx = it.getColumnIndex(COL_DECK_NAME)
+        val optionsIdx = it.getColumnIndex(COL_DECK_OPTIONS)
         while (it.moveToNext()) {
           if (idIdx != -1 && nameIdx != -1) {
             val deckId = it.getLong(idIdx)
             val deckName = it.getString(nameIdx)
             list.add(Pair(DeckId(deckId), deckName))
+            if (optionsIdx != -1) {
+              options[deckId] = if (it.isNull(optionsIdx)) null else it.getString(optionsIdx)
+            }
           }
         }
       }
@@ -231,6 +255,7 @@ class AnkiDroidBridge(private val context: Context) {
     if (list.isEmpty()) {
       list.add(Pair(DeckId(1L), "Default"))
     }
+    deckOptionsByDeck = options
     return list
   }
 

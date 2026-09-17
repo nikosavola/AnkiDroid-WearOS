@@ -203,7 +203,6 @@ class AnkiDroidProviderLiveTest {
     Log.i(TAG, "shadow-compared $compared button labels against AnkiDroid")
   }
 
-
   /**
    * Anki's fuzz band for an interval (rslib `scheduler/states/fuzz.rs`): no fuzz below 2.5 days,
    * then +-15% up to 7 days, +-10% up to 20, +-5% beyond. Anki picks a value inside that band from a
@@ -343,5 +342,4 @@ class AnkiDroidProviderLiveTest {
       settled.contains(answer.id),
     )
   }
-
 }

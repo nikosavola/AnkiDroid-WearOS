@@ -32,7 +32,7 @@ const MINIMUM_EASE_FACTOR: f64 = 1.3;
 const EASE_FACTOR_AGAIN_DELTA: f64 = -0.2;
 const EASE_FACTOR_HARD_DELTA: f64 = -0.15;
 const EASE_FACTOR_EASY_DELTA: f64 = 0.15;
-const SECS_PER_DAY: f64 = 86_400.0;
+pub const SECS_PER_DAY: f64 = 86_400.0;
 use rs_fsrs::{Card, FSRS, Parameters, Rating, State};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -258,8 +258,7 @@ pub fn preview_interval_secs(
     ]
 }
 
-/// The same previews as display labels ("1m", "10m", "4d"). Callers map them onto the card's
-/// button count (3-button cards have no Hard).
+/// The previews as display labels in ease order (Again, Hard, Good, Easy).
 #[uniffi::export]
 pub fn preview_labels(
     config: &DeckScheduleConfig,
@@ -270,6 +269,29 @@ pub fn preview_labels(
         .iter()
         .map(|secs| format_interval_label(*secs))
         .collect()
+}
+
+/// The previews as display labels in the order of the card's own buttons.
+///
+/// This is the shape AnkiDroid ships and the watch UI renders against: one label per button, so a
+/// 3-button card (Again/Good/Easy, no Hard) gets three. Computed previews are always four values in
+/// ease order, so a card whose previews were recomputed would otherwise hand the UI a different
+/// shape than a card still carrying AnkiDroid's labels.
+#[uniffi::export]
+pub fn preview_labels_for_buttons(
+    config: &DeckScheduleConfig,
+    state: &CardScheduleState,
+    now_unix_ms: i64,
+    button_count: i32,
+) -> Vec<String> {
+    let labels = preview_labels(config, state, now_unix_ms);
+    match button_count {
+        // Again / Good / Easy: the Hard slot (index 1) is dropped for a 3-button card.
+        3 => vec![labels[0].clone(), labels[2].clone(), labels[3].clone()],
+        2 => vec![labels[0].clone(), labels[2].clone()],
+        // Anything else (including the 4-button default) keeps all four.
+        _ => labels,
+    }
 }
 
 /// Interval in seconds the given ease (1..=4) would schedule, per Anki's own rules.

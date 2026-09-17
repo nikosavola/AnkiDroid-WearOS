@@ -1678,4 +1678,96 @@ mod tests {
         session.answer_card(3, 1_000).unwrap();
         assert!(session.get_current_card().is_none(), "graduated after the last step");
     }
+
+    #[test]
+    fn test_requeue_decision_uses_computed_interval_not_stale_label() {
+        let _guard = no_db_guard();
+        // The card is on the LAST step, but its shipped labels are the ones fetched while it was on
+        // the first step ("10m" for Good, a learning step). Trusting those labels requeues the card;
+        // Anki would graduate it, and the config we hold says so.
+        let mut card = learning_card_with_state(1);
+        card.state = Some(CardScheduleState { queue: 1, learning_step: 1, ..Default::default() });
+        let session = ReviewSession::new(WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![card],
+            schedule_config: Some(sm2_deck_config()),
+        });
+
+        session.reveal_answer();
+        session.answer_card(3, 1_000).unwrap();
+
+        assert!(
+            session.get_current_card().is_none(),
+            "Good from the last step graduates, so the session is done"
+        );
+    }
+
+    #[test]
+    fn test_card_without_state_uses_the_shipped_label_for_the_requeue_decision() {
+        let _guard = no_db_guard();
+        // No per-card state (mock cards, older phone): fall back to the shipped label's unit, which
+        // says Good is a sub-day step, so the card reappears.
+        let mut card = learning_card_with_state(1);
+        card.state = None;
+        let session = ReviewSession::new(WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![card],
+            schedule_config: Some(sm2_deck_config()),
+        });
+
+        session.reveal_answer();
+        session.answer_card(3, 1_000).unwrap();
+
+        assert!(session.get_current_card().is_some(), "label says sub-day, so it requeues");
+    }
+
+    #[test]
+    fn test_repeating_hard_terminates_the_session() {
+        let _guard = no_db_guard();
+        // Anki would let the user keep pressing Hard at the last step indefinitely; the watch bounds
+        // the session instead, so a card repeating steps eventually graduates. This is a deliberate
+        // deviation, and it is what keeps a review session finite.
+        let mut card = learning_card_with_state(1);
+        card.state = Some(CardScheduleState { queue: 1, learning_step: 1, ..Default::default() });
+        let session = ReviewSession::new(WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![card],
+            schedule_config: Some(sm2_deck_config()),
+        });
+
+        let cap = 2 + 1; // learn_steps.len() + 1
+        for press in 1..=cap {
+            session.reveal_answer();
+            session.answer_card(2, 1_000).unwrap();
+            assert!(
+                session.get_current_card().is_some(),
+                "Hard still requeues on press {press} of {cap}",
+            );
+        }
+        session.reveal_answer();
+        session.answer_card(2, 1_000).unwrap();
+        assert!(session.get_current_card().is_none(), "the bound ends the session");
+    }
+
+    #[test]
+    fn test_preview_labels_follow_the_cards_button_count() {
+        // AnkiDroid ships one label per button, so a recomputed card must keep that shape: a
+        // 3-button card has no Hard, and the UI renders labels against its buttons positionally.
+        let config = sm2_deck_config();
+        let new_card = CardScheduleState { queue: 0, learning_step: 0, ..Default::default() };
+
+        assert_eq!(
+            preview_labels_for_buttons(&config, &new_card, 0, 4),
+            vec!["1m", "6m", "10m", "4d"],
+            "4-button cards keep Again/Hard/Good/Easy"
+        );
+        assert_eq!(
+            preview_labels_for_buttons(&config, &new_card, 0, 3),
+            vec!["1m", "10m", "4d"],
+            "3-button cards drop the Hard slot"
+        );
+    }
 }

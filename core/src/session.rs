@@ -14,7 +14,10 @@
 
 use crate::db::{get_db_connection, remove_buffered_answers, save_answer};
 use crate::models::{CoreError, WearosAnswer, WearosCard, WearosDueBatch};
-use crate::sched::{DeckScheduleConfig, advance_state, preview_labels};
+use crate::sched::{
+    DeckScheduleConfig, SECS_PER_DAY, advance_state, preview_interval_secs,
+    preview_labels_for_buttons,
+};
 use crate::util::unix_millis;
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -26,9 +29,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static ANSWER_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Force a card to graduate after this many learning-step reappearances (excluding Again, which the
-/// user is actively failing and may repeat freely). Without the deck's step list this is the only
-/// progression mechanism, so it bounds the session; with it, the cap is set past the real step
-/// count and just guards against a malformed config.
+/// user is actively failing and may repeat freely).
+///
+/// Anki has no such cap: a card stays in learning until the user answers it out of the ladder. On a
+/// watch that would let a session run forever (pressing Hard at the last step repeats it, and Again
+/// always repeats), so the session keeps a bound. Without the deck's step list this constant *is*
+/// the ladder; with it, the bound is set past the step count ([`ReviewSession::requeue_cap`]) and
+/// only bites when a user repeats Hard indefinitely - a deliberate deviation from Anki in favour of
+/// a session that always ends.
 const MAX_LEARN_REQUEUES: u32 = 3;
 
 /// End-of-session tally shown on the finished screen.
@@ -170,8 +178,8 @@ impl ReviewSession {
         // Again is always a relearn step and may repeat freely; other buttons requeue only while the
         // chosen interval is a learning step and the per-card cap hasn't been hit.
         let is_again = ease == 1;
-        let requeue =
-            is_again || (is_learning_step(card, ease) && front.learn_requeues < self.requeue_cap());
+        let requeue = is_again
+            || (self.is_learning_step(card, ease) && front.learn_requeues < self.requeue_cap());
         if requeue {
             let learn_requeues = front.learn_requeues + u32::from(!is_again);
             self.queue.lock().unwrap().push_back(QueuedCard {
@@ -193,10 +201,30 @@ impl ReviewSession {
     }
 
     /// How many learning-step reappearances this session tolerates before forcing graduation.
-    /// With the deck's step list the real ladder graduates the card first, so the cap only has to
-    /// clear the step count; without it the cap is the ladder.
+    ///
+    /// With the deck's step list, walking the ladder with Good graduates the card at the last step
+    /// without ever reaching this bound - it is the count of steps plus one only so that a card
+    /// repeating a single step (Hard) still terminates.
     fn requeue_cap(&self) -> u32 {
         self.schedule_config.as_ref().map_or(MAX_LEARN_REQUEUES, |c| c.learn_steps.len() as u32 + 1)
+    }
+
+    /// Whether the chosen button lands on a learning step, so the card should reappear this session
+    /// rather than graduate out.
+    ///
+    /// Prefers the interval we compute from the deck's own config, which is the value Anki would
+    /// schedule; falls back to reading the shipped label's unit (seconds/minutes/hours) when the
+    /// phone sent no config or the card carries no state (older builds, mock cards). With neither,
+    /// only Again reappears.
+    fn is_learning_step(&self, card: &WearosCard, ease: i32) -> bool {
+        if let (Some(config), Some(state)) = (&self.schedule_config, &card.state) {
+            // The computed previews are always in ease order (Again/Hard/Good/Easy), unlike the
+            // shipped label list, which drops Hard for 3-button cards.
+            let slot = usize::try_from(ease - 1).unwrap_or(0).min(3);
+            let secs = preview_interval_secs(config, state, unix_millis() as i64);
+            return secs.get(slot).is_some_and(|secs| *secs < SECS_PER_DAY);
+        }
+        interval_label(card, ease).map_or(ease == 1, label_is_subday)
     }
 
     /// The card as it will be after this grade, with its interval previews recomputed from the
@@ -209,7 +237,9 @@ impl ReviewSession {
         // unix_millis() is u128 for the answer id; the scheduler takes i64 milliseconds.
         let now_ms = unix_millis() as i64;
         let next_state = advance_state(config, state, ease, now_ms);
-        let labels = preview_labels(config, &next_state, now_ms);
+        // Labels keep the card's own button shape (3-button cards have no Hard), so the watch UI can
+        // render them against its buttons whether they were recomputed here or shipped by the phone.
+        let labels = preview_labels_for_buttons(config, &next_state, now_ms, card.button_count);
         WearosCard { next_review_times: labels, state: Some(next_state), ..card.clone() }
     }
 
@@ -310,12 +340,6 @@ fn interval_label(card: &WearosCard, ease: i32) -> Option<&str> {
     };
     let idx = idx.min(card.next_review_times.len() - 1);
     card.next_review_times.get(idx).map(String::as_str)
-}
-
-/// Whether the chosen button lands on a learning step (a sub-day interval), meaning the card should
-/// reappear this session rather than graduate out. With no interval data, only Again reappears.
-fn is_learning_step(card: &WearosCard, ease: i32) -> bool {
-    interval_label(card, ease).map_or(ease == 1, label_is_subday)
 }
 
 /// True for sub-day interval units (seconds/minutes/hours), false for day/month/year. Labels look
