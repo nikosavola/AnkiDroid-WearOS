@@ -92,4 +92,10 @@ dependencies {
   testImplementation(libs.androidx.test.ext.junit)
   // Plain desktop JNA jar so uniffi's Native.load works under the host test JVM.
   testImplementation(libs.jna.jvm)
+
+  // Instrumented tests run against a real AnkiDroid install on a device/emulator: they exercise the
+  // ContentProvider contract (deck OPTIONS, card scheduler state) that unit tests can only fake.
+  androidTestImplementation(libs.androidx.test.ext.junit)
+  androidTestImplementation(libs.androidx.test.core)
+  androidTestImplementation(libs.androidx.test.runner)
 }
