@@ -27,6 +27,13 @@ thiserror = "2.0.20"
 # zstd compression for the due-batch payload (best ratio/speed for this text-heavy data). The C
 # backend is compiled per-target by cargo-ndk; `unsafe_code = forbid` only binds our crate, not deps.
 zstd = "0.13"
+# FSRS-6 scheduler math for on-watch interval previews (weights + desired retention come from the
+# deck config AnkiDroid exposes; AnkiDroid still owns the real schedule). Deliberately NOT the
+# `fsrs` crate Anki's rslib uses: that one pulls ndarray/rayon/priority-queue, and this only needs
+# the scheduler path.
+rs-fsrs = "1.2"
+# rs-fsrs expresses card timestamps as chrono types (due/last_review); std+clock only (no timezone DB).
+chrono = { version = "0.4.44", default-features = false, features = ["std", "clock"] }
 # Protobuf encoding via derive macros only — no protoc / build.rs needed (messages are annotated
 # Rust structs). The due-batch wire format (see proto.rs).
 prost = "0.13"

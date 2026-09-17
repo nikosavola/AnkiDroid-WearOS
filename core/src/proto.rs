@@ -3,6 +3,7 @@
 //! `sync.rs` wraps [`encode_due_batch`]/[`decode_due_batch`] in zstd for the actual transfer.
 
 use crate::models::{CoreError, DeckInfo, WearosAnswer, WearosCard, WearosDueBatch};
+use crate::sched::{CardScheduleState, DeckScheduleConfig};
 use prost::Message;
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -21,6 +22,27 @@ struct CardPb {
     button_count: i32,
     #[prost(string, repeated, tag = "7")]
     next_review_times: Vec<String>,
+    // Additive: absent from older encoders. `None` (not an all-default message) means "the phone
+    // did not send state", which callers must distinguish from a genuinely new card's zeros.
+    #[prost(message, optional, tag = "8")]
+    state: Option<CardStatePb>,
+}
+
+/// Scheduler state for one card, read from `FlashCardsContract.Card`.
+#[derive(Clone, PartialEq, prost::Message)]
+struct CardStatePb {
+    #[prost(int32, tag = "1")]
+    queue: i32,
+    #[prost(double, tag = "2")]
+    interval_days: f64,
+    #[prost(int32, tag = "3")]
+    learning_step: i32,
+    #[prost(double, tag = "4")]
+    stability: f64,
+    #[prost(double, tag = "5")]
+    difficulty: f64,
+    #[prost(double, tag = "6")]
+    elapsed_days: f64,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -31,6 +53,38 @@ struct DueBatchPb {
     deck_name: String,
     #[prost(message, repeated, tag = "3")]
     cards: Vec<CardPb>,
+    // Additive: the deck's scheduling config, absent from older encoders.
+    #[prost(message, optional, tag = "4")]
+    schedule_config: Option<DeckConfigPb>,
+}
+
+/// The deck scheduling config, from AnkiDroid's deck `OPTIONS` JSON.
+#[derive(Clone, PartialEq, prost::Message)]
+struct DeckConfigPb {
+    #[prost(double, repeated, tag = "1")]
+    learn_steps: Vec<f64>,
+    #[prost(double, repeated, tag = "2")]
+    relearn_steps: Vec<f64>,
+    #[prost(int32, tag = "3")]
+    graduating_interval_days: i32,
+    #[prost(int32, tag = "4")]
+    easy_interval_days: i32,
+    #[prost(double, tag = "5")]
+    hard_multiplier: f64,
+    #[prost(double, tag = "6")]
+    interval_multiplier: f64,
+    #[prost(double, tag = "7")]
+    easy_bonus: f64,
+    #[prost(int32, tag = "8")]
+    max_interval_days: i32,
+    #[prost(double, tag = "9")]
+    lapse_multiplier: f64,
+    #[prost(int32, tag = "10")]
+    lapse_min_interval_days: i32,
+    #[prost(double, repeated, tag = "11")]
+    fsrs_weights: Vec<f64>,
+    #[prost(double, tag = "12")]
+    desired_retention: f64,
 }
 
 impl From<WearosCard> for CardPb {
@@ -43,6 +97,71 @@ impl From<WearosCard> for CardPb {
             back: c.back,
             button_count: c.button_count,
             next_review_times: c.next_review_times,
+            state: c.state.map(CardStatePb::from),
+        }
+    }
+}
+
+impl From<CardScheduleState> for CardStatePb {
+    fn from(s: CardScheduleState) -> Self {
+        Self {
+            queue: s.queue,
+            interval_days: s.interval_days,
+            learning_step: s.learning_step,
+            stability: s.stability,
+            difficulty: s.difficulty,
+            elapsed_days: s.elapsed_days,
+        }
+    }
+}
+
+impl From<CardStatePb> for CardScheduleState {
+    fn from(s: CardStatePb) -> Self {
+        Self {
+            queue: s.queue,
+            interval_days: s.interval_days,
+            learning_step: s.learning_step,
+            stability: s.stability,
+            difficulty: s.difficulty,
+            elapsed_days: s.elapsed_days,
+        }
+    }
+}
+
+impl From<DeckScheduleConfig> for DeckConfigPb {
+    fn from(c: DeckScheduleConfig) -> Self {
+        Self {
+            learn_steps: c.learn_steps,
+            relearn_steps: c.relearn_steps,
+            graduating_interval_days: c.graduating_interval_days,
+            easy_interval_days: c.easy_interval_days,
+            hard_multiplier: c.hard_multiplier,
+            interval_multiplier: c.interval_multiplier,
+            easy_bonus: c.easy_bonus,
+            max_interval_days: c.max_interval_days,
+            lapse_multiplier: c.lapse_multiplier,
+            lapse_min_interval_days: c.lapse_min_interval_days,
+            fsrs_weights: c.fsrs_weights,
+            desired_retention: c.desired_retention,
+        }
+    }
+}
+
+impl From<DeckConfigPb> for DeckScheduleConfig {
+    fn from(c: DeckConfigPb) -> Self {
+        Self {
+            learn_steps: c.learn_steps,
+            relearn_steps: c.relearn_steps,
+            graduating_interval_days: c.graduating_interval_days,
+            easy_interval_days: c.easy_interval_days,
+            hard_multiplier: c.hard_multiplier,
+            interval_multiplier: c.interval_multiplier,
+            easy_bonus: c.easy_bonus,
+            max_interval_days: c.max_interval_days,
+            lapse_multiplier: c.lapse_multiplier,
+            lapse_min_interval_days: c.lapse_min_interval_days,
+            fsrs_weights: c.fsrs_weights,
+            desired_retention: c.desired_retention,
         }
     }
 }
@@ -57,6 +176,7 @@ impl From<CardPb> for WearosCard {
             back: c.back,
             button_count: c.button_count,
             next_review_times: c.next_review_times,
+            state: c.state.map(CardScheduleState::from),
         }
     }
 }
@@ -67,6 +187,7 @@ impl From<WearosDueBatch> for DueBatchPb {
             deck_id: b.deck_id,
             deck_name: b.deck_name,
             cards: b.cards.into_iter().map(CardPb::from).collect(),
+            schedule_config: b.schedule_config.map(DeckConfigPb::from),
         }
     }
 }
@@ -77,6 +198,7 @@ impl From<DueBatchPb> for WearosDueBatch {
             deck_id: b.deck_id,
             deck_name: b.deck_name,
             cards: b.cards.into_iter().map(WearosCard::from).collect(),
+            schedule_config: b.schedule_config.map(DeckScheduleConfig::from),
         }
     }
 }

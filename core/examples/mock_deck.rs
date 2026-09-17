@@ -26,11 +26,13 @@ fn main() {
             back: back.to_string(),
             button_count: 4,
             next_review_times: vec!["1m".into(), "6m".into(), "10m".into(), "4d".into()],
+            state: None,
         };
         WearosDueBatch {
             deck_id: 9001,
             deck_name: "Emulator Smoke".to_string(),
             cards: vec![card(101, "犬 (いぬ)", "dog"), card(102, "猫 (ねこ)", "cat")],
+            schedule_config: None,
         }
     } else {
         let deck_id: i64 = rest[0].parse().expect("deck_id must be an integer");
@@ -47,10 +49,11 @@ fn main() {
                     back: p[3].to_string(),
                     button_count: 4,
                     next_review_times: vec!["1m".into(), "6m".into(), "10m".into(), "4d".into()],
+                    state: None,
                 }
             })
             .collect();
-        WearosDueBatch { deck_id, deck_name, cards }
+        WearosDueBatch { deck_id, deck_name, cards, schedule_config: None }
     };
 
     let bytes = serialize_due_batch(batch).expect("serialize");
