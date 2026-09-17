@@ -122,7 +122,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   private var activeDialog by mutableStateOf(PhoneDialog.NONE)
 
   private fun forceMock(): Boolean =
-    settings.getBoolean(KEY_FORCE_MOCK, !vm.bridge.isAnkiDroidAvailable())
+    settings.getBoolean(KEY_FORCE_MOCK, DeckSync.defaultForceMock(this, vm.bridge.isAnkiDroidAvailable()))
 
   private fun prePushCap(): Int = settings.getInt(KEY_PREPUSH_CAP, DEFAULT_PREPUSH_DECKS)
 
