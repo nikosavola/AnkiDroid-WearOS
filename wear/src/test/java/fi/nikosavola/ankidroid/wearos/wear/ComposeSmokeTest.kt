@@ -14,7 +14,7 @@ import org.robolectric.annotation.GraphicsMode
  * Proves Compose UI testing runs under Robolectric (createComposeRule + NATIVE graphics). The
  * top-level app composables are driven directly in GradeEdgeButtonsTest (tap-zone mapping) and
  * HtmlTextTest (card render); the remaining screen composables still live as MainActivity methods
- * and would need extracting to be driven here (tracked in TODO).
+ * and would need extracting to be driven here (tracked in issue #22).
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)

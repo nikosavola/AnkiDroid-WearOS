@@ -1,7 +1,6 @@
-# Rust / Cargo
+# Rust / Cargo. Cargo.lock is tracked on purpose (reproducible .so builds); do not re-ignore it.
 **/target/
 **/*.rs.bk
-Cargo.lock
 
 # Android / Gradle
 .gradle/

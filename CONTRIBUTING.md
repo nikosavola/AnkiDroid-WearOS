@@ -1,7 +1,7 @@
 # Contributing
 
 Build, format, and test instructions are summarized here; see `README.md` for the architecture
-overview and `CLAUDE.md` for the deeper conventions.
+overview and `AGENTS.md` for the deeper conventions.
 
 ## Build & test
 
@@ -23,6 +23,11 @@ JAVA_HOME=<jdk21> ./gradlew testDebugUnitTest
 # Format + lint everything (ktfmt, ktlint, detekt, cargo fmt/clippy, yaml, actions)
 uv run prek run --all-files
 ```
+
+CI runs the Rust tests, the JVM unit tests, Android lint, an unsigned release build, a 16 KB
+page-size check, and the workflow/config security hooks on every push. What CI cannot cover —
+the GMS Data Layer hop, rotary input, tiles, TTS, battery behavior — is listed as a manual
+pre-release checklist in `MANUAL_TESTING.md`.
 
 ## Local Android emulator (native AVDs, macOS)
 
@@ -81,8 +86,9 @@ adb -s emulator-5554 exec-out screencap -p > watch.png  # visual check
 
 Both apps share the `fi.nikosavola.ankidroid.wearos` application id; the launcher activities are
 `.wear.MainActivity` and `.phone.MainActivity` respectively. Without AnkiDroid installed on
-the phone emulator, the bridge falls back to mock cards (see README §2), so the full
-review flow is testable with just the two AVDs. The phone<->watch GMS Data Layer hop needs
+the phone emulator, debug builds fall back to mock cards (see README §2), so the full
+review flow is testable with just the two AVDs; release builds need the Force Mock Mode
+settings toggle enabled explicitly. The phone<->watch GMS Data Layer hop needs
 both AVDs' Play Services to settle after first boot; if syncing does not start, let the
 emulators sit for a few minutes after a fresh cold boot.
 

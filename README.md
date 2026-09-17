@@ -38,7 +38,7 @@ flowchart LR
 - **Dynamic Grading Grid:** Automatically adapts to 3-button or 4-button templates depending on the card's deck configuration, rendering color-coded chips with scheduled interval previews.
 - **Text-to-Speech (TTS) Voice Reviews:** Toggling "Voice Reviews" on the dashboard activates system-native vocal readouts that read cards' front text on load and answer text on reveal.
 - **System-Native Tiles:** Displays pending cards due today natively inside the smartwatch's quick-swipe carousel using Google's modern `androidx.wear.tiles` and `androidx.wear.protolayout` standards.
-- **AnkiDroid Mock Fallback:** To facilitate testing in emulator or headless CLI environments, the phone bridge automatically falls back to generating virtual cards and mocking scheduling operations if the real AnkiDroid app is not installed.
+- **AnkiDroid Mock Fallback:** To facilitate testing in emulator or headless CLI environments, the phone bridge falls back to generating virtual cards and mocking scheduling operations if the real AnkiDroid app is not installed. Debug builds enable this automatically; release builds require opting in via the Force Mock Mode settings toggle.
 
 ---
 
@@ -86,6 +86,6 @@ cargo test --manifest-path core/Cargo.toml
 ```
 
 ### Local Emulation
-You can install both modules onto an Android Phone and a Wear OS circular emulator. The phone companion will automatically pair with the watch's sync listener and detect whether the local `com.ichi2.anki.flashcards` provider is available, falling back to mock cards for testing if needed.
+You can install both modules onto an Android Phone and a Wear OS circular emulator. The phone companion will automatically pair with the watch's sync listener and detect whether the local `com.ichi2.anki.flashcards` provider is available. Debug builds fall back to mock cards for testing when it is not; release builds need the Force Mock Mode toggle.
 
 For a lightweight, headless phone environment (no KVM/AVD needed), `CONTRIBUTING.md` documents running Android in Docker via **redroid** — handy for verifying the AnkiDroid write-back path and phone UI on a server or remote VM.
