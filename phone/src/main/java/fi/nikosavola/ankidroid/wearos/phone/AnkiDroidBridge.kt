@@ -51,6 +51,9 @@ class AnkiDroidBridge(private val context: Context) {
     private const val COL_LEFT = "left"
     private const val COL_FSRS_STABILITY = "fsrs_stability"
     private const val COL_FSRS_DIFFICULTY = "fsrs_difficulty"
+    // SM-2 ease factor, stored as an integer scaled by 10 (2500 = 250%): Anki's review scheduling
+    // multiplies by it, so previews need it to match.
+    private const val COL_SM2_FACTOR = "sm2_factor"
     private const val COL_LAST_REVIEW_SECS = "last_review_time_secs"
 
     // Deck scheduling config lives in the deck's OPTIONS column as rslib's schema11 JSON.
@@ -158,6 +161,10 @@ class AnkiDroidBridge(private val context: Context) {
 
     return CardScheduleState(
       queue = queue,
+      easeFactor =
+        cursor.getColumnIndex(COL_SM2_FACTOR).let {
+          if (it != -1 && !cursor.isNull(it)) cursor.getDouble(it) / 1000.0 else 0.0
+        },
       intervalDays =
         cursor.getColumnIndex(COL_INTERVAL).let {
           if (it != -1 && !cursor.isNull(it)) cursor.getDouble(it) else 0.0
@@ -366,6 +373,7 @@ class AnkiDroidBridge(private val context: Context) {
                 COL_LEFT,
                 COL_FSRS_STABILITY,
                 COL_FSRS_DIFFICULTY,
+                COL_SM2_FACTOR,
                 COL_LAST_REVIEW_SECS,
               ),
               null,

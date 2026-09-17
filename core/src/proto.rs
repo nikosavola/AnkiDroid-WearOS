@@ -39,6 +39,9 @@ struct CardStatePb {
     learning_step: i32,
     #[prost(double, tag = "4")]
     stability: f64,
+    // Additive: an older encoder omits it (decodes to 0.0), which reads as "unknown ease".
+    #[prost(double, tag = "7")]
+    ease_factor: f64,
     #[prost(double, tag = "5")]
     difficulty: f64,
     #[prost(double, tag = "6")]
@@ -111,6 +114,7 @@ impl From<CardScheduleState> for CardStatePb {
             stability: s.stability,
             difficulty: s.difficulty,
             elapsed_days: s.elapsed_days,
+            ease_factor: s.ease_factor,
         }
     }
 }
@@ -124,6 +128,7 @@ impl From<CardStatePb> for CardScheduleState {
             stability: s.stability,
             difficulty: s.difficulty,
             elapsed_days: s.elapsed_days,
+            ease_factor: s.ease_factor,
         }
     }
 }

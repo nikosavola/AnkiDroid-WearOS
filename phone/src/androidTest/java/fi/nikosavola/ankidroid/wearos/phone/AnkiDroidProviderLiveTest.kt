@@ -226,4 +226,85 @@ class AnkiDroidProviderLiveTest {
   companion object {
     private const val TAG = "AnkiDroidLiveTest"
   }
+
+  /**
+   * Walk one card through a real review session and compare our previews against AnkiDroid's own
+   * labels at each state the watch can actually see: new, then learning after a Good. Answering goes
+   * through the app's real write-back path (prime-then-answer), so this exercises the same code the
+   * watch uses.
+   *
+   * Only due cards expose `NEXT_REVIEW_TIMES`, so a card that graduates or lapses out of today's
+   * queue disappears from the comparison (that is Anki's scheduling working, not a gap in this
+   * test). Those states are covered by the unit tests in `core/src/lib.rs` instead
+   * (`test_relearning_graduation_uses_the_lapse_reduced_interval`,
+   * `test_sm2_late_review_grows_faster_and_stays_ordered`).
+   *
+   * The tolerance is for Anki's fuzz, which our previews deliberately do not reproduce: AnkiDroid's
+   * Easy label on a 4-day interval varies between runs (seen: 3d, 4d, 5d) while we always compute
+   * 4d. Everything outside fuzz - the learning ladder, graduation, Hard's average - matches exactly.
+   */
+  @Test
+  fun previewsTrackAnkiDroidThroughAReviewSession() {
+    val deckId = assumeAnkiDroid()
+    val note = createTestNote(deckId)
+    assumeTrue("AnkiDroid provider refused the test note", note != null)
+    val (noteUri, noteId) = note!!
+
+    try {
+      // A graduated card is scheduled for tomorrow and a lapse needs a due review card to fail, so
+      // only these two states are reachable through the due queue.
+      val stages = listOf("new", "learning")
+      stages.forEachIndexed { index, stage ->
+        if (index > 0) answerFirstCard(noteId, ease = 3)
+
+        val batch = bridge.fetchDueBatch(deckId = DeckId(deckId), limit = 50)
+        val card =
+          batch.cards.firstOrNull { it.noteId == noteId }
+            ?: error("card for the test note is missing at stage '$stage'")
+        val config = batch.scheduleConfig ?: error("no schedule config for deck $deckId")
+        val state = card.state ?: error("card ${card.id} carries no scheduler state")
+        val recomputed = previewIntervalSecs(config, state, System.currentTimeMillis())
+
+        card.nextReviewTimes.forEachIndexed { button, shipped ->
+          if (button >= recomputed.size) return@forEachIndexed
+          val shippedSecs = parseLabelToSeconds(shipped) ?: return@forEachIndexed
+          val ours = recomputed[button]
+          val ratio = if (shippedSecs > 0) ours / shippedSecs else 1.0
+          Log.i(
+            TAG,
+            "$stage button $button: AnkiDroid '$shipped' (${shippedSecs.toLong()}s) vs ours ${ours.toLong()}s",
+          )
+          assertTrue(
+            "$stage button $button: AnkiDroid says '$shipped' (${shippedSecs}s) but we computed ${ours}s",
+            ratio in 0.5..2.0,
+          )
+        }
+      }
+    } finally {
+      context.contentResolver.delete(noteUri, null, null)
+    }
+  }
+
+  /**
+   * Answer the test note's card through the app's own write-back path (prime-then-answer).
+   * [AnkiDroidBridge.writeAnswersBack] returns the ids it settled, so a missing id means the grade
+   * never reached the collection.
+   */
+  private fun answerFirstCard(noteId: Long, ease: Int) {
+    val answer =
+      uniffi.wearos_core.WearosAnswer(
+        id = "live-test-$noteId-$ease-${System.currentTimeMillis()}",
+        noteId = noteId,
+        ord = 0,
+        ease = ease,
+        timeTakenMs = 2_000,
+        deckId = 1,
+      )
+    val settled = bridge.writeAnswersBack(listOf(answer))
+    assertTrue(
+      "write-back did not apply the test answer (settled: $settled)",
+      settled.contains(answer.id),
+    )
+  }
+
 }

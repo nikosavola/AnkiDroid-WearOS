@@ -94,17 +94,30 @@ grade, so a card that advanced a learning step or graduated would still show pre
 - **Per-card state** comes from `FlashCardsContract.Card`: `queue`, `interval`, `left`
   (`left % 1000` = reps before graduation, which gives the learning-step index), `fsrs_stability`,
   `fsrs_difficulty`, `last_review_time_secs`.
-- **Math**: learning steps are a plain ladder; day-or-longer intervals come from FSRS-6 via the
-  `rs-fsrs` crate (chosen over the `fsrs` crate rslib uses — same formula family, no
-  ndarray/rayon/Burn dependency in a watch `.so`). Decks without weights fall back to SM-2 factors.
+- **Math**: learning/relearning steps are Anki's ladder (Again restarts it, Hard is Anki's hard
+  delay — the average of the first two steps on step 1, otherwise a repeat — Good advances and
+  graduates from the last step, Easy graduates immediately). Day-or-longer intervals come from
+  FSRS-6 via the `rs-fsrs` crate (chosen over the `fsrs` crate rslib uses — same formula family, no
+  ndarray/rayon/Burn dependency in a watch `.so`). Decks without weights follow Anki's SM-2 review
+  rules ported from rslib `review.rs`: the card's own ease factor (fetched from `sm2_factor`) and
+  its days-late drive Hard/Good/Easy, each floored above the previous button and bounded by the
+  deck's maximum interval, with Anki's separate early-review branch when a card is answered ahead
+  of schedule. A lapsed card returns to Anki's failing review interval (its old interval reduced by
+  the lapse multiplier, never below the minimum lapse interval), not the graduating interval.
 - **Session use**: `ReviewSession` advances the card's state on each grade and recomputes the
   requeued copy's labels, so a card worked through its ladder shows the numbers for the state it is
   actually in. Without a config (older phone build, mock cards) the shipped labels are left alone.
 
-AnkiDroid remains the authority: previews are advisory, every grade is reconciled by AnkiDroid on
-write-back, and the previews are unfuzzed where AnkiDroid's own labels are fuzzed. Agreement with
-AnkiDroid is checked on-device by `AnkiDroidProviderLiveTest` (shadow mode); outstanding gaps in the
-modelled subset are tracked in issue #24.
+AnkiDroid remains the authority: previews are advisory and every grade is reconciled by AnkiDroid
+on write-back. The one deliberate difference is **fuzz**: Anki fuzzes intervals of 2.5 days and up
+from a card-and-day seeded PRNG, while these previews are deterministic, so the two can differ by a
+few percent on longer intervals (observed on Easy: 3d/4d/5d across runs where we compute 4d).
+
+Agreement is checked on-device by `AnkiDroidProviderLiveTest` (shadow mode): it inserts a real card
+and compares every button label against AnkiDroid's own, which is what caught the new-card step
+bug and Hard's first-step rule. Only due cards expose labels, so the graduated/relearning states
+are covered by unit tests rather than that walk. Nothing in the modelled subset is knowingly
+unmatched today; issue #24 tracks tightening the comparison tolerance so drift fails loudly.
 
 ## 6. Card Rendering (native, no WebView)
 AnkiDroid's `CardContentProvider` compiles flashcard templates and outputs HTML. Wear OS devices

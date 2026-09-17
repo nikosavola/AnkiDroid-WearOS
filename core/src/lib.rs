@@ -1256,6 +1256,7 @@ mod tests {
             queue: 2,
             interval_days: 10.0,
             learning_step: -1,
+            ease_factor: 2.5,
             stability: 10.0,
             difficulty: 5.0,
             elapsed_days: 10.0,
@@ -1374,7 +1375,10 @@ mod tests {
     }
 
     #[test]
-    fn test_review_previews_use_sm2_factors_without_fsrs() {
+    fn test_review_previews_follow_ankis_sm2_math() {
+        // Anki's review scheduling (rslib review.rs) is driven by the card's ease factor and how
+        // late it is, not by a flat multiplier on the interval: for a 10-day card at ease 2.5 that
+        // is Hard 12d, Good 25d, Easy 33d.
         let config = parse_deck_schedule_config(
             serde_json::json!({ "rev": { "hardFactor": 1.2, "ivlFct": 1.0, "ease4": 1.3 } })
                 .to_string(),
@@ -1385,8 +1389,83 @@ mod tests {
         let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
 
         assert_eq!(days(1), 12, "Hard is interval * hardFactor");
-        assert_eq!(days(2), 10, "Good is interval * ivlFct");
-        assert_eq!(days(3), 13, "Easy is interval * ease4");
+        assert_eq!(days(2), 25, "Good is (interval + daysLate/2) * ease");
+        assert_eq!(days(3), 33, "Easy is (interval + daysLate) * ease * easyBonus");
+        assert_secs(secs[0], 600.0, "Again shows the first relearning step, not an interval");
+    }
+
+    #[test]
+    fn test_sm2_late_review_grows_faster_and_stays_ordered() {
+        let config = parse_deck_schedule_config(
+            serde_json::json!({ "rev": { "hardFactor": 1.2, "ivlFct": 1.0, "ease4": 1.3 } })
+                .to_string(),
+        )
+        .unwrap();
+        let on_time = review_state();
+        // Same card reviewed 20 days late: Anki adds half the lateness to Good, all of it to Easy.
+        let late = CardScheduleState { elapsed_days: 30.0, ..review_state() };
+        let days = |state: &CardScheduleState| {
+            let secs = preview_interval_secs(&config, state, 0);
+            [
+                (secs[1] / 86_400.0).round() as i64,
+                (secs[2] / 86_400.0).round() as i64,
+                (secs[3] / 86_400.0).round() as i64,
+            ]
+        };
+        let [hard, good, easy] = days(&on_time);
+        let [late_hard, late_good, late_easy] = days(&late);
+        assert_eq!(late_hard, hard, "Hard ignores lateness");
+        assert!(late_good > good, "Good grows with lateness ({late_good} > {good})");
+        assert!(late_easy > late_good, "Easy stays above Good ({late_easy} > {late_good})");
+        assert!(hard < good && good < easy, "order never inverts");
+    }
+
+    #[test]
+    fn test_early_review_schedules_from_elapsed_time() {
+        // Answered ahead of schedule Anki uses its early-review branch, which schedules from the
+        // time actually elapsed rather than the interval.
+        let config = parse_deck_schedule_config(
+            serde_json::json!({ "rev": { "hardFactor": 1.2, "ivlFct": 1.0, "ease4": 1.3 } })
+                .to_string(),
+        )
+        .unwrap();
+        let early = CardScheduleState { elapsed_days: 2.0, ..review_state() };
+        let secs = preview_interval_secs(&config, &early, 0);
+        let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
+
+        assert_eq!(days(2), 10, "Good keeps the scheduled interval, it does not shrink it");
+        assert!(days(1) < days(2), "Hard is below Good");
+        assert!(days(2) < days(3), "Easy is above Good");
+    }
+
+    #[test]
+    fn test_relearning_graduation_uses_the_lapse_reduced_interval() {
+        // Anki's failing_review_interval: a lapsed card returns to its old interval reduced by the
+        // lapse multiplier, floored by the deck's minimum lapse interval - not the graduating
+        // interval a new card would get.
+        let config = parse_deck_schedule_config(
+            serde_json::json!({
+                "new": { "delays": [1.0, 10.0], "ints": [1, 4] },
+                "lapse": { "delays": [10.0], "mult": 0.5, "minInt": 1 }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        // A 10-day review card on its last relearning step: Good returns it to 10 * 0.5 = 5 days.
+        let relearning = CardScheduleState {
+            queue: 3,
+            interval_days: 10.0,
+            learning_step: 0,
+            ease_factor: 2.5,
+            elapsed_days: 0.0,
+            ..Default::default()
+        };
+        let secs = preview_interval_secs(&config, &relearning, 0);
+        let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
+
+        assert_secs(secs[0], 600.0, "Again repeats the relearning step");
+        assert_eq!(days(2), 5, "Good returns to the lapse-reduced interval");
+        assert_eq!(days(3), 6, "Easy is that interval plus a day");
     }
 
     #[test]
