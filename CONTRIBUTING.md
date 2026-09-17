@@ -24,6 +24,11 @@ JAVA_HOME=<jdk21> ./gradlew testDebugUnitTest
 uv run prek run --all-files
 ```
 
+CI runs the Rust tests, the JVM unit tests, Android lint, an unsigned release build, a 16 KB
+page-size check, and the workflow/config security hooks on every push. What CI cannot cover —
+the GMS Data Layer hop, rotary input, tiles, TTS, battery behavior — is listed as a manual
+pre-release checklist in `MANUAL_TESTING.md`.
+
 ## Local Android emulator (native AVDs, macOS)
 
 **redroid does not work on macOS**: Docker Desktop's LinuxKit kernel ships with neither
