@@ -19,11 +19,11 @@ name = "uniffi-bindgen"
 path = "uniffi-bindgen.rs"
 
 [dependencies]
-uniffi = { version = "0.28.1", features = ["cli"] }
-rusqlite = { version = "0.32.0", features = ["bundled"] }
-serde = { version = "1.0.204", features = ["derive"] }
-serde_json = "1.0.120"
-thiserror = "1.0.63"
+uniffi = { version = "0.32.1", features = ["cli"] }
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+thiserror = "2.0.20"
 # zstd compression for the due-batch payload (best ratio/speed for this text-heavy data). The C
 # backend is compiled per-target by cargo-ndk; `unsafe_code = forbid` only binds our crate, not deps.
 zstd = "0.13"
@@ -49,6 +49,9 @@ all = { level = "deny", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
 nursery = { level = "warn", priority = -1 }
 cargo = { level = "warn", priority = -1 }
+# Transitive dupes (hashbrown, syn) are inherent to the uniffi-bindgen vs rusqlite/prost trees
+# and can't be unified from this crate; only our own dependency choices should fail the build.
+multiple_crate_versions = "allow"
 # Curated `restriction` guardrails (the group must never be enabled wholesale — it has
 # contradictory lints). These catch debug/placeholder leftovers and enforce documented suppressions.
 dbg_macro = "warn"
