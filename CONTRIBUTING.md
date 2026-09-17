@@ -1,7 +1,7 @@
 # Contributing
 
 Build, format, and test instructions are summarized here; see `README.md` for the architecture
-overview and `CLAUDE.md` for the deeper conventions.
+overview and `AGENTS.md` for the deeper conventions.
 
 ## Build & test
 

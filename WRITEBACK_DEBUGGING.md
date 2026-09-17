@@ -22,7 +22,7 @@ no-ops. So write-back must apply answers in the scheduler's presentation order. 
 normal flow (the watch batch is fetched in that order, graded and buffered in order, and replayed in
 order), but out-of-order answers or a second answer for a card relearned within one watch session may
 not all land. Follow-up: reconcile per-answer against the scheduler's current card (match by note_id/
-ord, or re-fetch), tracked in TODO.md.
+ord, or re-fetch), tracked in #20.
 
 Everything below is the original handoff, kept for context.
 

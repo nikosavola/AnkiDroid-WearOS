@@ -501,7 +501,7 @@ Areas to look at with the Compose layout inspector / `adb shell dumpsys gfxinfo`
   cleaned/`html_for_display` strings already cut Rust calls. Consider `remember`ing the parsed
   `Spanned` too.
 - The review card uses `verticalScroll` + `rotaryScroll` on a `Column`; confirm no nested infinite
-  constraints (CLAUDE.md §5). Lists use `ScalingLazyColumn` with `autoCentering = null` already.
+  constraints (AGENTS.md §5). Lists use `ScalingLazyColumn` with `autoCentering = null` already.
 - Measure before/after; there's nothing to change blindly.
 
 ## 2.6 Phone UI → Material 3 Expressive Compose migration (+ animated folder tree) — BIG
