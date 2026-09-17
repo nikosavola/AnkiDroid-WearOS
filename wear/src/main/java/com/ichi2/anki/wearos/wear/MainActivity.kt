@@ -36,9 +36,9 @@ import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
+import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.TransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
-import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.curvedText
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
@@ -700,6 +700,7 @@ class MainActivity : ComponentActivity() {
         fallbackHtml = displayBack,
         modifier = Modifier.fillMaxWidth(),
       )
+      GradeIntervalLabels(labels = card.nextReviewTimes)
     }
     GradeEdgeButtons(card = card, enabled = gradeEnabled, colored = coloredGradeButtons) { ease ->
       onGrade(ease, duration)

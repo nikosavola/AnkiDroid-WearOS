@@ -26,4 +26,21 @@ class ComposeSmokeTest {
     composeRule.setContent { Text("AnkiDroid Wear") }
     composeRule.onNodeWithText("AnkiDroid Wear").assertIsDisplayed()
   }
+
+  @Test
+  fun gradeIntervalLabels_showOneLabelPerButtonInGradeOrder() {
+    composeRule.setContent {
+      GradeIntervalLabels(labels = listOf("1m", "6m", "10m", "4d"))
+    }
+    // The strip is positional: reading left to right it matches the pills (Again/Hard/Good/Easy).
+    composeRule.onNodeWithText("1m · 6m · 10m · 4d").assertIsDisplayed()
+  }
+
+  @Test
+  fun gradeIntervalLabels_areHiddenWhenACardCarriesNone() {
+    // Mock cards and phones that sent no scheduling config ship no labels; the strip must not leave
+    // an empty gap above the grade buttons.
+    composeRule.setContent { GradeIntervalLabels(labels = emptyList()) }
+    composeRule.onNodeWithText("1m").assertDoesNotExist()
+  }
 }
