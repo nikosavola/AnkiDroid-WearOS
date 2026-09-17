@@ -1,0 +1,47 @@
+name: Security
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  schedule:
+    - cron: "0 6 * * 1"
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  prek:
+    name: Workflow & config linters (prek)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install prek
+        run: pipx install prek
+      # The gradle/cargo format-and-lint hooks already run in the CI "test"/"verify" jobs;
+      # this job only re-runs the workflow/config hooks (actionlint, zizmor, yamlfmt, yamllint)
+      # so PRs from contributors who skip the local prek hook still get checked.
+      - name: Run Workflow and Config Lint Hooks
+        run: prek run actionlint zizmor yamlfmt yamllint --all-files
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+  audit:
+    name: Rust vulnerability audit (cargo audit)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Run cargo audit
+        uses: rustsec/audit-check@69366f33c96575abad1ee0dba8212993eecbe998 # v2.0.0
+        with:
+          token: ${{ github.token }}
