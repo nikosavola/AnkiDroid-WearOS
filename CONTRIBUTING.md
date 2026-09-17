@@ -5,8 +5,11 @@ overview and `CLAUDE.md` for the deeper conventions.
 
 ## Build & test
 
-`JAVA_HOME` must point at a JDK 21 below: Linux `/usr/lib/jvm/java-21-openjdk-amd64`,
-macOS `/opt/homebrew/opt/openjdk@21` (`brew install openjdk@21`).
+`JAVA_HOME` must point at a JDK below. JDK 21 is the default (what CI uses, and the apps'
+bytecode target). Linux `/usr/lib/jvm/java-21-openjdk-amd64`, macOS
+`/opt/homebrew/opt/openjdk@21` (`brew install openjdk@21`). Any JDK 17-26 also works as
+the Gradle launcher JVM (Gradle 9.4 supports up to Java 26); the foojay toolchain resolver
+auto-provisions what the build itself needs.
 
 ```bash
 # Cross-compile the Rust core for all ABIs + generate the UniFFI Kotlin bindings

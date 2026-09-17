@@ -29,7 +29,7 @@ We use **UniFFI** and **JNA** to auto-generate safe Kotlin interfaces from our R
 
 ### Prerequisites
 - **Android SDK & NDK** are required for compilation: SDK platform 36, build-tools 36.x, and the pinned `ndk;27.0.12077973` (install via `sdkmanager`; SDK lives at `~/Library/Android/sdk` on macOS, `~/Android/Sdk` on Linux).
-- **Java JDK 21** must be set as `JAVA_HOME` for Gradle. macOS: `brew install openjdk@21` then `JAVA_HOME=/opt/homebrew/opt/openjdk@21`; Linux: `/usr/lib/jvm/java-21-openjdk-amd64`. Don't run Gradle on a newer launcher JDK — the toolchain-resolver plugin in `settings.gradle.kts` trips over a removed Gradle API when the launcher JVM isn't 21.
+- **JDK 21** is the default `JAVA_HOME` for Gradle (what CI uses, and it matches the apps' `VERSION_21` bytecode target). macOS: `brew install openjdk@21` then `JAVA_HOME=/opt/homebrew/opt/openjdk@21`; Linux: `/usr/lib/jvm/java-21-openjdk-amd64`. Any JDK 17-26 also works as the launcher JVM — Gradle 9.4 supports Java up to 26, and the foojay toolchain resolver (1.0.0+) auto-provisions the toolchain. Apps still compile to Java 21 bytecode regardless.
 
 ### Automatic Binder & Library Compilation
 To cross-compile the Rust `.so` libraries for Android (`arm64-v8a`, `x86_64`) and generate the Kotlin bindings in one command, run:
