@@ -98,6 +98,10 @@ jobs:
         # Neither module has a signingConfig on release, so this produces an unsigned APK - the
         # point is exercising R8 with the JNA/UniFFI keep rules, not producing a distributable build.
         run: ./gradlew :phone:assembleRelease :wear:assembleRelease --no-daemon
+      - name: Check 16 KB Page-Size Alignment
+        # Android 15+ (Wear OS 6) devices reject .so files with 4 KB-aligned LOAD segments.
+        # llvm-readelf ships with ubuntu-latest's default LLVM install.
+        run: scripts/check_16kb_alignment.sh
       - name: Upload Test/Lint Reports on Failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
