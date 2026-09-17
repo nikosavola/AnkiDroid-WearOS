@@ -1,6 +1,8 @@
 package fi.nikosavola.ankidroid.wearos.wear
 
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.layout.padding
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -28,6 +30,7 @@ import androidx.wear.compose.foundation.background
 import androidx.wear.compose.foundation.curvedRow
 import androidx.wear.compose.foundation.padding
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.curvedText
 import uniffi.wearos_core.WearosCard
 
@@ -45,8 +48,10 @@ private const val TAP_STRIP_FRACTION = 0.42f
  * wear-compose has no clickable curved modifier, so taps are handled by a single pointerInput strip
  * over the bottom arc that maps the tap's x-position to a button (the pills are ordered left->right
  * along the arc, matching [gradeSpecs]). This reliably receives taps and leaves the card area above
- * untouched. The interval preview is dropped so words fit; colour signals the grade.
+ * untouched. The pills carry the grade name only (they have no room for more text); what each grade
+ * would schedule is shown by [GradeIntervalLabels] just above them.
  */
+
 @Composable
 fun GradeEdgeButtons(
   card: WearosCard,
@@ -119,4 +124,26 @@ fun GradeEdgeButtons(
       }
     }
   }
+}
+
+/**
+ * What each grade button would schedule ("1m · 6m · 10m · 4d"), in the same left-to-right order as
+ * the curved pills, so the numbers line up with the buttons without crowding them.
+ *
+ * AnkiDroid ships one label per button; the Rust core recomputes them when a card is graded and
+ * requeued, so these stay correct for the card's current state. Rendered inside the scrolling card
+ * content (above the pills and clear of the round bezel) rather than on the arc itself, which has no
+ * room for text without squeezing the grade names out. Renders nothing when a card carries no labels
+ * (mock cards, or a phone that sent no scheduling config).
+ */
+@Composable
+fun GradeIntervalLabels(labels: List<String>, modifier: Modifier = Modifier) {
+  if (labels.isEmpty()) return
+  Text(
+    text = labels.joinToString(" · "),
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    fontSize = 11.sp,
+    textAlign = TextAlign.Center,
+    modifier = modifier.fillMaxWidth().padding(top = 10.dp),
+  )
 }
