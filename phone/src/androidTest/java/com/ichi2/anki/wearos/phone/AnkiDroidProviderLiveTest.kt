@@ -121,13 +121,7 @@ class AnkiDroidProviderLiveTest {
         card.nextReviewTimes.size,
         )
       card.nextReviewTimes.forEachIndexed { index, shipped ->
-        val shippedSecs = parseLabelToSeconds(shipped) ?: return@forEachIndexed
-        val ours = recomputed[index]
-        val ratio = if (shippedSecs > 0) ours / shippedSecs else 1.0
-        assertTrue(
-          "button $index: AnkiDroid says '$shipped' (${shippedSecs}s) but we computed ${ours}s",
-          ratio in 0.5..2.0,
-        )
+        assertLabelMatches("fresh card", index, shipped, recomputed[index])
       }
       // The labels themselves are the evidence: [1m, 6m, 10m, 3d] on a stock deck is Anki's
       // first-step average for Hard and the FSRS/SM-2 graduation for Easy.
@@ -209,6 +203,54 @@ class AnkiDroidProviderLiveTest {
     Log.i(TAG, "shadow-compared $compared button labels against AnkiDroid")
   }
 
+
+  /**
+   * Anki's fuzz band for an interval (rslib `scheduler/states/fuzz.rs`): no fuzz below 2.5 days,
+   * then +-15% up to 7 days, +-10% up to 20, +-5% beyond. Anki picks a value inside that band from a
+   * card-and-day seeded PRNG; our previews are the unfuzzed value, so this is the only slack the
+   * comparison should grant.
+   */
+  private fun fuzzFactor(days: Double): Double =
+    when {
+      days < 2.5 -> 0.0
+      days < 7.0 -> 0.15
+      days < 20.0 -> 0.10
+      else -> 0.05
+    }
+
+  /**
+   * Assert AnkiDroid's displayed label is consistent with our computed interval.
+   *
+   * Two conversions sit between the scheduler's number and the label we compare against: Anki may
+   * have fuzzed it into its band, and the label is rounded to whole units ("5.5m" as "6m"). So the
+   * shipped value must lie within our value +- (fuzz band + half a display unit).
+   */
+  private fun assertLabelMatches(stage: String, button: Int, shipped: String, oursSecs: Double) {
+    val shippedSecs = parseLabelToSeconds(shipped) ?: return
+    val oursDays = oursSecs / SECS_PER_DAY
+    val fuzz = fuzzFactor(oursDays)
+    val unitSecs = unitSeconds(shipped)
+    val lower = oursSecs * (1.0 - fuzz) - unitSecs / 2.0
+    val upper = oursSecs * (1.0 + fuzz) + unitSecs / 2.0
+    assertTrue(
+      "$stage button $button: AnkiDroid says '$shipped' (${shippedSecs.toLong()}s) but we computed " +
+        "${oursSecs.toLong()}s; allowed ${lower.toLong()}..${upper.toLong()}s " +
+        "(fuzz ${(fuzz * 100).toInt()}%, display unit ${unitSecs.toLong()}s)",
+      shippedSecs in lower..upper,
+    )
+  }
+
+  /** Seconds in the unit a label is expressed in ("6m" -> 60), for its rounding slack. */
+  private fun unitSeconds(label: String): Double =
+    when (label.takeLastWhile { it.isLetter() }) {
+      "s" -> 1.0
+      "m" -> 60.0
+      "h" -> 3600.0
+      "mo" -> 30 * SECS_PER_DAY
+      "y" -> 365 * SECS_PER_DAY
+      else -> SECS_PER_DAY
+    }
+
   private fun parseLabelToSeconds(label: String): Double? {
     val unit = label.takeLastWhile { it.isLetter() }
     val value = label.dropLast(unit.length).toDoubleOrNull() ?: return null
@@ -225,6 +267,7 @@ class AnkiDroidProviderLiveTest {
 
   companion object {
     private const val TAG = "AnkiDroidLiveTest"
+    private const val SECS_PER_DAY = 86_400.0
   }
 
   /**
@@ -267,17 +310,11 @@ class AnkiDroidProviderLiveTest {
 
         card.nextReviewTimes.forEachIndexed { button, shipped ->
           if (button >= recomputed.size) return@forEachIndexed
-          val shippedSecs = parseLabelToSeconds(shipped) ?: return@forEachIndexed
-          val ours = recomputed[button]
-          val ratio = if (shippedSecs > 0) ours / shippedSecs else 1.0
           Log.i(
             TAG,
-            "$stage button $button: AnkiDroid '$shipped' (${shippedSecs.toLong()}s) vs ours ${ours.toLong()}s",
+            "$stage button $button: AnkiDroid '$shipped' vs ours ${recomputed[button].toLong()}s",
           )
-          assertTrue(
-            "$stage button $button: AnkiDroid says '$shipped' (${shippedSecs}s) but we computed ${ours}s",
-            ratio in 0.5..2.0,
-          )
+          assertLabelMatches(stage, button, shipped, recomputed[button])
         }
       }
     } finally {
