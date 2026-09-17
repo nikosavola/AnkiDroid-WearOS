@@ -56,6 +56,8 @@ mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
 # Plain desktop JNA jar (the app uses the @aar with Android .so's; host JVM tests need the jar).
 jna-jvm = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 androidx-test-core = { group = "androidx.test", name = "core", version.ref = "androidx-test-core" }
+# The instrumented-test runner itself; ext:junit does not pull it in.
+androidx-test-runner = { group = "androidx.test", name = "runner", version = "1.7.0" }
 androidx-test-ext-junit = { group = "androidx.test.ext", name = "junit", version.ref = "androidx-test-ext-junit" }
 compose-ui-test-junit4 = { group = "androidx.compose.ui", name = "ui-test-junit4", version.ref = "compose" }
 compose-ui-test-manifest = { group = "androidx.compose.ui", name = "ui-test-manifest", version.ref = "compose" }

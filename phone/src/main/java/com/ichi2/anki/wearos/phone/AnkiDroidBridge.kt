@@ -2,12 +2,16 @@ package com.ichi2.anki.wearos.phone
 
 import android.content.ContentResolver
 import android.content.ContentValues
+import android.database.Cursor
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import uniffi.wearos_core.CardScheduleState
+import uniffi.wearos_core.DeckScheduleConfig
 import uniffi.wearos_core.WearosAnswer
 import uniffi.wearos_core.WearosCard
 import uniffi.wearos_core.WearosDueBatch
+import uniffi.wearos_core.parseDeckScheduleConfig
 import uniffi.wearos_core.parseReviewTimes
 
 class AnkiDroidBridge(private val context: Context) {
@@ -40,6 +44,29 @@ class AnkiDroidBridge(private val context: Context) {
     private const val COL_BUTTON_COUNT = "button_count"
     private const val COL_NEXT_REVIEW_TIMES = "next_review_times"
 
+    // Card scheduler-state columns (FlashCardsContract.Card). The watch recomputes interval
+    // previews from these once a card is graded and requeued, since the shipped labels go stale.
+    private const val COL_QUEUE = "queue"
+    private const val COL_INTERVAL = "interval"
+    private const val COL_LEFT = "left"
+    private const val COL_FSRS_STABILITY = "fsrs_stability"
+    private const val COL_FSRS_DIFFICULTY = "fsrs_difficulty"
+    private const val COL_LAST_REVIEW_SECS = "last_review_time_secs"
+
+    // Deck scheduling config lives in the deck's OPTIONS column as rslib's schema11 JSON.
+    private const val COL_DECK_OPTIONS = "options"
+
+    /**
+     * Anki's stored `left` packs two counters: `left % 1000` is the reps left before graduation,
+     * `left / 1000` the reps still completable before the day cutoff. Comparing the former with the
+     * deck's step count gives the card's position on the learning ladder.
+     */
+    fun learningStepFor(left: Long, stepCount: Int): Int {
+      if (stepCount <= 0) return -1
+      val repsLeftBeforeGraduation = (left % 1000).toInt()
+      return (stepCount - repsLeftBeforeGraduation).coerceIn(0, stepCount - 1)
+    }
+
     // ReviewInfo write-back columns (FlashCardsContract). Answering a card is an update on
     // SCHEDULE_URI with these keys in ContentValues and a null selection.
     private const val COL_REVIEW_NOTE_ID = "note_id"
@@ -64,7 +91,95 @@ class AnkiDroidBridge(private val context: Context) {
     private const val MAX_APPLIED_IDS = 500
   }
 
-  /** Check if the AnkiDroid provider is installed and accessible. */
+  /**
+   * The deck's scheduling config from the deck's OPTIONS column. AnkiDroid exposes deck options
+   * only through the all-decks URI (there is no per-deck item URI), so this scans the deck list for
+   * our id. Returns null (previews stay as fetched) when the deck is missing or unparseable.
+   */
+  private fun fetchDeckScheduleConfig(deckId: Long): DeckScheduleConfig? =
+    try {
+      // Null projection on purpose: the provider selects its own deck columns (fetchAllDecks reads
+      // every column for the same reason).
+      context.contentResolver.query(DECKS_URI, null, null, null, null)?.use { cursor ->
+        val idIdx = cursor.getColumnIndex(COL_DECK_ID)
+        val optionsIdx = cursor.getColumnIndex(COL_DECK_OPTIONS)
+        if (idIdx == -1 || optionsIdx == -1) {
+          Log.w(TAG, "Deck options column unavailable (id=$idIdx, options=$optionsIdx).")
+          return null
+        }
+        while (cursor.moveToNext()) {
+          if (cursor.getLong(idIdx) != deckId) continue
+          val raw = cursor.getString(optionsIdx)
+          if (raw == null) {
+            Log.w(TAG, "Deck $deckId row carries no options; previews stay as fetched.")
+            return null
+          }
+          val config = parseDeckScheduleConfig(raw)
+          // One line per sync: the watch's offline previews are only as correct as this config.
+          Log.i(
+            TAG,
+            "Deck config: steps=${config.learnSteps}, relearn=${config.relearnSteps}, " +
+              "ints=${config.graduatingIntervalDays}/${config.easyIntervalDays}, " +
+              "fsrs=${config.fsrsEnabled()} (${config.fsrsWeights.size} weights, " +
+              "retention=${config.desiredRetention})",
+          )
+          return config
+        }
+        Log.w(TAG, "Deck $deckId not in the deck list; previews stay as fetched.")
+        null
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "Deck options unavailable (${e.message}); previews stay as fetched.", e)
+      null
+    }
+
+  /** One card's scheduler state; null when the provider exposes none of the columns. */
+  private fun readCardState(
+    cursor: Cursor,
+    config: DeckScheduleConfig?,
+  ): CardScheduleState? {
+    val queueIdx = cursor.getColumnIndex(COL_QUEUE)
+    if (queueIdx == -1) return null
+
+    val queue = cursor.getInt(queueIdx)
+    val leftIdx = cursor.getColumnIndex(COL_LEFT)
+    val stepCount = if (queue == 3) config?.relearnSteps?.size ?: 0 else config?.learnSteps?.size ?: 0
+    val learningStep =
+      if (leftIdx != -1 && !cursor.isNull(leftIdx)) {
+        learningStepFor(cursor.getLong(leftIdx), stepCount)
+      } else {
+        -1
+      }
+
+    return CardScheduleState(
+      queue = queue,
+      intervalDays =
+        cursor.getColumnIndex(COL_INTERVAL).let {
+          if (it != -1 && !cursor.isNull(it)) cursor.getDouble(it) else 0.0
+        },
+      learningStep = learningStep,
+      stability =
+        cursor.getColumnIndex(COL_FSRS_STABILITY).let {
+          if (it != -1 && !cursor.isNull(it)) cursor.getDouble(it) else 0.0
+        },
+      difficulty =
+        cursor.getColumnIndex(COL_FSRS_DIFFICULTY).let {
+          if (it != -1 && !cursor.isNull(it)) cursor.getDouble(it) else 0.0
+        },
+      elapsedDays = elapsedDaysFor(cursor),
+    )
+  }
+
+  /** Days since the card's last review, from the provider's epoch-seconds column. */
+  private fun elapsedDaysFor(cursor: Cursor): Double {
+    val idx = cursor.getColumnIndex(COL_LAST_REVIEW_SECS)
+    if (idx == -1 || cursor.isNull(idx)) return 0.0
+    val lastSeconds = cursor.getLong(idx)
+    if (lastSeconds <= 0) return 0.0
+    val elapsedSeconds = System.currentTimeMillis() / 1000.0 - lastSeconds
+    return (elapsedSeconds / 86_400.0).coerceAtLeast(0.0)
+  }
+
   fun isAnkiDroidAvailable(): Boolean {
     return try {
       val provider = context.contentResolver.acquireContentProviderClient(SCHEDULE_URI)
@@ -189,6 +304,11 @@ class AnkiDroidBridge(private val context: Context) {
       val (resolvedDeckId, resolvedDeckName) = matchedDeck
       Log.i(TAG, "Using AnkiDroid deck: $resolvedDeckName (ID: $resolvedDeckId)")
 
+      // The deck's scheduling config (learning steps, graduation intervals, FSRS weights) drives
+      // the watch's offline preview recompute. A missing config is not fatal: previews then stay
+      // as AnkiDroid shipped them.
+      val scheduleConfig = fetchDeckScheduleConfig(resolvedDeckId.value)
+
       val cards = mutableListOf<WearosCard>()
       val contentResolver: ContentResolver = context.contentResolver
 
@@ -228,8 +348,25 @@ class AnkiDroidBridge(private val context: Context) {
           var cardId = 0L
 
           val cardUri = Uri.parse("content://$AUTHORITY/notes/$noteId/cards/$ord")
+          var cardState: CardScheduleState? = null
           val cardCursor =
-            contentResolver.query(cardUri, arrayOf("_id", "question", "answer"), null, null, null)
+            contentResolver.query(
+              cardUri,
+              arrayOf(
+                "_id",
+                "question",
+                "answer",
+                COL_QUEUE,
+                COL_INTERVAL,
+                COL_LEFT,
+                COL_FSRS_STABILITY,
+                COL_FSRS_DIFFICULTY,
+                COL_LAST_REVIEW_SECS,
+              ),
+              null,
+              null,
+              null,
+            )
 
           cardCursor?.use { cCursor ->
             if (cCursor.moveToFirst()) {
@@ -240,6 +377,7 @@ class AnkiDroidBridge(private val context: Context) {
               if (idIdx != -1) cardId = cCursor.getLong(idIdx)
               if (qIdx != -1) front = cCursor.getString(qIdx)
               if (aIdx != -1) back = cCursor.getString(aIdx)
+              cardState = readCardState(cCursor, scheduleConfig)
             }
           }
 
@@ -252,6 +390,7 @@ class AnkiDroidBridge(private val context: Context) {
               back = back,
               buttonCount = buttonCount,
               nextReviewTimes = nextReviewTimes,
+              state = cardState,
             )
           )
         }
@@ -261,6 +400,7 @@ class AnkiDroidBridge(private val context: Context) {
         deckId = resolvedDeckId.value,
         deckName = resolvedDeckName,
         cards = cards,
+        scheduleConfig = scheduleConfig,
       )
     } catch (e: Exception) {
       // Return an empty batch (not mocks) so a transient provider error can't overwrite the

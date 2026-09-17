@@ -394,4 +394,18 @@ class AnkiDroidBridgeTest {
     assertEquals(4, card.buttonCount)
     assertEquals(listOf("1m", "10m", "4d", "7d"), card.nextReviewTimes)
   }
+
+  @Test
+  fun learningStepFor_mapsAnkisLeftPackingOntoTheStepLadder() {
+    // `left % 1000` is the reps left before graduation, so a card at the start of a two-step
+    // ladder still has both steps ahead of it.
+    assertEquals(0, AnkiDroidBridge.learningStepFor(left = 2, stepCount = 2))
+    assertEquals(1, AnkiDroidBridge.learningStepFor(left = 1, stepCount = 2))
+    // `left / 1000` (reps completable today) must not affect the step.
+    assertEquals(1, AnkiDroidBridge.learningStepFor(left = 2001, stepCount = 2))
+    // Defensive: no step list means no position to report.
+    assertEquals(-1, AnkiDroidBridge.learningStepFor(left = 1, stepCount = 0))
+    // A stale/oversized counter clamps into the ladder rather than going negative.
+    assertEquals(0, AnkiDroidBridge.learningStepFor(left = 99, stepCount = 3))
+  }
 }
