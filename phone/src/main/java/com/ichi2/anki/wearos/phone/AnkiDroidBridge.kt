@@ -60,9 +60,14 @@ class AnkiDroidBridge(private val context: Context) {
      * Anki's stored `left` packs two counters: `left % 1000` is the reps left before graduation,
      * `left / 1000` the reps still completable before the day cutoff. Comparing the former with the
      * deck's step count gives the card's position on the learning ladder.
+     *
+     * A new card (queue 0) has `left` 0 because it has never been answered, not because it is out of
+     * steps, so it is on the first step. Verified against AnkiDroid by
+     * `AnkiDroidProviderLiveTest.previewsAgreeWithAnkiDroidForAFreshlyAddedCard`.
      */
-    fun learningStepFor(left: Long, stepCount: Int): Int {
+    fun learningStepFor(left: Long, stepCount: Int, queue: Int): Int {
       if (stepCount <= 0) return -1
+      if (queue == 0) return 0
       val repsLeftBeforeGraduation = (left % 1000).toInt()
       return (stepCount - repsLeftBeforeGraduation).coerceIn(0, stepCount - 1)
     }
@@ -146,7 +151,7 @@ class AnkiDroidBridge(private val context: Context) {
     val stepCount = if (queue == 3) config?.relearnSteps?.size ?: 0 else config?.learnSteps?.size ?: 0
     val learningStep =
       if (leftIdx != -1 && !cursor.isNull(leftIdx)) {
-        learningStepFor(cursor.getLong(leftIdx), stepCount)
+        learningStepFor(cursor.getLong(leftIdx), stepCount, queue)
       } else {
         -1
       }

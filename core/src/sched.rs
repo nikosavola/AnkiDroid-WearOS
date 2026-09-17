@@ -293,7 +293,7 @@ fn learning_preview(
 
     match ease {
         1 => steps.first().copied().unwrap_or(60.0),
-        2 => steps.get(current).copied().unwrap_or(60.0),
+        2 => hard_delay_secs(steps, current),
         4 => graduation_secs(config, state, ease),
         _ => {
             if current >= last_index {
@@ -303,6 +303,30 @@ fn learning_preview(
             }
         }
     }
+}
+
+/// Anki's Hard interval on a learning card, in seconds.
+///
+/// On the first step it is the average of the first two steps, which keeps Hard distinct from Again
+/// and below Good; on later steps it simply repeats the current step. With a single step configured
+/// it is half again that step, capped at one day more (Anki's rule, so Hard can't exceed Good).
+fn hard_delay_secs(steps: &[f64], current: usize) -> f64 {
+    let current_secs = steps.get(current).copied().unwrap_or(60.0);
+    if current != 0 {
+        return current_secs;
+    }
+    steps.get(1).copied().map_or_else(
+        || round_in_days((current_secs * 1.5).min(current_secs + 86_400.0)),
+        |next| round_in_days(f64::midpoint(current_secs, next)),
+    )
+}
+
+/// Anki rounds an interval to whole days once it reaches a day (`maybe_round_in_days`).
+fn round_in_days(secs: f64) -> f64 {
+    if secs < 86_400.0 {
+        return secs;
+    }
+    (secs / 86_400.0).round() * 86_400.0
 }
 
 /// Day-or-longer interval for a graduating (or graduated) button, from FSRS when the deck uses it
