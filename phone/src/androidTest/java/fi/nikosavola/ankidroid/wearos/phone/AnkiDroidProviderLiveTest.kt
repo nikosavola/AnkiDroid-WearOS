@@ -4,6 +4,7 @@ import android.content.Context
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
@@ -91,13 +92,92 @@ class AnkiDroidProviderLiveTest {
   }
 
   /**
-   * Shadow validation (issue #24): for a card that has not been graded yet, the labels AnkiDroid
-   * shipped and the labels we recompute from the deck config describe the same state, so they should
-   * agree. A mismatch here means our offline previews disagree with AnkiDroid's own scheduler.
+   * Shadow validation (issue #24) on a card this test creates itself.
    *
-   * Tolerance: AnkiDroid's labels carry scheduling fuzz and round to whole units in their own
-   * formatting, while ours are unfuzzed, so agreement is checked within a small relative margin
-   * rather than exactly.
+   * Answering needs a card, and a fresh collection has none, so this inserts a note into the deck,
+   * waits for it to appear in the due batch, compares every button label, and deletes the note again
+   * (in a `finally`). It temporarily adds a card to the collection under test — on a device holding
+   * a personal collection, expect a short-lived test note.
+   */
+  @Test
+  fun previewsAgreeWithAnkiDroidForAFreshlyAddedCard() {
+    val deckId = assumeAnkiDroid()
+    val note = createTestNote(deckId)
+    assumeTrue("AnkiDroid provider refused the test note", note != null)
+    val (noteUri, noteId) = note!!
+
+    try {
+      val batch = bridge.fetchDueBatch(deckId = DeckId(deckId), limit = 50)
+      val card =
+        batch.cards.firstOrNull { it.noteId == noteId }
+          ?: error("the new note's card is missing from the due batch")
+      val config = batch.scheduleConfig ?: error("no schedule config for deck $deckId")
+      val state = card.state ?: error("card ${card.id} carries no scheduler state")
+
+      val recomputed = previewIntervalSecs(config, state, System.currentTimeMillis())
+      assertEquals(
+        "AnkiDroid ships one label per button",
+        recomputed.size,
+        card.nextReviewTimes.size,
+        )
+      card.nextReviewTimes.forEachIndexed { index, shipped ->
+        val shippedSecs = parseLabelToSeconds(shipped) ?: return@forEachIndexed
+        val ours = recomputed[index]
+        val ratio = if (shippedSecs > 0) ours / shippedSecs else 1.0
+        assertTrue(
+          "button $index: AnkiDroid says '$shipped' (${shippedSecs}s) but we computed ${ours}s",
+          ratio in 0.5..2.0,
+        )
+      }
+      // The labels themselves are the evidence: [1m, 6m, 10m, 3d] on a stock deck is Anki's
+      // first-step average for Hard and the FSRS/SM-2 graduation for Easy.
+      Log.i(TAG, "shadow-agreed on ${card.nextReviewTimes} for a fresh card")
+    } finally {
+      context.contentResolver.delete(noteUri, null, null)
+    }
+  }
+
+  /** Insert a two-field note into [deckId]; returns its URI and id, or null if unsupported. */
+  private fun createTestNote(deckId: Long): Pair<android.net.Uri, Long>? {
+    val models = android.net.Uri.parse("content://com.ichi2.anki.flashcards/models")
+    val modelId =
+      context.contentResolver.query(models, null, null, null, null)?.use { cursor ->
+        val idIdx = cursor.getColumnIndex("_id")
+        val fieldsIdx = cursor.getColumnIndex("field_names")
+        var found: Long? = null
+        while (cursor.moveToNext() && found == null) {
+          val fields = if (fieldsIdx != -1) cursor.getString(fieldsIdx) else null
+          // AnkiDroid concatenates field names with Anki's unit-separator (\u001f), not commas;
+          // two fields keeps the fixture to Front/Back, like a stock Basic note type.
+          if (fields != null && fields.split('\u001f', ',').size == 2) {
+            found = cursor.getLong(idIdx)
+          }
+        }
+        found
+      } ?: return null
+
+    val notes = android.net.Uri.parse("content://com.ichi2.anki.flashcards/notes?deckId=$deckId")
+    val values =
+      android.content.ContentValues().apply {
+        put("mid", modelId)
+        put("flds", "ANKIDROID-WEAROS TEST\u001fanswer")
+        put("tags", "wearos-live-test")
+        put("allow_empty", true)
+      }
+    val uri =
+      try {
+        context.contentResolver.insert(notes, values)
+      } catch (e: Exception) {
+        Log.w(TAG, "test note insert failed", e)
+        null
+      } ?: return null
+    val noteId = uri.lastPathSegment?.toLongOrNull() ?: return null
+    return Pair(uri, noteId)
+  }
+
+  /**
+   * The same comparison for whatever cards the deck already has. Skips on a fresh collection; the
+   * test above creates its own card when there is none.
    */
   @Test
   fun shippedLabelsAgreeWithRecomputedPreviews() {

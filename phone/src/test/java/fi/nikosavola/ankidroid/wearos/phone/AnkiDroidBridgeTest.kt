@@ -399,13 +399,16 @@ class AnkiDroidBridgeTest {
   fun learningStepFor_mapsAnkisLeftPackingOntoTheStepLadder() {
     // `left % 1000` is the reps left before graduation, so a card at the start of a two-step
     // ladder still has both steps ahead of it.
-    assertEquals(0, AnkiDroidBridge.learningStepFor(left = 2, stepCount = 2))
-    assertEquals(1, AnkiDroidBridge.learningStepFor(left = 1, stepCount = 2))
+    assertEquals(0, AnkiDroidBridge.learningStepFor(left = 2, stepCount = 2, queue = 1))
+    assertEquals(1, AnkiDroidBridge.learningStepFor(left = 1, stepCount = 2, queue = 1))
     // `left / 1000` (reps completable today) must not affect the step.
-    assertEquals(1, AnkiDroidBridge.learningStepFor(left = 2001, stepCount = 2))
+    assertEquals(1, AnkiDroidBridge.learningStepFor(left = 2001, stepCount = 2, queue = 1))
+    // A new card has left 0 because it has never been answered: it is on the first step, not out of
+    // steps. (Reading it as "no reps left" made Good graduate instead of advancing a step.)
+    assertEquals(0, AnkiDroidBridge.learningStepFor(left = 0, stepCount = 2, queue = 0))
     // Defensive: no step list means no position to report.
-    assertEquals(-1, AnkiDroidBridge.learningStepFor(left = 1, stepCount = 0))
+    assertEquals(-1, AnkiDroidBridge.learningStepFor(left = 1, stepCount = 0, queue = 1))
     // A stale/oversized counter clamps into the ladder rather than going negative.
-    assertEquals(0, AnkiDroidBridge.learningStepFor(left = 99, stepCount = 3))
+    assertEquals(0, AnkiDroidBridge.learningStepFor(left = 99, stepCount = 3, queue = 1))
   }
 }

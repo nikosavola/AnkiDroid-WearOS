@@ -1320,11 +1320,12 @@ mod tests {
     fn test_previews_walk_the_learning_ladder() {
         let config = parse_deck_schedule_config(fsrs_deck_options()).unwrap();
         let new_card = CardScheduleState { queue: 0, learning_step: 0, ..Default::default() };
-        // Again/Hard stay on the first step, Good moves to the second, and Easy graduates with the
-        // FSRS interval (15d for the stock weights) rather than the SM-2 easy interval.
+        // Again stays on the first step, Hard is the average of the first two steps (Anki's rule),
+        // Good moves to the second step, and Easy graduates with the FSRS interval (15d for the
+        // stock weights) rather than the SM-2 easy interval.
         assert_eq!(
             preview_labels(&config, &new_card, 0),
-            vec!["1m", "1m", "10m", "15d"],
+            vec!["1m", "6m", "10m", "15d"],
             "FSRS replaces the configured easy interval when the deck has weights"
         );
 
@@ -1340,6 +1341,22 @@ mod tests {
             "Good graduates: a card with no memory state yet falls back to the configured interval",
         );
         assert!((secs[2] - secs[1]).abs() > 1.0, "graduating is not the learning step it replaced");
+    }
+
+    #[test]
+    fn test_hard_on_the_first_step_averages_the_first_two_steps() {
+        // Anki's rule (rslib steps.rs): on the first step Hard is the average of the first two
+        // steps, so it lands between Again and Good rather than repeating Again's delay.
+        let config = sm2_deck_config();
+        let first_step = CardScheduleState { queue: 1, learning_step: 0, ..Default::default() };
+        let secs = preview_interval_secs(&config, &first_step, 0);
+        assert_secs(secs[0], 60.0, "Again is the first step");
+        assert_secs(secs[1], 330.0, "Hard is (1m + 10m) / 2");
+
+        // On any later step it repeats that step instead.
+        let second_step = CardScheduleState { queue: 1, learning_step: 1, ..Default::default() };
+        let later = preview_interval_secs(&config, &second_step, 0);
+        assert_secs(later[1], 600.0, "Hard repeats the second step");
     }
 
     #[test]
