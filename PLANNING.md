@@ -1,7 +1,11 @@
 # AnkiDroid WearOS Companion — Planning Document
 
-Status: draft / pre-implementation. Blank-slate project. Not affiliated with or forked
-from the abandoned `wlky/AnkiDroid-Wear`; that project is referenced only for lessons.
+Status: implemented (pre-release). This was the blank-slate plan; the companion review loop
+(Phases 0-1 and most of Phase 2) is built and CI-verified. One deliberate deviation from the
+plan: the wear app ships `standalone=false` (the review loop needs the phone's AnkiDroid
+ContentProvider; see §5 Option B), not the `standalone=true` flag sketched in §8. Not affiliated
+with or forked from the abandoned `wlky/AnkiDroid-Wear`; that project is referenced only for
+lessons.
 
 ## 1. Goal
 

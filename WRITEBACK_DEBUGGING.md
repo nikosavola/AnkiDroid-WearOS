@@ -125,13 +125,14 @@ so you can read the collection DB directly:
   cache, no desktop.
 - Keep AnkiDroid auto-sync OFF during the test.
 
-## Related bugs found (also in TODO.md)
+## Related bug found (fixed since; kept for context)
 
-- **clear_answers handshake double-apply:** the `WearableListenerService` scope is cancelled
+- **clear_answers handshake double-apply (RESOLVED):** the `WearableListenerService` scope is cancelled
   (`Job was cancelled`) before the `/clear_answers` confirmation is sent, so the watch re-sends and
-  the phone applies the same answers again (timing-dependent, ~50% seen). Make `writeAnswersBack`
-  idempotent (dedupe by answer id) and/or send the handshake from a scope that outlives the service
-  callback (`goAsync`/WorkManager). Independent of the persistence bug; fix regardless.
+  the phone applies the same answers again (timing-dependent, ~50% seen). Since fixed:
+  `writeAnswersBack` dedupes via the persisted `writeback_applied` store, and the `/clear_answers`
+  confirmation is sent from a scope that outlives the service callback. Covered by
+  `AnswerSyncE2ETest` / `WriteBackIntegrationTest`.
 
 ## Environment
 

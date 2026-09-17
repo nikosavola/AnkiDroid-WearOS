@@ -1,5 +1,14 @@
 # Hand-off: Testing & Debugging Guide
 
+> **Status update (2026-09-17):** this is a historical session hand-off; several claims below
+> are outdated. The "unbuilt Kotlin" caveat is obsolete — CI builds and tests everything on
+> every push (Rust tests, JVM/Robolectric tests, Android lint, unsigned release builds under
+> AGP 9.2.1 / Gradle 9.4.1 / Kotlin 2.4.x, compileSdk 36). Compression is **zstd**, not the
+> gzip/flate2 of §1.2. The AGP migration of §2.12 is **done**. Open follow-ups live in GitHub
+> issues (#20-#23); the local `TODO.md` some sections mention never existed in the repo. Treat
+> the on-device checklists as still-valid context; the quick status matrix at the bottom lags
+> the code.
+
 This document is written for the next contributor (human or LLM) who has the **full Android
 toolchain** (SDK + NDK r28+, JDK 21, a real phone + Wear OS device or emulators) and a real
 AnkiDroid install. It records:
@@ -556,11 +565,10 @@ Against https://developer.android.com/training/wearables/apps/power:
 - Ambient / always-on behavior; minimize sensor/CPU during reviews.
 - **Test:** Battery Historian / `dumpsys batterystats` around a review + sync session.
 
-## 2.12 AGP 9.2.1 migration — BLOCKED, dedicated task
+## 2.12 AGP 9.2.1 migration — DONE
 
-Currently AGP 8.13.2 / Gradle 8.14.3. Blockers (from the backlog): AGP 9 drops the separate Kotlin
-Gradle plugin (needs "AGP built-in Kotlin", removing `org.jetbrains.kotlin.android`); needs Gradle
-9.4.1+; ktlint/ktfmt/detekt need compat verification. Do this on its own branch, not bundled.
+Completed: AGP 9.2.1 / Gradle 9.4.1 with AGP built-in Kotlin (pinned via the buildscript
+classpath), ktlint/ktfmt/detekt verified compatible. Kept for history; see `build.gradle.kts`.
 
 ## 2.13 UniFFI async/suspend mapping — architectural
 
@@ -580,7 +588,7 @@ current gzipped-JSON; mixed-version compat if staged.
 `AnkiDroidBridge.stripBase64Images` is a one-line regex. Rust has no `regex` dep; a hand-rolled
 scanner isn't worth it. Keep in Kotlin unless 2.3/2.14 pull it into Rust anyway.
 
-## 2.16 Kotlin/instrumented test coverage — the biggest test gap
+## 2.16 Kotlin/instrumented test coverage — the biggest test gap (see issues #22, #23)
 
 - Extract `MainActivity` `@Composable`s (both apps) to top-level functions so Compose UI tests can
   drive real screens (`ComposeSmokeTest` in `wear/src/test` is only a scaffold).
@@ -592,7 +600,7 @@ scanner isn't worth it. Keep in Kotlin unless 2.3/2.14 pull it into Rust anyway.
 
 ## 2.17 Tile ETA using buffer average — DONE (see 1.1). ✅
 
-## 2.18 `ActivityManager: sent binder code 10 ... error -74` — investigate
+## 2.18 `ActivityManager: sent binder code 10 ... error -74` — investigate (now issue #21)
 
 Seen once during answer sync, no observed impact. Likely a benign Wearable/binder transaction race.
 Reproduce with verbose Wearable logging during `/answers` → `/clear_answers`; only act if it
@@ -636,7 +644,7 @@ treatment.
 | Edge-to-edge | ⏸ audit (phone insets already applied) |
 | Rotary dial verification | ⏸ device-only |
 | Power checklist | ⏸ device-only |
-| AGP 9.2.1 migration | ⏸ blocked, dedicated task |
+| AGP 9.2.1 migration | ✅ done (AGP 9.2.1 / Gradle 9.4.1, CI green) |
 | UniFFI async/suspend | ⏸ documented only (no code — seed removed in §1.19); plan in §2.13 |
 | Protobuf/FlatBuffers | ◐ prost path added + tested; not wired into sync yet |
 | binder code 10 / error -74 | ⏸ investigate |

@@ -81,8 +81,9 @@ adb -s emulator-5554 exec-out screencap -p > watch.png  # visual check
 
 Both apps share the `com.ichi2.anki.wearos` application id; the launcher activities are
 `.wear.MainActivity` and `.phone.MainActivity` respectively. Without AnkiDroid installed on
-the phone emulator, the bridge falls back to mock cards (see README §2), so the full
-review flow is testable with just the two AVDs. The phone<->watch GMS Data Layer hop needs
+the phone emulator, debug builds fall back to mock cards (see README §2), so the full
+review flow is testable with just the two AVDs; release builds need the Force Mock Mode
+settings toggle enabled explicitly. The phone<->watch GMS Data Layer hop needs
 both AVDs' Play Services to settle after first boot; if syncing does not start, let the
 emulators sit for a few minutes after a fresh cold boot.
 
