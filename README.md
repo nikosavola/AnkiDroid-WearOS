@@ -56,7 +56,7 @@ flowchart LR
 ## 4. Getting Started & Compilation
 
 ### Prerequisites
-1. **Java JDK 21:** Set as your active Gradle compiler JVM.
+1. **Java JDK 21:** Set as your active Gradle compiler JVM (`JAVA_HOME`). macOS: `brew install openjdk@21` then `JAVA_HOME=/opt/homebrew/opt/openjdk@21`; Linux: `/usr/lib/jvm/java-21-openjdk-amd64`. See `CONTRIBUTING.md` for the full macOS emulator setup.
 2. **Android NDK (r28+) & SDK:** Correctly installed on your local machine.
 3. **Rust Android Targets:** Ensure your Rust toolchain can cross-compile to Android architectures:
    ```bash
@@ -66,13 +66,13 @@ flowchart LR
 ### Compile Rust & Generate Bindings
 To cross-compile all Android native `.so` binaries (`arm64-v8a` and `x86_64`) and generate the Kotlin UniFFI bindings, run:
 ```bash
-JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew generateBindings
+JAVA_HOME=<jdk21> ./gradlew generateBindings
 ```
 
 ### Full Kotlin Compilation
 To compile both the phone companion and smartwatch projects, run:
 ```bash
-JAVA_HOME=/usr/lib/jvm/java-21-openjdk-amd64 ./gradlew compileDebugKotlin
+JAVA_HOME=<jdk21> ./gradlew compileDebugKotlin
 ```
 
 ---
