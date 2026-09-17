@@ -2,12 +2,23 @@
 # Verify 16 KB page-size compliance (Android 15+ / Wear OS 6): every PT_LOAD segment of the
 # 64-bit ABIs must have p_align >= 0x4000. 32-bit ABIs (armeabi-v7a) keep 4 KB pages.
 #
-# Needs llvm-readelf in PATH (preinstalled on ubuntu-latest; on macOS use the NDK one:
-# ~/Library/Android/sdk/ndk/*/toolchains/llvm/prebuilt/*/bin).
+# Resolves llvm-readelf from: $LLVM_READELF, PATH (incl. versioned llvm-readelf-N), or the
+# NDK's prebuilt toolchain (macOS has no system llvm-readelf; CI runners may only expose
+# versioned names).
 set -euo pipefail
 
-READELF="${LLVM_READELF:-llvm-readelf}"
-command -v "$READELF" >/dev/null || { echo "error: llvm-readelf not found in PATH" >&2; exit 1; }
+READELF="${LLVM_READELF:-}"
+if [ -z "$READELF" ]; then
+  for c in llvm-readelf llvm-readelf-19 llvm-readelf-18 llvm-readelf-17 llvm-readelf-16; do
+    if command -v "$c" >/dev/null; then READELF="$c"; break; fi
+  done
+fi
+if [ -z "$READELF" ]; then
+  READELF=$(ls -1 \
+    "${ANDROID_HOME:-$HOME/Library/Android/sdk}"/ndk/*/toolchains/llvm/prebuilt/*/bin/llvm-readelf \
+    2>/dev/null | head -1 || true)
+fi
+[ -n "$READELF" ] || { echo "error: llvm-readelf not found (set LLVM_READELF or install LLVM/NDK)" >&2; exit 1; }
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 libs=$(find "$ROOT/wear/src/main/jniLibs" "$ROOT/phone/src/main/jniLibs" -name '*.so' 2>/dev/null | sort)
