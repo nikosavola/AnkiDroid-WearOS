@@ -9,6 +9,7 @@ mod decks;
 mod html;
 mod models;
 mod proto;
+mod sched;
 mod session;
 mod sync;
 mod tile;
@@ -27,6 +28,7 @@ pub use db::{
 pub use decks::*;
 pub use html::*;
 pub use models::*;
+pub use sched::*;
 pub use session::*;
 pub use sync::*;
 pub use tile::*;
@@ -318,9 +320,14 @@ mod tests {
                 "4d".to_string(),
                 "7d".to_string(),
             ],
+            state: None,
         };
-        let batch =
-            WearosDueBatch { deck_id: 123, deck_name: "Test Deck".to_string(), cards: vec![card] };
+        let batch = WearosDueBatch {
+            deck_id: 123,
+            deck_name: "Test Deck".to_string(),
+            cards: vec![card],
+            schedule_config: None,
+        };
 
         let bytes = serialize_due_batch(batch).unwrap();
         let deserialized = deserialize_due_batch(bytes).unwrap();
@@ -341,6 +348,7 @@ mod tests {
             back: "A".to_string(),
             button_count: 4,
             next_review_times: vec!["1m".to_string()],
+            state: None,
         }
     }
 
@@ -353,6 +361,7 @@ mod tests {
             deck_id: 1,
             deck_name: "D".to_string(),
             cards: vec![card_with_front(&front)],
+            schedule_config: None,
         };
         let bytes = serialize_due_batch(batch).unwrap();
         // zstd frame magic number (little-endian 0xFD2FB528).
@@ -370,6 +379,7 @@ mod tests {
             deck_id: 55,
             deck_name: "文法".to_string(),
             cards: vec![card_with_front("<b>Q</b>"), card_with_front("Q2")],
+            schedule_config: None,
         };
         let restored = deserialize_due_batch(serialize_due_batch(batch).unwrap()).unwrap();
         assert_eq!(restored.deck_id, 55);
@@ -472,6 +482,7 @@ mod tests {
                 "4d".to_string(),
                 "7d".to_string(),
             ],
+            state: None,
         };
         let card2 = WearosCard {
             id: 2,
@@ -481,11 +492,13 @@ mod tests {
             back: "A2".to_string(),
             button_count: 3,
             next_review_times: vec!["1m".to_string(), "10m".to_string(), "4d".to_string()],
+            state: None,
         };
         let batch = WearosDueBatch {
             deck_id: 123,
             deck_name: "Test".to_string(),
             cards: vec![card1, card2],
+            schedule_config: None,
         };
 
         let session = ReviewSession::new(batch);
@@ -539,11 +552,13 @@ mod tests {
                 "4d".to_string(),
                 "7d".to_string(),
             ],
+            state: None,
         };
         let batch = WearosDueBatch {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![mk(1, "Q1"), mk(2, "Q2")],
+            schedule_config: None,
         };
         let session = ReviewSession::new(batch);
 
@@ -589,6 +604,7 @@ mod tests {
                 "4d".to_string(),  // Good
                 "7d".to_string(),  // Easy
             ],
+            state: None,
         }
     }
 
@@ -597,6 +613,7 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![card],
+            schedule_config: None,
         })
     }
 
@@ -607,6 +624,7 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![learning_card(1), learning_card(2), learning_card(3), learning_card(4)],
+            schedule_config: None,
         });
         assert!(session.get_progress_fraction().abs() < f32::EPSILON);
 
@@ -619,6 +637,7 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![],
+            schedule_config: None,
         });
         assert!(empty.get_progress_fraction().abs() < f32::EPSILON);
     }
@@ -657,6 +676,7 @@ mod tests {
             back: "A".to_string(),
             button_count: 3,
             next_review_times: vec!["1m".to_string(), "4d".to_string(), "10m".to_string()],
+            state: None,
         };
         let s3 = single_card_session(three.clone());
         s3.answer_card(3, 0).unwrap();
@@ -735,11 +755,13 @@ mod tests {
             back: "A".to_string(),
             button_count: 4,
             next_review_times: vec!["1m".to_string()],
+            state: None,
         };
         let batch = WearosDueBatch {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![mk(1), mk(2), mk(3)],
+            schedule_config: None,
         };
         let session = ReviewSession::new(batch);
 
@@ -1205,5 +1227,359 @@ mod tests {
         assert_eq!(buffered[0].deck_id, 0, "legacy rows default to unknown deck (0)");
 
         let _ = std::fs::remove_file(&db_path);
+    }
+
+    // ---- Offline interval previews (sched.rs) ----
+
+    /// A deck-config dict shaped like AnkiDroid's `FlashCardsContract.Deck.OPTIONS`: camelCase for
+    /// new/rev/lapse, snake_case for the FSRS keys (that mix is rslib's schema11, not a typo).
+    fn fsrs_deck_options() -> String {
+        serde_json::json!({
+            "new": { "delays": [1.0, 10.0], "ints": [1, 4] },
+            "rev": { "ease4": 1.3, "ivlFct": 1.0, "maxIvl": 36500, "hardFactor": 1.2 },
+            "lapse": { "delays": [10.0], "mult": 0.0, "minInt": 1 },
+            "fsrs_params_6": vec![0.4072, 1.1829, 3.1262, 15.4722, 7.2102, 0.5316, 1.0651, 0.0234,
+                                  1.616, 0.1544, 1.0824, 1.9813, 0.0953, 0.2975, 2.2042, 0.2407,
+                                  2.9466, 0.5034, 0.6567],
+            "desired_retention": 0.9
+        })
+        .to_string()
+    }
+
+    /// Preview intervals are floats; pedantic clippy forbids direct float equality.
+    fn assert_secs(actual: f64, expected: f64, msg: &str) {
+        assert!((actual - expected).abs() < 0.5, "{msg}: got {actual}, want {expected}");
+    }
+
+    fn review_state() -> CardScheduleState {
+        CardScheduleState {
+            queue: 2,
+            interval_days: 10.0,
+            learning_step: -1,
+            stability: 10.0,
+            difficulty: 5.0,
+            elapsed_days: 10.0,
+        }
+    }
+
+    #[test]
+    fn test_parse_deck_options_reads_steps_ints_and_fsrs() {
+        let config = parse_deck_schedule_config(fsrs_deck_options()).unwrap();
+
+        // Delays arrive as minutes and are converted to seconds.
+        assert_secs(config.learn_steps[0], 60.0, "first learning step");
+        assert_secs(config.learn_steps[1], 600.0, "second learning step");
+        assert_secs(config.relearn_steps[0], 600.0, "relearning step");
+        assert_eq!(config.graduating_interval_days, 1);
+        assert_eq!(config.easy_interval_days, 4);
+        assert_eq!(config.max_interval_days, 36500);
+        assert!(config.fsrs_enabled());
+        assert_eq!(config.fsrs_weights.len(), 19);
+        assert!((config.desired_retention - 0.9).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_deck_options_falls_back_to_defaults_for_missing_keys() {
+        // An older AnkiDroid or a deck without overrides: every key absent, but parsing still works.
+        let config = parse_deck_schedule_config("{}".to_string()).unwrap();
+
+        assert_secs(config.learn_steps[0], 60.0, "default first learning step");
+        assert_secs(config.learn_steps[1], 600.0, "default second learning step");
+        assert_eq!(config.graduating_interval_days, 1);
+        assert_eq!(config.easy_interval_days, 4);
+        assert!(!config.fsrs_enabled(), "no weights means SM-2 scheduling");
+        assert!((config.desired_retention - 0.9).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_parse_deck_options_rejects_malformed_json() {
+        let err = parse_deck_schedule_config("not json".to_string()).unwrap_err();
+        assert!(matches!(err, CoreError::SerializationError { .. }));
+    }
+
+    #[test]
+    fn test_parse_deck_options_accepts_percentage_retention() {
+        // Some surfaces express desired retention as 90 rather than 0.9.
+        let json = serde_json::json!({ "desired_retention": 90.0 }).to_string();
+        let config = parse_deck_schedule_config(json).unwrap();
+        assert!((config.desired_retention - 0.9).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_format_interval_label_matches_anki_units() {
+        assert_eq!(format_interval_label(30.0), "30s");
+        assert_eq!(format_interval_label(60.0), "1m");
+        assert_eq!(format_interval_label(600.0), "10m");
+        assert_eq!(format_interval_label(7200.0), "2h");
+        assert_eq!(format_interval_label(345_600.0), "4d");
+        assert_eq!(format_interval_label(30.0 * 86_400.0), "1mo");
+        assert_eq!(format_interval_label(365.0 * 86_400.0), "1y");
+    }
+
+    #[test]
+    fn test_previews_walk_the_learning_ladder() {
+        let config = parse_deck_schedule_config(fsrs_deck_options()).unwrap();
+        let new_card = CardScheduleState { queue: 0, learning_step: 0, ..Default::default() };
+        // Again/Hard stay on the first step, Good moves to the second, and Easy graduates with the
+        // FSRS interval (15d for the stock weights) rather than the SM-2 easy interval.
+        assert_eq!(
+            preview_labels(&config, &new_card, 0),
+            vec!["1m", "1m", "10m", "15d"],
+            "FSRS replaces the configured easy interval when the deck has weights"
+        );
+
+        // The same card after Good advanced it to the second step: Hard now repeats that step and
+        // Good graduates, so its previews differ from the ones shipped with the batch.
+        let second_step = CardScheduleState { queue: 1, learning_step: 1, ..Default::default() };
+        let secs = preview_interval_secs(&config, &second_step, 0);
+        assert_secs(secs[0], 60.0, "Again returns to the first step");
+        assert_secs(secs[1], 600.0, "Hard repeats the current step");
+        assert_secs(
+            secs[2],
+            86_400.0,
+            "Good graduates: a card with no memory state yet falls back to the configured interval",
+        );
+        assert!((secs[2] - secs[1]).abs() > 1.0, "graduating is not the learning step it replaced");
+    }
+
+    #[test]
+    fn test_review_previews_use_fsrs_when_weights_present() {
+        let config = parse_deck_schedule_config(fsrs_deck_options()).unwrap();
+        let secs = preview_interval_secs(&config, &review_state(), 1_700_000_000_000);
+
+        // FSRS-6 for S=10, D=5, elapsed 10d at 0.9 retention, fuzz off, so these are exact:
+        // Hard 16d, Good 34d, Easy 81d.
+        let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
+        assert_eq!(days(1), 16, "Hard");
+        assert_eq!(days(2), 34, "Good");
+        assert_eq!(days(3), 81, "Easy");
+        assert_secs(secs[0], 600.0, "Again drops into the relearning step");
+    }
+
+    #[test]
+    fn test_review_previews_use_sm2_factors_without_fsrs() {
+        let config = parse_deck_schedule_config(
+            serde_json::json!({ "rev": { "hardFactor": 1.2, "ivlFct": 1.0, "ease4": 1.3 } })
+                .to_string(),
+        )
+        .unwrap();
+        assert!(!config.fsrs_enabled());
+        let secs = preview_interval_secs(&config, &review_state(), 0);
+        let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
+
+        assert_eq!(days(1), 12, "Hard is interval * hardFactor");
+        assert_eq!(days(2), 10, "Good is interval * ivlFct");
+        assert_eq!(days(3), 13, "Easy is interval * ease4");
+    }
+
+    #[test]
+    fn test_incomplete_fsrs_weights_fall_back_to_configured_intervals() {
+        // A short weights list is a different formula generation; refuse it rather than emit
+        // numbers that look right but aren't the collection's.
+        let config = parse_deck_schedule_config(
+            serde_json::json!({ "new": { "ints": [3, 7] }, "fsrs_params_6": [0.4, 1.2] })
+                .to_string(),
+        )
+        .unwrap();
+        assert!(config.fsrs_enabled());
+        assert_eq!(config.fsrs_weights.len(), 2);
+
+        let state = CardScheduleState { queue: 1, learning_step: 1, ..Default::default() };
+        let secs = preview_interval_secs(&config, &state, 0);
+        assert_secs(secs[2], 3.0 * 86_400.0, "the configured graduating interval is used");
+    }
+
+    #[test]
+    fn test_again_on_a_new_card_returns_to_the_first_step() {
+        let config = parse_deck_schedule_config(fsrs_deck_options()).unwrap();
+        // Answering Again resets the ladder, so the first step is shown again however far along.
+        let state = CardScheduleState { queue: 1, learning_step: 2, ..Default::default() };
+        let secs = preview_interval_secs(&config, &state, 0);
+        assert_secs(secs[0], 60.0, "Again restarts at the first step");
+    }
+
+    #[test]
+    fn test_due_batch_round_trips_schedule_config_and_card_state() {
+        let config = parse_deck_schedule_config(fsrs_deck_options()).unwrap();
+        let card = WearosCard {
+            id: 7,
+            note_id: 70,
+            ord: 0,
+            front: "Q".to_string(),
+            back: "A".to_string(),
+            button_count: 4,
+            next_review_times: vec!["1m".to_string()],
+            state: Some(review_state()),
+        };
+        let batch = WearosDueBatch {
+            deck_id: 1,
+            deck_name: "D".to_string(),
+            cards: vec![card],
+            schedule_config: Some(config),
+        };
+
+        let decoded = deserialize_due_batch(serialize_due_batch(batch).unwrap()).unwrap();
+        let decoded_config = decoded.schedule_config.expect("config survives the wire");
+        assert_secs(decoded_config.learn_steps[1], 600.0, "learning steps survive");
+        assert_eq!(decoded_config.fsrs_weights.len(), 19, "weights survive");
+        let decoded_state = decoded.cards[0].state.clone().expect("card state survives the wire");
+        assert_eq!(decoded_state.queue, 2);
+        assert_secs(decoded_state.stability, 10.0, "stability survives");
+        assert_secs(decoded_state.elapsed_days, 10.0, "elapsed days survive");
+    }
+
+    #[test]
+    fn test_due_batch_without_scheduler_data_decodes_as_none() {
+        // A phone build that predates the scheduler fields sends neither, and the watch must see
+        // "absent" rather than an all-zero config it would compute wrong previews from.
+        let batch = WearosDueBatch {
+            deck_id: 1,
+            deck_name: "D".to_string(),
+            cards: vec![WearosCard {
+                id: 7,
+                note_id: 70,
+                ord: 0,
+                front: "Q".to_string(),
+                back: "A".to_string(),
+                button_count: 4,
+                next_review_times: vec!["1m".to_string()],
+                state: None,
+            }],
+            schedule_config: None,
+        };
+
+        let decoded = deserialize_due_batch(serialize_due_batch(batch).unwrap()).unwrap();
+        assert!(decoded.schedule_config.is_none());
+        assert!(decoded.cards[0].state.is_none());
+    }
+
+    // ---- Session integration: requeued cards carry recomputed previews ----
+
+    /// A config with two learning steps and no FSRS weights, so the ladder is deterministic.
+    fn sm2_deck_config() -> DeckScheduleConfig {
+        parse_deck_schedule_config(
+            serde_json::json!({
+                "new": { "delays": [1.0, 10.0], "ints": [1, 4] },
+                "rev": { "hardFactor": 1.2, "ivlFct": 1.0, "ease4": 1.3 },
+                "lapse": { "delays": [10.0] }
+            })
+            .to_string(),
+        )
+        .unwrap()
+    }
+
+    /// A learning card on its first step, as AnkiDroid ships it: shipped labels still say the old
+    /// ladder because they were fetched before any grade.
+    fn learning_card_with_state(id: i64) -> WearosCard {
+        WearosCard {
+            id,
+            note_id: id * 10,
+            ord: 0,
+            front: "Q".to_string(),
+            back: "A".to_string(),
+            button_count: 4,
+            next_review_times: vec![
+                "1m".to_string(),
+                "10m".to_string(),
+                "10m".to_string(),
+                "4d".to_string(),
+            ],
+            state: Some(CardScheduleState { queue: 1, learning_step: 0, ..Default::default() }),
+        }
+    }
+
+    #[test]
+    fn test_requeued_card_gets_recomputed_previews() {
+        let _guard = no_db_guard();
+        let card = learning_card_with_state(1);
+        let session = ReviewSession::new(WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![card],
+            schedule_config: Some(sm2_deck_config()),
+        });
+
+        // Good on the first step advances the card to the second step, so it requeues (its shipped
+        // Good label is a sub-day step).
+        session.reveal_answer();
+        session.answer_card(3, 1_000).unwrap();
+
+        let requeued = session.get_current_card().expect("card requeued");
+        assert_eq!(
+            requeued.next_review_times,
+            vec!["1m", "10m", "1d", "4d"],
+            "previews are recomputed for the step the card is now on, not the stale shipped ones"
+        );
+        // The recomputed state is carried forward so a further grade stays consistent.
+        assert_eq!(requeued.state.expect("state advanced").learning_step, 1);
+    }
+
+    #[test]
+    fn test_card_without_state_keeps_shipped_labels() {
+        let _guard = no_db_guard();
+        // Mock cards and older phone builds ship no per-card state: nothing to recompute from, so
+        // AnkiDroid's own labels must survive the requeue untouched.
+        let mut card = learning_card_with_state(1);
+        card.state = None;
+        let session = ReviewSession::new(WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![card],
+            schedule_config: Some(sm2_deck_config()),
+        });
+
+        session.reveal_answer();
+        session.answer_card(3, 1_000).unwrap();
+
+        let requeued = session.get_current_card().expect("card requeued");
+        assert_eq!(requeued.next_review_times, vec!["1m", "10m", "10m", "4d"]);
+    }
+
+    #[test]
+    fn test_session_without_schedule_config_keeps_shipped_labels() {
+        let _guard = no_db_guard();
+        let session = ReviewSession::new(WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![learning_card_with_state(1)],
+            schedule_config: None,
+        });
+
+        session.reveal_answer();
+        session.answer_card(3, 1_000).unwrap();
+
+        let requeued = session.get_current_card().expect("card requeued");
+        assert_eq!(requeued.next_review_times, vec!["1m", "10m", "10m", "4d"]);
+    }
+
+    #[test]
+    fn test_requeue_cap_follows_the_deck_step_count() {
+        let _guard = no_db_guard();
+        // A four-step ladder must not be cut short by the old fixed cap of 3: the card should
+        // advance step by step (Good each time) until the last step, then graduate.
+        let config = parse_deck_schedule_config(
+            serde_json::json!({ "new": { "delays": [1.0, 10.0, 60.0, 240.0], "ints": [1, 4] } })
+                .to_string(),
+        )
+        .unwrap();
+        let mut card = learning_card_with_state(1);
+        card.next_review_times =
+            vec!["1m".to_string(), "10m".to_string(), "1h".to_string(), "4h".to_string()];
+        let session = ReviewSession::new(WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![card],
+            schedule_config: Some(config),
+        });
+
+        // Three Goods walk to the last step; the fourth graduates the card out of the session.
+        for _ in 0..3 {
+            session.reveal_answer();
+            session.answer_card(3, 1_000).unwrap();
+            assert!(session.get_current_card().is_some(), "still working through the ladder");
+        }
+        session.reveal_answer();
+        session.answer_card(3, 1_000).unwrap();
+        assert!(session.get_current_card().is_none(), "graduated after the last step");
     }
 }

@@ -1,5 +1,6 @@
 //! Shared data models and the error type crossing the UniFFI boundary.
 
+use crate::sched::{CardScheduleState, DeckScheduleConfig};
 use serde::{Deserialize, Serialize};
 
 #[derive(uniffi::Record, Serialize, Deserialize, Clone)]
@@ -11,6 +12,11 @@ pub struct WearosCard {
     pub back: String,
     pub button_count: i32,
     pub next_review_times: Vec<String>,
+    /// The card's scheduler state, used to recompute interval previews offline once the labels
+    /// above go stale (a card graded and requeued within the session). `None` on older phone
+    /// builds and for the mock fallback, where the shipped labels are all there is.
+    #[uniffi(default = None)]
+    pub state: Option<CardScheduleState>,
 }
 
 #[derive(uniffi::Record, Serialize, Deserialize, Clone)]
@@ -18,6 +24,11 @@ pub struct WearosDueBatch {
     pub deck_id: i64,
     pub deck_name: String,
     pub cards: Vec<WearosCard>,
+    /// The deck's scheduling config (learning steps, graduation intervals, FSRS weights) from
+    /// AnkiDroid's deck `OPTIONS`. `None` when the phone could not read it, in which case previews
+    /// stay as AnkiDroid shipped them.
+    #[uniffi(default = None)]
+    pub schedule_config: Option<DeckScheduleConfig>,
 }
 
 #[derive(uniffi::Record, Serialize, Deserialize, Clone)]

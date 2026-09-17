@@ -6,12 +6,15 @@
 //! Cards whose chosen interval is a day or more graduate and leave the session.
 //!
 //! This is an offline-first approximation: every grade is still buffered and later written back to
-//! AnkiDroid, which owns the real SM-2/FSRS schedule. The in-session requeue only decides whether a
-//! card reappears now; it does not recompute intervals (we can't, offline), so a per-card cap forces
-//! graduation after a few learning-step reappearances to guarantee the session terminates.
+//! AnkiDroid, which owns the real SM-2/FSRS schedule. When the phone shipped the deck's scheduling
+//! config, a requeued card's state is advanced and its interval previews are recomputed locally
+//! (see `sched`), so the card reappears with the numbers for the state it is actually in rather than
+//! the ones fetched before the grade. Without that config the labels stay as fetched, and a per-card
+//! cap still forces graduation so the session terminates either way.
 
 use crate::db::{get_db_connection, remove_buffered_answers, save_answer};
 use crate::models::{CoreError, WearosAnswer, WearosCard, WearosDueBatch};
+use crate::sched::{DeckScheduleConfig, advance_state, preview_labels};
 use crate::util::unix_millis;
 use std::collections::VecDeque;
 use std::sync::Mutex;
@@ -23,8 +26,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 static ANSWER_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Force a card to graduate after this many learning-step reappearances (excluding Again, which the
-/// user is actively failing and may repeat freely). Bounds the session since we can't advance
-/// through Anki's real learning steps offline; the true schedule is reconciled on write-back.
+/// user is actively failing and may repeat freely). Without the deck's step list this is the only
+/// progression mechanism, so it bounds the session; with it, the cap is set past the real step
+/// count and just guards against a malformed config.
 const MAX_LEARN_REQUEUES: u32 = 3;
 
 /// End-of-session tally shown on the finished screen.
@@ -67,6 +71,9 @@ pub struct ReviewSession {
     deck_id: i64,
     /// Number of distinct due cards the session started with; the denominator of the progress string.
     initial_total: usize,
+    /// The deck's scheduling config, when the phone shipped it: drives the local recompute of a
+    /// requeued card's previews. `None` leaves the fetched labels alone.
+    schedule_config: Option<DeckScheduleConfig>,
     /// Remaining cards, front = current. Learning-step grades push the card to the back.
     queue: Mutex<VecDeque<QueuedCard>>,
     is_revealed: Mutex<bool>,
@@ -89,6 +96,7 @@ impl ReviewSession {
         Self {
             deck_name: batch.deck_name,
             deck_id: batch.deck_id,
+            schedule_config: batch.schedule_config,
             initial_total: queue.len(),
             queue: Mutex::new(queue),
             is_revealed: Mutex::new(false),
@@ -163,13 +171,13 @@ impl ReviewSession {
         // chosen interval is a learning step and the per-card cap hasn't been hit.
         let is_again = ease == 1;
         let requeue =
-            is_again || (is_learning_step(card, ease) && front.learn_requeues < MAX_LEARN_REQUEUES);
+            is_again || (is_learning_step(card, ease) && front.learn_requeues < self.requeue_cap());
         if requeue {
             let learn_requeues = front.learn_requeues + u32::from(!is_again);
-            self.queue
-                .lock()
-                .unwrap()
-                .push_back(QueuedCard { card: front.card.clone(), learn_requeues });
+            self.queue.lock().unwrap().push_back(QueuedCard {
+                card: self.refresh_previews(&front.card, ease),
+                learn_requeues,
+            });
         } else {
             *self.graduated.lock().unwrap() += 1;
         }
@@ -182,6 +190,27 @@ impl ReviewSession {
 
         *self.is_revealed.lock().unwrap() = false;
         Ok(Some(answer))
+    }
+
+    /// How many learning-step reappearances this session tolerates before forcing graduation.
+    /// With the deck's step list the real ladder graduates the card first, so the cap only has to
+    /// clear the step count; without it the cap is the ladder.
+    fn requeue_cap(&self) -> u32 {
+        self.schedule_config.as_ref().map_or(MAX_LEARN_REQUEUES, |c| c.learn_steps.len() as u32 + 1)
+    }
+
+    /// The card as it will be after this grade, with its interval previews recomputed from the
+    /// deck's own scheduling config. Falls back to the card untouched when the phone shipped no
+    /// config or no per-card state (older builds, mock cards), leaving AnkiDroid's labels in place.
+    fn refresh_previews(&self, card: &WearosCard, ease: i32) -> WearosCard {
+        let (Some(config), Some(state)) = (&self.schedule_config, &card.state) else {
+            return card.clone();
+        };
+        // unix_millis() is u128 for the answer id; the scheduler takes i64 milliseconds.
+        let now_ms = unix_millis() as i64;
+        let next_state = advance_state(config, state, ease, now_ms);
+        let labels = preview_labels(config, &next_state, now_ms);
+        WearosCard { next_review_times: labels, state: Some(next_state), ..card.clone() }
     }
 
     /// Whether there's a graded review to step back to.
