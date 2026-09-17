@@ -1,13 +1,13 @@
 import org.gradle.internal.os.OperatingSystem
 
 // AGP 9 built-in Kotlin would otherwise pull its bundled Kotlin (2.3.10 for AGP 9.2). Force our
-// Kotlin (2.4.0) onto the buildscript classpath so built-in Kotlin compiles with it and the
+// Kotlin (2.4.10) onto the buildscript classpath so built-in Kotlin compiles with it and the
 // compose-compiler plugin (which must match the Kotlin version exactly) stays aligned.
 buildscript {
     // Literal (not libs.versions.kotlin): the version-catalog accessor isn't available this early in
     // buildscript{} evaluation. Keep in sync with `kotlin` in gradle/libs.versions.toml.
     dependencies {
-        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.0")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:2.4.10")
     }
 }
 
