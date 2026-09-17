@@ -1,6 +1,7 @@
 package fi.nikosavola.ankidroid.wearos.phone
 
 import android.content.Context
+import android.content.pm.ApplicationInfo
 import android.util.Log
 import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.PutDataMapRequest
@@ -40,6 +41,15 @@ object DeckSync {
   private const val SETTINGS_PREFS = "settings_prefs"
   private const val DECK_PREFS = "deck_sync_prefs"
   private const val KEY_FORCE_MOCK = "force_mock"
+
+  /**
+   * Default for the mock-mode preference when the user has never toggled it. Debuggable builds
+   * keep the dev-friendly auto-mock (demo cards when AnkiDroid is absent); release builds never
+   * silently fabricate cards; the user must opt in via the settings toggle.
+   */
+  fun defaultForceMock(context: Context, ankiDroidAvailable: Boolean): Boolean =
+    context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 && !ankiDroidAvailable
+
   private const val KEY_PREPUSH_CAP = "prepush_cap"
   private const val DEFAULT_PREPUSH_DECKS = 15
   private const val MAX_SCAN_DECKS = 60
@@ -52,7 +62,7 @@ object DeckSync {
     val deckPrefs = context.getSharedPreferences(DECK_PREFS, Context.MODE_PRIVATE)
 
     val available = bridge.isAnkiDroidAvailable()
-    val isForced = settings.getBoolean(KEY_FORCE_MOCK, !available)
+    val isForced = settings.getBoolean(KEY_FORCE_MOCK, defaultForceMock(context, available))
     if (!available && !isForced) {
       Log.i(TAG, "AnkiDroid not reachable and mock mode not forced; skipping sync.")
       return null
