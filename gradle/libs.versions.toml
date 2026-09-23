@@ -10,7 +10,7 @@ ktfmt = "0.26.0"
 detekt = "2.0.0-alpha.6"
 # Testing
 junit = "4.13.2"
-robolectric = "4.16.1"
+robolectric = "4.17"
 mockk = "1.13.13"
 androidx-test-core = "1.6.1"
 androidx-test-ext-junit = "1.2.1"
