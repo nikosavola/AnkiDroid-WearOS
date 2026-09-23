@@ -34,7 +34,7 @@ androidx-appcompat = { group = "androidx.appcompat", name = "appcompat", version
 material = { group = "com.google.android.material", name = "material", version = "1.12.0" }
 
 # Play Services Wearable
-play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version = "18.2.0" }
+play-services-wearable = { group = "com.google.android.gms", name = "play-services-wearable", version = "20.0.1" }
 
 # WorkManager — periodic background deck sync on the phone
 androidx-work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version = "2.9.1" }
