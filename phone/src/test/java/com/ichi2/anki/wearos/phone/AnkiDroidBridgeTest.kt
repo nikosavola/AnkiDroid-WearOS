@@ -158,6 +158,17 @@ class AnkiDroidBridgeTest {
   }
 
   /**
+   * Route only the schedule URI to [cursor]; deck-selection queries return nothing, so write-back
+   * takes its single-deck head-gated fallback - the contract these tests pin.
+   */
+  private fun ContentResolver.onlyScheduleQueriesReturn(cursor: Cursor) {
+    every { query(any(), any(), any(), any(), any()) } answers
+      {
+        if (firstArg<Uri>().toString().endsWith("/schedule")) cursor else null
+      }
+  }
+
+  /**
    * Resolver for the multi-step write-back tests: schedule queries come from [scheduleCursors] in
    * order (a no-card cursor once exhausted), and the card-reps probes return a cursor without a reps
    * column so the loop uses the row-count fallback. Updates are captured into [capture] when given.
@@ -199,7 +210,7 @@ class AnkiDroidBridgeTest {
   fun writeAnswersBack_appliesAnswer_withCorrectContentValues() {
     val values = slot<ContentValues>()
     val resolver = availableResolver {
-      every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 2)
+      onlyScheduleQueriesReturn(scheduleCursor(111L, 2))
       every { update(any(), capture(values), any(), any()) } returns 1
     }
 
@@ -223,7 +234,7 @@ class AnkiDroidBridgeTest {
     // The scheduler presents the card, but the update writes 0 rows (already answered / removed):
     // terminal, so it's reported settled and cleared from the buffer rather than piling up.
     val resolver = availableResolver {
-      every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
+      onlyScheduleQueriesReturn(scheduleCursor(111L, 0))
       every { update(any(), any(), any(), any()) } returns 0
     }
     val outcome = bridge(resolver).writeAnswersBack(listOf(answer("a1", 3)), readOnly = false)
@@ -233,7 +244,7 @@ class AnkiDroidBridgeTest {
   @Test
   fun writeAnswersBack_keepsForRetry_onTransientException() {
     val resolver = availableResolver {
-      every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
+      onlyScheduleQueriesReturn(scheduleCursor(111L, 0))
       every { update(any(), any(), any(), any()) } throws RuntimeException("boom")
     }
     val outcome = bridge(resolver).writeAnswersBack(listOf(answer("a1", 3)), readOnly = false)
@@ -247,7 +258,7 @@ class AnkiDroidBridgeTest {
     // buffered answer for a DIFFERENT card would mis-grade note 999, so update must never be called
     // and the buffered answer is reported unplaced for the watch to count.
     val resolver = availableResolver {
-      every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(999L, 0)
+      onlyScheduleQueriesReturn(scheduleCursor(999L, 0))
       every { update(any(), any(), any(), any()) } returns 1
     }
     val outcome =
@@ -324,7 +335,7 @@ class AnkiDroidBridgeTest {
     // bare update -> reps 0/no revlog; query-then-update -> reps++/revlog row). Pin that ordering.
     val resolver =
       availableResolver {
-        every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
+        onlyScheduleQueriesReturn(scheduleCursor(111L, 0))
         every { update(any(), any(), any(), any()) } returns 1
       }
     bridge(resolver).writeAnswersBack(listOf(answer("a1", 3)), readOnly = false)

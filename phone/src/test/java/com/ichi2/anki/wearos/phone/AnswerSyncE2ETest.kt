@@ -65,6 +65,22 @@ class AnswerSyncE2ETest {
     return AnkiDroidBridge(context)
   }
 
+  /**
+   * Route only the schedule URI to [cursors] in order; deck-selection queries return nothing, so
+   * write-back takes its single-deck head-gated fallback - the contract these tests pin.
+   */
+  private fun ContentResolver.scheduleQueriesReturn(vararg cursors: Cursor) {
+    val queue = ArrayDeque(cursors.toList())
+    every { query(any(), any(), any(), any(), any()) } answers
+      {
+        if (firstArg<Uri>().toString().endsWith("/schedule")) {
+          queue.removeFirstOrNull() ?: noCardCursor()
+        } else {
+          null
+        }
+      }
+  }
+
   /** Serialize on the watch side, deserialize on the phone side - the actual Bluetooth payload. */
   private fun overTheWire(answers: List<WearosAnswer>): List<WearosAnswer> =
     deserializeAnswers(serializeAnswers(answers))
@@ -90,7 +106,7 @@ class AnswerSyncE2ETest {
     val values = slot<ContentValues>()
     val resolver =
       availableResolver {
-        every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(222L, 3)
+        scheduleQueriesReturn(scheduleCursor(222L, 3))
         every { update(any(), capture(values), any(), any()) } returns 1
       }
 
@@ -133,8 +149,7 @@ class AnswerSyncE2ETest {
     val update = slot<ContentValues>()
     val resolver =
       availableResolver {
-        every { query(any(), any(), any(), any(), any()) } returnsMany
-          listOf(scheduleCursor(222L, 3), noCardCursor())
+        scheduleQueriesReturn(scheduleCursor(222L, 3), noCardCursor())
         every { update(any(), capture(update), any(), any()) } returns 1
       }
 
@@ -167,7 +182,7 @@ class AnswerSyncE2ETest {
 
     val firstResolver =
       availableResolver {
-        every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
+        scheduleQueriesReturn(scheduleCursor(111L, 0))
         every { update(any(), any(), any(), any()) } returns 1
       }
     val firstSettled = bridge(firstResolver).writeAnswersBack(overTheWire(listOf(a1)), false)
@@ -177,7 +192,7 @@ class AnswerSyncE2ETest {
     // Re-send of the identical buffered answer; scheduler is now presenting a different card.
     val resendResolver =
       availableResolver {
-        every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(222L, 0)
+        scheduleQueriesReturn(scheduleCursor(222L, 0))
         every { update(any(), any(), any(), any()) } returns 1
       }
     val resendSettled = bridge(resendResolver).writeAnswersBack(overTheWire(listOf(a1)), false)
@@ -201,7 +216,7 @@ class AnswerSyncE2ETest {
 
     val resolver1 =
       availableResolver {
-        every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
+        scheduleQueriesReturn(scheduleCursor(111L, 0))
         every { update(any(), any(), any(), any()) } returns 1
       }
     val ctx1 = spyk(realCtx) { every { contentResolver } returns resolver1 }
@@ -212,7 +227,7 @@ class AnswerSyncE2ETest {
     // Same card still presented; re-send of the identical answer id.
     val resolver2 =
       availableResolver {
-        every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
+        scheduleQueriesReturn(scheduleCursor(111L, 0))
         every { update(any(), any(), any(), any()) } returns 1
       }
     val ctx2 = spyk(realCtx) { every { contentResolver } returns resolver2 }

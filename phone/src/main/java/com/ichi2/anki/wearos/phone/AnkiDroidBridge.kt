@@ -629,10 +629,8 @@ class AnkiDroidBridge(private val context: Context) {
       return WriteBackOutcome.NONE
     }
 
-    // IDs to clear from the watch buffer = terminal outcomes: either applied (rows > 0) or the card
-    // no longer matches (rows == 0: already answered / removed / not due). Only a thrown exception
-    // is
-    // treated as transient and kept buffered for a later retry, so orphaned answers can't pile up.
+    // IDs to clear from the watch buffer = terminal outcomes: applied, or the card no longer exists
+    // (0 rows). A thrown exception is transient and keeps everything buffered for a later retry.
     val settledIds = mutableListOf<String>()
     var applied = 0
     var transientFailure = false
@@ -641,8 +639,7 @@ class AnkiDroidBridge(private val context: Context) {
     // Dedupe defense-in-depth: an answer id we've already applied must never be applied again, even
     // if the watch re-sends it (a missed clear_answers) while its card happens to be presented again
     // (a relearn re-presented this session). Pre-filter those out and report them settled so the
-    // watch buffer clears; the drain loop below then only sees not-yet-applied answers. The
-    // current-card gating already stops a mis-grade; this stops a *double*-grade of the same review.
+    // watch buffer clears; the drain loop below then only sees not-yet-applied answers.
     val appliedIdStore = loadAppliedIds()
     val remaining = mutableListOf<WearosAnswer>()
     for (a in answers) {
@@ -654,28 +651,205 @@ class AnkiDroidBridge(private val context: Context) {
       }
     }
 
-    // Drain the buffer one deck at a time. To answer a card the scheduler must first be primed with a
-    // schedule query; we prime each answer's deck with a deckID= query (see primeScheduler) so the
-    // card the following update grades is THAT deck's head. A buffer can span decks (several reviewed
-    // offline, synced together), and priming per-deck is what lets every deck drain in one pass - not
-    // just whichever deck AnkiDroid currently has selected. deck_id 0 = unknown (older buffers /
-    // cross-version wire): primed with a null selection = whatever AnkiDroid currently has selected,
-    // preserving the pre-deck_id behaviour.
+    // rslib rejects a ReviewInfo update only while its study queues are built ("not at top of
+    // queue"), and the provider swallows that rejection: it still reports a row while rslib logs and
+    // spends seconds sending a crash report, so failures are avoided rather than retried blindly.
+    // AnkiDroid drops those queues when the selected deck actually changes (selecting the deck that
+    // is already selected does nothing), and any schedule query rebuilds them. So one toggle - select
+    // another deck, select ours back - before the first answer frees the whole pass to apply in any
+    // order, learning chains included. Answers are addressed by (note_id, ord), so the deck no longer
+    // matters for placement.
     //
-    // Within a deck we prime the scheduler, read the current card, and apply ONLY the buffered answer
-    // for that exact (note_id, ord). If the scheduler's order diverges from the buffer - a card
-    // relearned within one session, or an out-of-order buffer - blindly updating would grade the WRONG
-    // card, so answers we can't place this pass stay buffered for a later sync. Priming is also
-    // required for correctness: a bare update() no-ops on the rslib/v3 backend until a schedule query
-    // has reset the scheduler and rebuilt its queue (query-then-update graduates the card, reps++ and
-    // a revlog row; a bare update leaves it due).
-    //
-    // AnkiDroid's provider catches a scheduler error (rslib "not at top of queue", etc.) and still
-    // counts the row, so the row count alone can claim an answer applied when nothing happened. After
-    // each update we re-read the card's reps: a real answerCard bumps them, a swallowed one does not.
-    // An answer whose reps did not advance is kept buffered and stops that deck's drain, or the loop
-    // would re-prime and hit the same card forever. Providers without a reps column fall back to the
-    // old row-count rule.
+    // A single-deck collection has nothing to toggle to, so it falls back to priming the scheduler
+    // per deck and answering only the head card it presents (see primeAndDrain).
+    val selectedDeckId = readSelectedDeckId(contentResolver)
+    val toggleDeckId =
+      selectedDeckId?.let { selected ->
+        // Reuse the deck listing: any deck other than the current one flips the selection.
+        fetchAllDecks().firstOrNull { (deck, _) -> deck.value != selected }?.first?.value
+      }
+    val togglePlan: Pair<Long, Long>? =
+      if (toggleDeckId != null &&
+        selectedDeckId != null &&
+        dropStudyQueues(contentResolver, toggleDeckId, selectedDeckId)
+      ) {
+        toggleDeckId to selectedDeckId
+      } else {
+        null
+      }
+
+    if (togglePlan == null) {
+      val fallback = primeAndDrain(contentResolver, remaining, settledIds, appliedIdStore)
+      applied += fallback.applied
+      transientFailure = fallback.transientFailure
+      // A half-done toggle (the second select failed) must not leave the user on the toggle deck.
+      if (toggleDeckId != null && selectedDeckId != null) selectDeck(contentResolver, selectedDeckId)
+    } else {
+      val (toggleDeck, originalDeck) = togglePlan
+      // Cards whose chain is already broken: once one grade for a (note_id, ord) can't be placed,
+      // every later grade for it is skipped (a learning chain must not apply out of order).
+      val blockedCards = mutableSetOf<Pair<Long, Int>>()
+      try {
+        var i = 0
+        while (i < remaining.size) {
+          val answer = remaining[i]
+          if (answer.noteId to answer.ord in blockedCards) {
+            // A chain already broke on this card, so apply nothing further for it.
+            i++
+            continue
+          }
+          var result = applyOneAnswer(contentResolver, answer, appliedIdStore)
+          // Something rebuilt the queues mid-pass (e.g. AnkiDroid's own UI): drop them again and retry
+          // this one answer exactly once.
+          if (result == ApplyResult.NOT_APPLIED &&
+            dropStudyQueues(contentResolver, toggleDeck, originalDeck)
+          ) {
+            result = applyOneAnswer(contentResolver, answer, appliedIdStore)
+          }
+          when (result) {
+            ApplyResult.APPLIED -> {
+              applied++
+              settledIds.add(answer.id)
+              remaining.removeAt(i)
+              // removeAt shifts the following answers down, so i stays for the next one.
+              continue
+            }
+            ApplyResult.TERMINAL -> {
+              settledIds.add(answer.id)
+              remaining.removeAt(i)
+              continue
+            }
+            ApplyResult.NOT_APPLIED -> {
+              Log.w(TAG, "Could not place answer ${answer.id} (note ${answer.noteId}/${answer.ord}).")
+              blockedCards.add(answer.noteId to answer.ord)
+            }
+          }
+          i++
+        }
+      } catch (e: Exception) {
+        Log.e(TAG, "Transient failure writing back; keeping the rest for retry: ${e.message}", e)
+        transientFailure = true
+      } finally {
+        // Leave the collection on the deck the user had selected before the pass.
+        selectDeck(contentResolver, originalDeck)
+      }
+    }
+
+    Log.i(TAG, "Write-back: $applied applied, ${remaining.size} kept for retry/later.")
+    // A transient exception says nothing about whether the leftovers are placeable, so report them
+    // unplaced only when the drain finished normally.
+    val unplaced = if (transientFailure) emptyList() else remaining.map { it.id }
+    return WriteBackOutcome(settledIds, unplaced)
+  }
+
+  /** Outcome of answering one card: either it landed (or is terminal), or it stayed unplaced. */
+  private enum class ApplyResult {
+    APPLIED,
+    TERMINAL,
+    NOT_APPLIED,
+  }
+
+  private data class DrainResult(val applied: Int, val transientFailure: Boolean)
+
+  /**
+   * The currently selected deck id, or null when it can't be read (provider absent, no row, no
+   * deck_id column). Null sends write-back down its single-deck fallback path.
+   */
+  private fun readSelectedDeckId(contentResolver: ContentResolver): Long? =
+    try {
+      contentResolver
+        .query(DECK_SELECTED_URI, arrayOf(COL_DECK_ID), null, null, null)
+        ?.use { cursor ->
+          val idx = cursor.getColumnIndex(COL_DECK_ID)
+          if (idx != -1 && cursor.moveToFirst() && !cursor.isNull(idx)) cursor.getLong(idx) else null
+        }
+    } catch (e: Exception) {
+      Log.w(TAG, "Selected deck unavailable (${e.message}); using the head-gated fallback.")
+      null
+    }
+
+  /** Select [deckId]; true when the provider reports the deck exists (rows > 0). */
+  private fun selectDeck(contentResolver: ContentResolver, deckId: Long): Boolean =
+    try {
+      val values = ContentValues().apply { put(COL_DECK_ID, deckId) }
+      contentResolver.update(DECK_SELECTED_URI, values, null, null) > 0
+    } catch (e: Exception) {
+      Log.w(TAG, "Failed to select deck $deckId: ${e.message}")
+      false
+    }
+
+  /**
+   * Drop AnkiDroid's study queues by flipping the selected deck away and back. rslib only rejects an
+   * answer that is not at the head of those queues, and only builds them on a schedule query, so with
+   * none issued in between a run of answers applies in any order. False if either selection didn't
+   * take (a missing toggle deck), leaving the caller on the fallback path.
+   */
+  private fun dropStudyQueues(
+    contentResolver: ContentResolver,
+    toggleDeckId: Long,
+    selectedDeckId: Long,
+  ): Boolean =
+    selectDeck(contentResolver, toggleDeckId) && selectDeck(contentResolver, selectedDeckId)
+
+  /**
+   * Answer one card via FlashCardsContract.ReviewInfo (fields in ContentValues, null selection) and
+   * confirm it landed by re-reading reps. The provider swallows a scheduler error and still reports a
+   * row, so the row count alone proves nothing: a real answerCard bumps reps, a swallowed one does
+   * not. Zero rows is terminal (already answered / removed); a row with no reps bump stays unplaced.
+   */
+  private fun applyOneAnswer(
+    contentResolver: ContentResolver,
+    answer: WearosAnswer,
+    appliedIdStore: LinkedHashSet<String>,
+  ): ApplyResult {
+    // Clamp ease to the 1..4 the scheduler accepts; a corrupt/out-of-range wire value must never
+    // reach col.sched.answerCard.
+    val values =
+      ContentValues().apply {
+        put(COL_REVIEW_NOTE_ID, answer.noteId)
+        put(COL_REVIEW_ORD, answer.ord)
+        put(COL_REVIEW_EASE, answer.ease.coerceIn(1, 4))
+        put(COL_REVIEW_TIME_TAKEN, answer.timeTakenMs)
+      }
+    val repsBefore = readCardReps(contentResolver, answer.noteId, answer.ord)
+    val rowsUpdated = contentResolver.update(SCHEDULE_URI, values, null, null)
+    val repsAfter = readCardReps(contentResolver, answer.noteId, answer.ord)
+    if (rowsUpdated == 0) {
+      Log.w(TAG, "Answer for note ${answer.noteId} wrote 0 rows; treating as terminal.")
+      return ApplyResult.TERMINAL
+    }
+    // No reps column (older AnkiDroid): trust the row count as before.
+    val appliedNow =
+      if (repsBefore != null && repsAfter != null) repsAfter > repsBefore else true
+    if (!appliedNow) {
+      Log.w(
+        TAG,
+        "Provider reported $rowsUpdated row(s) but reps did not advance for note " +
+          "${answer.noteId}/${answer.ord}; keeping the answer buffered.",
+      )
+      return ApplyResult.NOT_APPLIED
+    }
+    appliedIdStore.add(answer.id)
+    // Persist immediately: if the service is killed mid-drain, an applied-but-unrecorded id would be
+    // re-applied on the next sync. Saving per-apply narrows that window to a single update.
+    saveAppliedIds(appliedIdStore)
+    return ApplyResult.APPLIED
+  }
+
+  /**
+   * Single-deck fallback: prime the scheduler per deck and answer only the head card it presents.
+   * Kept so a collection with one deck (nothing to toggle to) never does worse than before. deck_id 0
+   * = unknown (older buffers / cross-version wire): primed with a null selection = whatever deck is
+   * current. See [primeScheduler].
+   */
+  private fun primeAndDrain(
+    contentResolver: ContentResolver,
+    remaining: MutableList<WearosAnswer>,
+    settledIds: MutableList<String>,
+    appliedIdStore: LinkedHashSet<String>,
+  ): DrainResult {
+    var applied = 0
+    var transientFailure = false
     val deckOrder = remaining.map { it.deckId }.distinct().sortedBy { if (it == 0L) 0 else 1 }
     deckLoop@ for (deckId in deckOrder) {
       while (remaining.isNotEmpty()) {
@@ -689,52 +863,20 @@ class AnkiDroidBridge(private val context: Context) {
         }
         val answer = remaining[idx]
         try {
-          // Answer via FlashCardsContract.ReviewInfo: fields in ContentValues, null selection. The
-          // provider calls the real scheduler (col.sched.answerCard) on the current card, which we've
-          // just confirmed is this answer's card.
-          // Clamp ease to the 1..4 the scheduler accepts; a corrupt/out-of-range wire value must
-          // never reach col.sched.answerCard.
-          val values =
-            ContentValues().apply {
-              put(COL_REVIEW_NOTE_ID, answer.noteId)
-              put(COL_REVIEW_ORD, answer.ord)
-              put(COL_REVIEW_EASE, answer.ease.coerceIn(1, 4))
-              put(COL_REVIEW_TIME_TAKEN, answer.timeTakenMs)
+          when (applyOneAnswer(contentResolver, answer, appliedIdStore)) {
+            ApplyResult.APPLIED -> {
+              applied++
+              settledIds.add(answer.id)
+              remaining.removeAt(idx)
             }
-          // Reps around the update: a swallowed scheduler error still counts a row, so only a bump in
-          // reps proves the answer landed.
-          val repsBefore = readCardReps(contentResolver, answer.noteId, answer.ord)
-          val rowsUpdated = contentResolver.update(SCHEDULE_URI, values, null, null)
-          val repsAfter = readCardReps(contentResolver, answer.noteId, answer.ord)
-          val appliedNow =
-            when {
-              rowsUpdated == 0 -> false
-              repsBefore != null && repsAfter != null -> repsAfter > repsBefore
-              // No reps column (older AnkiDroid): trust the row count as before.
-              else -> true
+            ApplyResult.TERMINAL -> {
+              settledIds.add(answer.id)
+              remaining.removeAt(idx)
             }
-          if (rowsUpdated > 0 && !appliedNow) {
-            // The provider swallowed a scheduler failure: reps did not advance, so this answer was
-            // NOT applied. Keep it buffered and stop this deck rather than re-priming the same card.
-            Log.w(
-              TAG,
-              "Provider reported $rowsUpdated row(s) but reps did not advance for note " +
-                "${answer.noteId}/${answer.ord}; keeping the answer buffered.",
-            )
-            break
-          }
-          remaining.removeAt(idx)
-          settledIds.add(answer.id)
-          if (rowsUpdated > 0) {
-            applied++
-            appliedIdStore.add(answer.id)
-            // Persist immediately: if the service is killed mid-drain, an applied-but-unrecorded id
-            // would be re-applied on the next sync (a relearn card back at the head defeats the
-            // current-card gate). Saving per-apply narrows that window to a single update.
-            saveAppliedIds(appliedIdStore)
-          } else {
-            // Matched the current card but nothing was written (already answered / removed): terminal.
-            Log.w(TAG, "Answer for note ${answer.noteId} matched the current card but wrote 0 rows.")
+            // Keep it buffered and stop this deck rather than re-priming the same card forever.
+            ApplyResult.NOT_APPLIED -> {
+              break
+            }
           }
         } catch (e: Exception) {
           Log.e(
@@ -748,12 +890,7 @@ class AnkiDroidBridge(private val context: Context) {
         }
       }
     }
-
-    Log.i(TAG, "Write-back: $applied applied, ${remaining.size} kept for retry/later.")
-    // A transient exception says nothing about whether the leftovers are placeable, so report them
-    // unplaced only when the drain finished normally.
-    val unplaced = if (transientFailure) emptyList() else remaining.map { it.id }
-    return WriteBackOutcome(settledIds, unplaced)
+    return DrainResult(applied, transientFailure)
   }
 
   /** Ids of answers already applied to the collection, most-recent last. See [DEDUPE_PREFS]. */
@@ -777,15 +914,12 @@ class AnkiDroidBridge(private val context: Context) {
   }
 
   /**
-   * Prime [deckId]'s scheduler and return the card it now presents as (note_id, ord), or null if none
-   * is due / the query failed. The schedule query does two jobs: its side effect (col.sched.reset +
-   * rebuilding the queue) is what makes the following ReviewInfo update actually answer the card (a
-   * bare update no-ops), and querying with the deckID= selection (the same call fetchDueBatch uses)
-   * presents THIS deck's head so the update grades it. We must prime with deckID= rather than select
-   * the deck once and then prime with a null selection: on the rslib/v3 provider a null-selection
-   * query reverts to the collection's current deck, so a multi-deck buffer would only ever drain
-   * whatever deck is current. deckId 0 (unknown) uses a null selection = whatever is currently
-   * selected. The caller answers only the buffered answer matching this card, never the wrong one.
+   * Fallback path only (see [primeAndDrain]): prime [deckId]'s scheduler and return the card it now
+   * presents as (note_id, ord), or null if none is due / the query failed. Querying with the deckID=
+   * selection (the same call fetchDueBatch uses) presents THIS deck's head so the following update
+   * grades it; a null-selection query would revert to the collection's current deck. deckId 0
+   * (unknown) uses a null selection. The caller answers only the buffered answer matching this card,
+   * never the wrong one.
    */
   private fun primeScheduler(contentResolver: ContentResolver, deckId: Long): Pair<Long, Int>? {
     val selection = if (deckId != 0L) "limit=?,deckID=?" else null

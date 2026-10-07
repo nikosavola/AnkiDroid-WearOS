@@ -24,9 +24,8 @@ import uniffi.wearos_core.serializeAnswers
  * at all (pure JVM via Robolectric, so it runs in any `./gradlew test` container). It exercises the
  * real Rust deserialization + the real [AnkiDroidBridge.writeAnswersBack] loop against genuine
  * ContentResolver.query/update dispatch, so it catches integration wiring the MockK unit tests stub
- * away: the URI/authority, the exact cursor column + ContentValues keys, drain ordering, and - most
- * importantly - the prime-then-answer contract (the fake models the v3 backend quirk where a bare
- * update no-ops until a schedule query has primed the scheduler; the original write-back bug).
+ * away: the URI/authority, the exact cursor column + ContentValues keys, drain ordering, and the
+ * deck-toggle handshake that drops rslib's study queues before a run of answers.
  *
  * The watch<->phone Data Layer leg is deliberately out of scope: it needs Google Play Services + two
  * paired devices and cannot run on a headless/Docker emulator, so it can't be covered in CI at all.
@@ -61,9 +60,121 @@ class WriteBackIntegrationTest {
 
   private val scheduleUri: Uri = Uri.parse("content://com.ichi2.anki.flashcards/schedule")
 
+  private fun buildStudyQueues() {
+    provider.query(scheduleUri, null, null, null, null).close()
+  }
+
+  // --- the deck-toggle handshake (the main path) ----------------------------------------------
+
   @Test
-  fun drainsWholeBufferInSchedulerOrder_throughRealResolverAndProvider() {
-    provider.seed(listOf(111L to 0, 222L to 1))
+  fun `answers apply out of order once the queues are dropped`() {
+    // AnkiDroid's UI has built its study queues (the schedule query), and the buffered answers are
+    // not in queue order. One toggle drops the queues, after which every answer applies, whatever
+    // order the watch sent them in.
+    provider.seedDecks(mapOf(10L to listOf(111L to 0, 222L to 0, 333L to 0), 20L to emptyList()))
+    buildStudyQueues()
+
+    val outcome =
+      writeBack(
+        listOf(answer("a3", 333L, 0, 4), answer("a1", 111L, 0, 1), answer("a2", 222L, 0, 3))
+      )
+
+    assertEquals(listOf("a3", "a1", "a2"), outcome.settled)
+    assertEquals(
+      listOf(Applied(333L, 0, 4), Applied(111L, 0, 1), Applied(222L, 0, 3)),
+      provider.applied,
+    )
+    assertTrue("the queue is fully drained", provider.isEmpty())
+  }
+
+  @Test
+  fun `a learning chain on one card applies in order`() {
+    // The same card graded Again, Good, Easy back to back. All three carry the same (note_id, ord),
+    // so they apply in the order given as long as the queues are dropped first.
+    provider.seedDecks(mapOf(10L to listOf(111L to 0), 20L to listOf(999L to 0)))
+
+    val outcome =
+      writeBack(
+        listOf(
+          answer("again", 111L, 0, 1),
+          answer("good", 111L, 0, 3),
+          answer("easy", 111L, 0, 4),
+        )
+      )
+
+    assertEquals(listOf("again", "good", "easy"), outcome.settled)
+    assertEquals(listOf(1, 3, 4), provider.applied.map { it.ease })
+    assertEquals("all three grades landed", 3L, provider.repsOf(111L, 0))
+  }
+
+  @Test
+  fun `a rebuilt queue mid-pass is dropped again and the answer retried once`() {
+    // Mid-pass something rebuilds the queues (AnkiDroid's own UI opening a schedule screen), which
+    // would reject the next answer. The bridge drops them again and retries that answer exactly once.
+    provider.seedDecks(mapOf(10L to listOf(111L to 0, 222L to 0), 20L to listOf(333L to 0)))
+    provider.rebuildQueuesBeforeUpdateIndex = 1
+
+    val outcome = writeBack(listOf(answer("a1", 111L, 0, 3), answer("a2", 222L, 0, 4)))
+
+    assertEquals(listOf("a1", "a2"), outcome.settled)
+    assertEquals(listOf(Applied(111L, 0, 3), Applied(222L, 0, 4)), provider.applied)
+    assertEquals("the rejected attempt was retried once", 1, provider.rejectedWhileBuilt)
+  }
+
+  @Test
+  fun `an answer that still fails leaves later answers for the same card unplaced`() {
+    // Card 111 keeps failing (its answer is swallowed every time). Once it is unplaceable, a later
+    // grade for the same card must not be tried (that would apply the chain out of order), while a
+    // different card still drains.
+    provider.seedDecks(mapOf(10L to listOf(111L to 0, 222L to 0), 20L to listOf(333L to 0)))
+    provider.failingCard = 111L to 0
+
+    val outcome =
+      writeBack(
+        listOf(answer("a1", 111L, 0, 3), answer("a2", 111L, 0, 3), answer("b1", 222L, 0, 4))
+      )
+
+    assertEquals(listOf("b1"), outcome.settled)
+    assertEquals(listOf("a1", "a2"), outcome.unplaced)
+    assertEquals(listOf(Applied(222L, 0, 4)), provider.applied)
+  }
+
+  @Test
+  fun `the original selected deck is restored after write-back`() {
+    // The toggle moves the selection away and back; whatever happens (a normal pass or a thrown
+    // write), the collection is left on the deck the user had selected.
+    provider.seedDecks(mapOf(10L to listOf(111L to 0), 20L to listOf(999L to 0)))
+    writeBack(listOf(answer("a1", 111L, 0, 3)))
+    assertEquals(10L, provider.selectedDeckId())
+
+    provider.seedDecks(mapOf(10L to listOf(111L to 0), 20L to listOf(999L to 0)))
+    provider.throwOnAnswerUpdate = true
+    // A fresh id: reusing "a1" would let the dedupe store settle it as a re-send before the throw.
+    val outcome = writeBack(listOf(answer("a2", 111L, 0, 3)))
+
+    assertTrue("a thrown write keeps the answer buffered", outcome.settled.isEmpty())
+    assertEquals("the deck is restored even when the pass aborts", 10L, provider.selectedDeckId())
+  }
+
+  @Test
+  fun `a single-deck collection falls back to head-gated write-back`() {
+    // Nothing to toggle to, so write-back keeps the old head-gated path: only the card the scheduler
+    // presents may be answered, and the other buffered answer stays unplaced.
+    provider.seedDecks(mapOf(10L to listOf(111L to 0)))
+
+    val outcome = writeBack(listOf(answer("a1", 222L, 0, 4), answer("a2", 111L, 0, 3)))
+
+    assertEquals(listOf("a2"), outcome.settled)
+    assertEquals(listOf("a1"), outcome.unplaced)
+    assertEquals(listOf(Applied(111L, 0, 3)), provider.applied)
+    assertEquals("the single deck was never toggled", 10L, provider.selectedDeckId())
+  }
+
+  // --- head-gated fallback (echoes of the old contract) ---------------------------------------
+
+  @Test
+  fun `a single-deck buffer drains in scheduler order`() {
+    provider.seedDecks(mapOf(10L to listOf(111L to 0, 222L to 1)))
 
     val settled = writeBack(listOf(answer("a1", 111L, 0, 3), answer("a2", 222L, 1, 4)))
 
@@ -77,11 +188,8 @@ class WriteBackIntegrationTest {
   }
 
   @Test
-  fun primesSchedulerBeforeAnswering_soTheAnswerIsntA_noOp() {
-    // The fake mimics the v3 backend: update() before any query() returns 0 rows (see below). So this
-    // test only passes if writeAnswersBack primes (queries) before it updates - the exact regression
-    // that once left every grade silently unapplied.
-    provider.seed(listOf(111L to 0))
+  fun `the fallback primes the scheduler before answering`() {
+    provider.seedDecks(mapOf(10L to listOf(111L to 0)))
     val settled = writeBack(listOf(answer("a1", 111L, 0, 2)))
 
     assertEquals(listOf("a1"), settled.settled)
@@ -89,25 +197,10 @@ class WriteBackIntegrationTest {
   }
 
   @Test
-  fun bareUpdateWithoutPriming_isANoOp_documentingTheContractTheFakeModels() {
-    provider.seed(listOf(111L to 0))
-    val values =
-      ContentValues().apply {
-        put("note_id", 111L)
-        put("ord", 0)
-        put("answer_ease", 3)
-        put("time_taken", 3000L)
-      }
-    val rows = context.contentResolver.update(scheduleUri, values, null, null)
-    assertEquals("a bare update with no prior schedule query must no-op", 0, rows)
-    assertTrue(provider.applied.isEmpty())
-  }
-
-  @Test
-  fun stopsWhenSchedulerPresentsAnUnbufferedCard_noMisgrade() {
-    // Scheduler head is 999, but we only have a buffered answer for 111. writeAnswersBack must NOT
-    // answer 999 (that'd be a mis-grade); it reports 111 unplaced and leaves it buffered.
-    provider.seed(listOf(999L to 0))
+  fun `the fallback never answers a card the scheduler isnt presenting`() {
+    // The scheduler head is 999, but we only have a buffered answer for 111. writeAnswersBack must
+    // NOT answer 999 (that'd be a mis-grade); it reports 111 unplaced and leaves it buffered.
+    provider.seedDecks(mapOf(10L to listOf(999L to 0)))
     val outcome = writeBack(listOf(answer("a1", 111L, 0, 3)))
 
     assertTrue("unplaceable answer stays buffered", outcome.settled.isEmpty())
@@ -120,7 +213,7 @@ class WriteBackIntegrationTest {
   fun `unplaced answers are reported separately from the settled ones`() {
     // The scheduler presents 111 only: 111 settles and is cleared, while 222 has no presented card
     // and comes back unplaced so the watch counts it against the orphan cap.
-    provider.seed(listOf(111L to 0))
+    provider.seedDecks(mapOf(10L to listOf(111L to 0)))
     val outcome = writeBack(listOf(answer("a1", 111L, 0, 3), answer("a2", 222L, 0, 4)))
 
     assertEquals(listOf("a1"), outcome.settled)
@@ -128,23 +221,8 @@ class WriteBackIntegrationTest {
   }
 
   @Test
-  fun readOnly_drivesTheRealResolverPathButNeverAnswers() {
-    provider.seed(listOf(111L to 0))
-    val settled = writeBack(listOf(answer("a1", 111L, 0, 3)), readOnly = true)
-
-    assertEquals(listOf("a1"), settled.settled)
-    assertTrue("read-only must not touch the collection", provider.applied.isEmpty())
-    assertEquals("head card still due", 111L, provider.headNoteId())
-  }
-
-  @Test
-  fun drainsAcrossMultipleDecks_primingEachDeckDirectly() {
-    // The offline-durability case: two decks reviewed offline, buffered, then synced together. Each
-    // answer carries its deck_id, so write-back primes deck A with deckID=, drains it, then primes
-    // deck B with deckID= and drains it - both apply in one pass. This only holds because primeScheduler
-    // queries with deckID= directly: the provider models the real rslib/v3 quirk that a null-selection
-    // prime reverts to the current deck, so the old "select once, then null-prime" drained only deck A
-    // (1783, seeded first = current) and left 1784's answer buffered. Regression guard for that bug.
+  fun `a multi-deck buffer drains in one pass`() {
+    // Reviewed on two decks offline, buffered, then synced together: one toggle frees both decks.
     provider.seedDecks(mapOf(1783L to listOf(111L to 0), 1784L to listOf(222L to 0)))
 
     val settled =
@@ -157,8 +235,7 @@ class WriteBackIntegrationTest {
 
   @Test
   fun unknownDeckId_fallsBackToTheSelectedDeck() {
-    // deck_id 0 (legacy/cross-version answer) must still apply against whatever deck is selected,
-    // preserving the pre-deck_id behaviour.
+    // deck_id 0 (legacy/cross-version answer) must still apply against whatever deck is selected.
     provider.seedDecks(mapOf(1783L to listOf(111L to 0)))
     val settled = writeBack(listOf(answer("a1", 111L, 0, 3, deckId = 0L)))
 
@@ -167,11 +244,22 @@ class WriteBackIntegrationTest {
   }
 
   @Test
+  fun readOnly_drivesTheRealResolverPathButNeverAnswers() {
+    provider.seedDecks(mapOf(10L to listOf(111L to 0), 20L to listOf(999L to 0)))
+    val settled = writeBack(listOf(answer("a1", 111L, 0, 3)), readOnly = true)
+
+    assertEquals(listOf("a1"), settled.settled)
+    assertTrue("read-only must not touch the collection", provider.applied.isEmpty())
+    assertEquals("head card still due", 111L, provider.headNoteId())
+  }
+
+  @Test
   fun `an answer the provider swallowed stays buffered and is not marked applied`() {
-    // AnkiDroid catches the scheduler's exception and still reports a row, so the row count alone
-    // would settle a lost review. reps is the real evidence: they didn't move, so the answer must
-    // stay buffered and un-recorded, and a later success must apply it exactly once.
-    provider.seed(listOf(111L to 0))
+    // Single deck: the fallback prime-then-answer path. AnkiDroid catches the scheduler's exception
+    // and still reports a row, so the row count alone would settle a lost review. reps is the real
+    // evidence: they didn't move, so the answer must stay buffered, and a later success must apply it
+    // exactly once.
+    provider.seedDecks(mapOf(10L to listOf(111L to 0)))
     provider.swallowAnswerCardFailure = true
     val swallowed = writeBack(listOf(answer("a1", 111L, 0, 3)))
 
@@ -188,7 +276,7 @@ class WriteBackIntegrationTest {
   fun `a provider without a reps column still settles on the row count`() {
     // Older AnkiDroid exposes no reps column; write-back falls back to the row-count rule so those
     // builds keep working.
-    provider.seed(listOf(111L to 0))
+    provider.seedDecks(mapOf(10L to listOf(111L to 0)))
     provider.exposeRepsColumn = false
     val settled = writeBack(listOf(answer("a1", 111L, 0, 3)))
 
@@ -200,35 +288,48 @@ class WriteBackIntegrationTest {
 /** An answer the fake scheduler actually applied: which card, which ease. */
 data class Applied(val noteId: Long, val ord: Int, val ease: Int)
 
+/** A transient ContentProvider failure, thrown by the fake to exercise the retry/abort paths. */
+private class TransientProviderException : RuntimeException("transient provider failure")
+
 /**
- * Minimal in-memory stand-in for AnkiDroid's schedule ContentProvider, faithful to the rslib/v3
- * quirk that bit multi-deck write-back on real hardware: a `deckID=` query presents THAT deck's head
- * (as fetchDueBatch relies on), but a null-selection query reverts to the collection's *current*
- * deck - a prior `deckID=` query does NOT persist the selection. So the deck a bare-null prime (and
- * the update after it) acts on is [currentDeck], not whatever `deckID=` was last queried. The update
- * grades the head of whichever deck the *last* query targeted, and only if primed since the last
- * answer (a bare update no-ops). This is why write-back must prime each deck with deckID= directly
- * rather than select-then-null-prime. Enough to drive [AnkiDroidBridge.writeAnswersBack] - including
- * its multi-deck drain - without a device.
+ * In-memory stand-in for AnkiDroid's schedule ContentProvider, faithful to the rslib behaviour the
+ * write-back leans on: rslib rejects an answer that isn't at the head of its study queues ("not at
+ * top of queue") only while those queues are built, and any schedule query builds them. Changing the
+ * selected deck to a *different* deck drops them. So a toggle (select another deck, select ours back)
+ * with no schedule query in between lets every answer apply, in any order.
+ *
+ * The provider swallows rslib's rejection (reports a row, changes nothing, drops the queues) exactly
+ * as AnkiDroid does, which is why write-back confirms an answer by re-reading reps rather than the
+ * row count. Enough to drive [AnkiDroidBridge.writeAnswersBack] without a device.
  */
 class FakeAnkiSchedulerProvider : ContentProvider() {
   private val decks = linkedMapOf<Long, ArrayDeque<Pair<Long, Int>>>()
-  // Review count per card, bumped on a real answer. write-back re-reads it to confirm the answer
-  // landed (the provider swallows a scheduler error and still counts a row).
   private val reps = mutableMapOf<Pair<Long, Int>, Long>()
-  // The collection's current deck (col.decks.current). A null-selection query reverts to it; a
-  // deckID= query does not change it. Seeded to the first deck, mirroring "some deck is always current".
   private var currentDeck: Long = 0
-  // The deck the most recent query targeted = the one the next update grades.
-  private var queriedDeck: Long = 0
-  private var primedSinceAnswer = false
+  // Set by any schedule query (rslib building its study queues), dropped when the selected deck
+  // actually changes. While built, only the head answers; while dropped, any card does.
+  private var queuesBuilt = false
+  private var updateCount = 0
   val applied = mutableListOf<Applied>()
 
-  /** When true, [update] reports a row but neither answers the card nor bumps reps. */
+  /** When true, an answer reports a row but neither answers the card nor bumps reps. */
   var swallowAnswerCardFailure = false
+
+  /** When set, only this card's answers are swallowed (the others behave normally). */
+  var failingCard: Pair<Long, Int>? = null
 
   /** When false, the card URI query omits the reps column (older AnkiDroid). */
   var exposeRepsColumn = true
+
+  /** When set, the fake rebuilds its queues onto the other deck before this 0-based update. */
+  var rebuildQueuesBeforeUpdateIndex = -1
+
+  /** When true, a schedule answer update throws, modelling a transient provider failure. */
+  var throwOnAnswerUpdate = false
+
+  /** How many answers were rejected because the queues were built and the card wasn't the head. */
+  var rejectedWhileBuilt = 0
+    private set
 
   /** Single-deck seed (deck id 0), for the tests that don't exercise deck selection. */
   fun seed(cards: List<Pair<Long, Int>>) = seedDecks(mapOf(0L to cards))
@@ -238,14 +339,19 @@ class FakeAnkiSchedulerProvider : ContentProvider() {
     deckCards.forEach { (deckId, cards) -> decks[deckId] = ArrayDeque(cards) }
     reps.clear()
     currentDeck = deckCards.keys.firstOrNull() ?: 0
-    queriedDeck = currentDeck
     applied.clear()
-    primedSinceAnswer = false
+    queuesBuilt = false
+    updateCount = 0
+    rejectedWhileBuilt = 0
   }
 
   fun isEmpty() = decks.values.all { it.isEmpty() }
 
   fun headNoteId(): Long? = decks[currentDeck]?.firstOrNull()?.first
+
+  fun selectedDeckId(): Long = currentDeck
+
+  fun repsOf(noteId: Long, ord: Int): Long = reps.getOrDefault(noteId to ord, 0L)
 
   override fun onCreate() = true
 
@@ -256,9 +362,9 @@ class FakeAnkiSchedulerProvider : ContentProvider() {
     selectionArgs: Array<out String>?,
     sortOrder: String?,
   ): Cursor {
+    val segments = uri.pathSegments
     // Card URI (notes/<noteId>/cards/<ord>): serve the card's reps so write-back can confirm an
     // answer landed. Without the column, callers fall back to the update's row count.
-    val segments = uri.pathSegments
     if (segments.firstOrNull() == "notes" && segments.getOrNull(2) == "cards") {
       val noteId = segments.getOrNull(1)?.toLongOrNull()
       val ord = segments.getOrNull(3)?.toIntOrNull()
@@ -269,22 +375,35 @@ class FakeAnkiSchedulerProvider : ContentProvider() {
       cursor.addRow(arrayOf<Any>(reps.getOrDefault(noteId to ord, 0L)))
       return cursor
     }
-    // A `deckID=` selection scopes this query to that deck (its id is the last selection arg, per
-    // fetchDueBatch's "limit=?,deckID=?" format) WITHOUT persisting it as the current deck. A query
-    // with no deckID= reverts to the current deck - the exact behaviour that made select-then-null-
-    // prime drain only the current deck.
-    queriedDeck =
-      if (selection?.contains("deckID") == true) {
-        selectionArgs?.lastOrNull()?.toLongOrNull() ?: currentDeck
-      } else {
-        currentDeck
+    return when (segments.firstOrNull()) {
+      "decks" -> {
+        val cursor = MatrixCursor(arrayOf("deck_id", "deck_name"))
+        for (id in decks.keys) cursor.addRow(arrayOf<Any>(id, "Deck $id"))
+        cursor
       }
-    primedSinceAnswer = true
-    val cursor = MatrixCursor(arrayOf("note_id", "ord"))
-    decks[queriedDeck]?.firstOrNull()?.let { (noteId, ord) ->
-      cursor.addRow(arrayOf<Any>(noteId, ord))
+      "selected_deck" -> {
+        val cursor = MatrixCursor(arrayOf("deck_id", "deck_name"))
+        cursor.addRow(arrayOf<Any>(currentDeck, "Deck $currentDeck"))
+        cursor
+      }
+      // A schedule query rebuilds the queues and presents the queried deck's head (or the current
+      // deck's, when no deckID= is given), matching AnkiDroid.
+      "schedule" -> {
+        queuesBuilt = true
+        val deck =
+          if (selection?.contains("deckID") == true) {
+            selectionArgs?.lastOrNull()?.toLongOrNull() ?: currentDeck
+          } else {
+            currentDeck
+          }
+        val cursor = MatrixCursor(arrayOf("note_id", "ord"))
+        decks[deck]?.firstOrNull()?.let { (noteId, ord) -> cursor.addRow(arrayOf<Any>(noteId, ord)) }
+        cursor
+      }
+      else -> {
+        MatrixCursor(arrayOf<String>())
+      }
     }
-    return cursor
   }
 
   override fun update(
@@ -292,22 +411,55 @@ class FakeAnkiSchedulerProvider : ContentProvider() {
     values: ContentValues?,
     selection: String?,
     selectionArgs: Array<out String>?,
-  ): Int {
-    // v3 backend quirk: answering no-ops until a schedule query has primed the scheduler.
-    if (!primedSinceAnswer) return 0
-    val queue = decks[queriedDeck] ?: return 0
-    val head = queue.firstOrNull() ?: return 0
+  ): Int =
+    when (uri.pathSegments.firstOrNull()) {
+      "selected_deck" -> selectDeck(values)
+      "schedule" -> answerCard(values)
+      else -> 0
+    }
+
+  /** Drop the queues when the selected deck actually changes; re-selecting the current deck keeps them. */
+  private fun selectDeck(values: ContentValues?): Int {
+    val deckId = values?.getAsLong("deck_id") ?: return 0
+    if (!decks.containsKey(deckId)) return 0
+    if (deckId != currentDeck) {
+      currentDeck = deckId
+      queuesBuilt = false
+    }
+    return 1
+  }
+
+  private fun answerCard(values: ContentValues?): Int {
+    if (throwOnAnswerUpdate) throw TransientProviderException()
+    val noteId = values?.getAsLong("note_id") ?: return 0
+    val ord = values?.getAsInteger("ord") ?: return 0
     val ease = values?.getAsInteger("answer_ease") ?: return 0
-    // AnkiDroid catches the scheduler's exception and still counts the row, so report a row without
-    // touching the queue or reps. write-back must notice the reps didn't move.
-    if (swallowAnswerCardFailure) {
-      primedSinceAnswer = false
+    val card = noteId to ord
+
+    // Simulate AnkiDroid's UI rebuilding the queues mid-pass, onto the other deck.
+    if (updateCount++ == rebuildQueuesBeforeUpdateIndex) {
+      queuesBuilt = true
+      currentDeck = decks.keys.firstOrNull { it != currentDeck } ?: currentDeck
+    }
+
+    if (queuesBuilt) {
+      val head = decks[currentDeck]?.firstOrNull()
+      if (head != card) {
+        // rslib rejects a non-head answer while built; the provider still reports a row, changes
+        // nothing, and drops the queues.
+        queuesBuilt = false
+        rejectedWhileBuilt++
+        return 1
+      }
+    }
+    if (swallowAnswerCardFailure || card == failingCard) {
+      queuesBuilt = false
       return 1
     }
-    applied.add(Applied(head.first, head.second, ease))
-    reps[head.first to head.second] = reps.getOrDefault(head.first to head.second, 0L) + 1
-    queue.removeFirst()
-    primedSinceAnswer = false
+
+    applied.add(Applied(card.first, card.second, ease))
+    reps[card] = reps.getOrDefault(card, 0L) + 1
+    for (queue in decks.values) if (queue.remove(card)) break
     return 1
   }
 
