@@ -46,6 +46,21 @@ object CardImageCache {
   }
 
   /**
+   * Drop a cached side image the phone has withdrawn (it no longer needs rich rendering). Without
+   * this the watch would keep showing the stale PNG forever, since the phone only ever re-sends
+   * changed images.
+   */
+  fun deleteImage(context: Context, cardId: Long, side: String) {
+    try {
+      if (getImagePath(context, cardId, side).delete()) {
+        Log.i(TAG, "Deleted phone-withdrawn card image: img_${cardId}_$side.png")
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to delete card image for card $cardId ($side): ${e.message}", e)
+    }
+  }
+
+  /**
    * Delete cached card-side images whose card id is no longer present in any cached deck. Additive
    * cleanup that keeps the img_<id>_<side>.png filename contract with the phone intact (no key
    * change). Fresh images for still-present cards are untouched. Unchanged images are not re-sent
