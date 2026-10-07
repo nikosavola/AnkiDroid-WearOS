@@ -4,8 +4,6 @@ import android.content.Context
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import kotlin.math.pow
-import kotlin.math.roundToLong
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -360,31 +358,6 @@ class AnkiDroidProviderLiveTest {
     Log.i(TAG, "shadow-compared $compared button labels against AnkiDroid")
   }
 
-  /** rslib `fuzz_delta`: whole days Anki may move an interval either way, built up per band. */
-  private fun fuzzDeltaDays(days: Double): Double =
-    if (days < 2.5) {
-      0.0
-    } else {
-      1.0 +
-        0.15 * (days.coerceAtMost(7.0) - 2.5).coerceAtLeast(0.0) +
-        0.10 * (days.coerceAtMost(20.0) - 7.0).coerceAtLeast(0.0) +
-        0.05 * (days - 20.0).coerceAtLeast(0.0)
-    }
-
-  /**
-   * The range AnkiDroid's label may show for our interval: rslib's `fuzz_bounds` (the load balancer
-   * picks anywhere inside it), widened by the label's own rounding ("5.5m" shown as "6m").
-   */
-  private fun allowedRange(oursSecs: Double, shipped: String): ClosedFloatingPointRange<Double> {
-    val days = oursSecs / SECS_PER_DAY
-    val delta = fuzzDeltaDays(days)
-    val slack = labelSlackSeconds(shipped)
-    if (delta == 0.0) return (oursSecs - slack)..(oursSecs + slack)
-    val lower = (days - delta).roundToLong() * SECS_PER_DAY
-    val upper = (days + delta).roundToLong() * SECS_PER_DAY
-    return (lower - slack)..(upper + slack)
-  }
-
   /** Assert AnkiDroid's displayed label is consistent with our computed interval. */
   private fun assertLabelMatches(stage: String, button: Int, shipped: String, oursSecs: Double) {
     val shippedSecs = parseLabelToSeconds(shipped) ?: return
@@ -396,40 +369,8 @@ class AnkiDroidProviderLiveTest {
     )
   }
 
-  /** Half the last shown digit of a label, in seconds: "6m" -> 30, "2.2mo" -> 1.5 days. */
-  private fun labelSlackSeconds(label: String): Double {
-    val unit = label.takeLastWhile { it.isLetter() }
-    val number = label.dropLast(unit.length)
-    val decimals = number.substringAfter('.', "").length
-    val unitSecs =
-      when (unit) {
-        "s" -> 1.0
-        "m" -> 60.0
-        "h" -> 3600.0
-        "mo" -> 30 * SECS_PER_DAY
-        "y" -> 365 * SECS_PER_DAY
-        else -> SECS_PER_DAY
-      }
-    return unitSecs / 10.0.pow(decimals) / 2.0
-  }
-
-  private fun parseLabelToSeconds(label: String): Double? {
-    val unit = label.takeLastWhile { it.isLetter() }
-    val value = label.dropLast(unit.length).toDoubleOrNull() ?: return null
-    return when (unit) {
-      "s" -> value
-      "m" -> value * 60
-      "h" -> value * 3600
-      "d" -> value * 86_400
-      "mo" -> value * 30 * 86_400
-      "y" -> value * 365 * 86_400
-      else -> null
-    }
-  }
-
   companion object {
     private const val TAG = "AnkiDroidLiveTest"
-    private const val SECS_PER_DAY = 86_400.0
 
     /** Tag on the fixture notes this suite creates, so cleanup never touches a real card. */
     private const val TEST_TAG = "wearos-live-test"
