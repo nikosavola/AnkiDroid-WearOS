@@ -24,6 +24,9 @@ pub const GRADE_KIND_NEW: i64 = 0;
 pub const GRADE_KIND_LEARNING: i64 = 1;
 pub const GRADE_KIND_REVIEW: i64 = 2;
 
+/// AnkiDroid's `queue` value for intraday (sub-day) learning cards.
+const QUEUE_INTRADAY_LEARN: i32 = 1;
+
 /// A deck's stored pool summary for the watch's deck list.
 #[derive(uniffi::Record)]
 pub struct PoolDeckSummary {
@@ -335,6 +338,10 @@ fn build_today_queue(
             if at <= learn_cutoff {
                 learning.push(row);
             }
+        } else if is_intraday_learning(&row) {
+            // Today's batch ships intraday learning cards without a due time; like rslib v3 they
+            // sit outside the review limit.
+            learning.push(row);
         } else if row.is_new {
             new_cards.push(row);
         } else if row.due_day.is_none_or(|d| d <= today) {
@@ -342,7 +349,8 @@ fn build_today_queue(
         }
     }
 
-    learning.sort_by_key(|r| r.due_at_secs.unwrap_or(i64::MAX));
+    // A today-batch learning card has no due time because AnkiDroid already had it due.
+    learning.sort_by_key(|r| r.due_at_secs.unwrap_or(i64::MIN));
     // Overdue and today's batch (due_day None) first, then by the order the phone listed them.
     reviews.sort_by(|a, b| match (a.due_day, b.due_day) {
         (None, None) => a.position.cmp(&b.position),
@@ -364,6 +372,12 @@ fn build_today_queue(
     selected.extend(reviews);
     selected.extend(new_cards);
     selected
+}
+
+/// A card from today's batch that is in AnkiDroid's intraday learning queue.
+fn is_intraday_learning(row: &PoolRow) -> bool {
+    row.due_day.is_none()
+        && row.card.state.as_ref().is_some_and(|s| s.queue == QUEUE_INTRADAY_LEARN)
 }
 
 /// Refresh a queued card's elapsed days and decide whether its shipped interval labels are still

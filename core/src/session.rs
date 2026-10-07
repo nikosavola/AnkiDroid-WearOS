@@ -583,7 +583,10 @@ fn interval_label(card: &WearosCard, ease: i32) -> Option<&str> {
 fn grade_kind_before(state: Option<&CardScheduleState>) -> i64 {
     match state {
         Some(s) if s.queue == 0 => GRADE_KIND_NEW,
-        Some(s) if s.queue == 2 || (s.card_type == 2 && s.queue != 1) => GRADE_KIND_REVIEW,
+        // Interday learning (queue 3) counts against the review limit in rslib v3.
+        Some(s) if s.queue == 2 || s.queue == 3 || (s.card_type == 2 && s.queue != 1) => {
+            GRADE_KIND_REVIEW
+        }
         _ => GRADE_KIND_LEARNING,
     }
 }

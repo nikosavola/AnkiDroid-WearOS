@@ -2318,6 +2318,30 @@ mod tests {
     }
 
     #[test]
+    fn a_today_batch_learning_card_leads_the_queue_outside_the_review_limit() {
+        let _guard = db_test_guard();
+        let path = pool_db("today_learning");
+
+        let config =
+            parse_deck_schedule_config(serde_json::json!({ "rev": { "perDay": 1 } }).to_string())
+                .unwrap();
+        // Today's batch ships both without a due day or time; only the queue tells them apart.
+        let review = pool_card_full(1, "R", None, None, Some(pool_card_state(2)));
+        let learning = pool_card_full(2, "L", None, None, Some(pool_card_state(1)));
+        let batch = WearosDueBatch {
+            schedule_config: Some(config),
+            ..pool_batch(11, "Deck", vec![review, learning])
+        };
+        pool_store_batch(batch).unwrap();
+
+        let ids: Vec<i64> =
+            pool_today_batch(11, POOL_NOW_MS, 0).unwrap().cards.iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![2, 1], "the learning card comes first and the review still fits");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
     fn restoring_a_batch_keeps_a_card_with_a_buffered_answer_and_replaces_the_rest() {
         let _guard = db_test_guard();
         let path = pool_db("restore");
