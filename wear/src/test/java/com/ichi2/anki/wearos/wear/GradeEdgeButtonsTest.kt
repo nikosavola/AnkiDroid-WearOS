@@ -36,7 +36,7 @@ import uniffi.wearos_core.WearosCard
 class GradeEdgeButtonsTest {
   @get:Rule val composeRule = createComposeRule()
 
-  private fun card(buttonCount: Int) =
+  private fun card(buttonCount: Int, labels: List<String> = emptyList()) =
     WearosCard(
       id = 1,
       noteId = 1,
@@ -44,15 +44,25 @@ class GradeEdgeButtonsTest {
       front = "Q",
       back = "A",
       buttonCount = buttonCount,
-      nextReviewTimes = emptyList(),
+      nextReviewTimes = labels,
     )
 
   /** Renders the buttons in a fixed 200dp square and returns the last ease tapped (via the holder). */
-  private fun setButtons(buttonCount: Int, enabled: Boolean = true, onGrade: (Int) -> Unit) {
+  private fun setButtons(
+    buttonCount: Int,
+    enabled: Boolean = true,
+    labels: List<String> = emptyList(),
+    onGrade: (Int) -> Unit,
+  ) {
     composeRule.setContent {
       MaterialTheme {
         Box(Modifier.size(200.dp).testTag("host")) {
-          GradeEdgeButtons(card(buttonCount), enabled = enabled, colored = true, onGrade = onGrade)
+          GradeEdgeButtons(
+            card(buttonCount, labels),
+            enabled = enabled,
+            colored = true,
+            onGrade = onGrade,
+          )
         }
       }
     }
@@ -115,6 +125,30 @@ class GradeEdgeButtonsTest {
     // Activating one via its semantics onClick (what TalkBack invokes) grades that ease.
     composeRule.onNodeWithContentDescription("Good").performSemanticsAction(SemanticsActions.OnClick)
     assertEquals(3, graded)
+  }
+
+  @Test
+  fun labelledCard_readsEachGradeWithItsInterval() {
+    setButtons(4, labels = listOf("1m", "6m", "4d", "7d")) {}
+    // The intervals live on the pills, which are invisible to TalkBack, so the overlay carries them.
+    composeRule.onNodeWithContentDescription("Again, 1m").assertExists()
+    composeRule.onNodeWithContentDescription("Good, 4d").assertExists()
+    composeRule.onNodeWithContentDescription("Easy, 7d").assertExists()
+  }
+
+  @Test
+  fun unlabelledCard_readsTheGradeNameAlone() {
+    setButtons(4) {}
+    composeRule.onNodeWithContentDescription("Good").assertExists()
+    composeRule.onNodeWithContentDescription("Good, 4d").assertDoesNotExist()
+  }
+
+  @Test
+  fun labelCountMismatch_readsTheGradeNameAlone() {
+    // Fewer labels than buttons would mislabel the rest, so none of them are used.
+    setButtons(4, labels = listOf("1m", "6m")) {}
+    composeRule.onNodeWithContentDescription("Good").assertExists()
+    composeRule.onNodeWithContentDescription("Again, 1m").assertDoesNotExist()
   }
 
   @Test
