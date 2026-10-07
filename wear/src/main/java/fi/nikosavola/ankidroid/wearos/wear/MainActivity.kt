@@ -32,11 +32,14 @@ import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.material3.AppScaffold
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
+import androidx.wear.compose.material3.ButtonGroup
 import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
 import androidx.wear.compose.material3.Text
+import androidx.wear.compose.material3.TextToggleButton
+import androidx.wear.compose.material3.TextToggleButtonDefaults
 import androidx.wear.compose.material3.lazy.TransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.curvedText
@@ -765,13 +768,11 @@ class MainActivity : ComponentActivity() {
     transformSpec: TransformationSpec,
     setPicking: (Boolean) -> Unit,
   ) {
-    val purpleBg = Color(0xFF7E57C2).copy(alpha = 0.3f)
-    val purpleFg = Color(0xFFB39DDB)
     if (!picking) {
       item {
         Button(
           onClick = { setPicking(true) },
-          colors = ButtonDefaults.buttonColors(containerColor = purpleBg, contentColor = purpleFg),
+          colors = ButtonDefaults.filledVariantButtonColors(),
           transformation = SurfaceTransformation(transformSpec),
           modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
         ) {
@@ -798,8 +799,7 @@ class MainActivity : ComponentActivity() {
                 setPicking(false)
                 activeDeckId?.let { requestNewCardsFromPhone(it, n) }
               },
-              colors =
-                ButtonDefaults.buttonColors(containerColor = purpleBg, contentColor = purpleFg),
+              colors = ButtonDefaults.filledVariantButtonColors(),
               modifier = Modifier.width(56.dp),
             ) {
               Text("$n")
@@ -852,7 +852,9 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * A labelled row of mutually-exclusive choice chips; the active one is filled, the rest tonal.
+   * A labelled group of mutually-exclusive [TextToggleButton]s; the selected one is checked and
+   * morphs. Groups of more than three options wrap onto extra rows so the labels stay legible at
+   * watch width.
    */
   @Composable
   internal fun <T> settingChoiceRow(
@@ -869,18 +871,19 @@ class MainActivity : ComponentActivity() {
         color = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier.padding(bottom = 2.dp),
       )
-      Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        options.forEach { (value, text) ->
-          CompactButton(
-            onClick = { onSelect(value) },
-            colors =
-              if (value == selected) {
-                ButtonDefaults.buttonColors()
-              } else {
-                ButtonDefaults.filledTonalButtonColors()
-              },
-          ) {
-            Text(text, maxLines = 1, style = MaterialTheme.typography.labelSmall)
+      options.chunked(3).forEach { row ->
+        ButtonGroup(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+          row.forEach { (value, text) ->
+            val interactionSource = remember { MutableInteractionSource() }
+            TextToggleButton(
+              checked = value == selected,
+              onCheckedChange = { onSelect(value) },
+              shapes = TextToggleButtonDefaults.variantAnimatedShapes(),
+              interactionSource = interactionSource,
+              modifier = Modifier.weight(1f).animateWidth(interactionSource),
+            ) {
+              Text(text, maxLines = 1, style = MaterialTheme.typography.labelSmall)
+            }
           }
         }
       }

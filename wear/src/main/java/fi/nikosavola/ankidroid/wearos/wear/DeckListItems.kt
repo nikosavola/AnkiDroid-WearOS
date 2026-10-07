@@ -86,7 +86,11 @@ fun DeckCard(
           },
         style = MaterialTheme.typography.labelSmall,
         color =
-          if (dueNow != null) Color(0xFF66BB6A) else MaterialTheme.colorScheme.onSurfaceVariant,
+          if (dueNow != null) {
+            MaterialTheme.colorScheme.tertiary
+          } else {
+            MaterialTheme.colorScheme.onSurfaceVariant
+          },
       )
     }
   }

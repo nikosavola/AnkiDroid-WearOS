@@ -50,7 +50,17 @@ fun FinishedScreenContent(
   newCardControls: (TransformingLazyColumnScope.() -> Unit)? = null,
 ) {
   val listState = rememberTransformingLazyColumnState()
-  ScreenScaffold(scrollState = listState) { contentPadding ->
+  ScreenScaffold(
+    scrollState = listState,
+    edgeButton = {
+      EdgeButton(onClick = onSyncAndBack, buttonSize = EdgeButtonSize.Medium) {
+        Icon(
+          painter = painterResource(id = R.drawable.ic_check),
+          contentDescription = "Sync and back to decks",
+        )
+      }
+    },
+  ) { contentPadding ->
     TransformingLazyColumn(
       state = listState,
       contentPadding = contentPadding,
@@ -103,7 +113,7 @@ fun FinishedScreenContent(
                 Text(
                   text = "Today: $reviewedToday 🔥",
                   style = MaterialTheme.typography.labelSmall,
-                  color = Color(0xFFFFA726),
+                  color = MaterialTheme.colorScheme.secondary,
                 )
               }
             }
@@ -130,21 +140,12 @@ fun FinishedScreenContent(
                 learningDueInMinutes,
               ),
             style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFF66BB6A),
+            color = MaterialTheme.colorScheme.tertiary,
             modifier = Modifier.padding(vertical = 4.dp),
           )
         }
       }
       newCardControls?.invoke(this)
-      // Material 3 expressive edge button hugging the bottom bezel: sync answers and go back.
-      item {
-        EdgeButton(onClick = onSyncAndBack, buttonSize = EdgeButtonSize.Medium) {
-          Icon(
-            painter = painterResource(id = R.drawable.ic_check),
-            contentDescription = "Sync and back to decks",
-          )
-        }
-      }
     }
   }
 }

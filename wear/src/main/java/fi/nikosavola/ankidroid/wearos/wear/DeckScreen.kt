@@ -29,7 +29,14 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
   var pickingNewCount by remember { mutableStateOf(false) }
   val listState = rememberTransformingLazyColumnState()
   val transformSpec = rememberEdgeMorphSpec()
-  ScreenScaffold(scrollState = listState) { contentPadding ->
+  ScreenScaffold(
+    scrollState = listState,
+    edgeButton = {
+      EdgeButton(onClick = { clearSession() }, buttonSize = EdgeButtonSize.Medium) {
+        Text("Change Deck")
+      }
+    },
+  ) { contentPadding ->
     TransformingLazyColumn(
       state = listState,
       contentPadding = contentPadding,
@@ -85,7 +92,6 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
       item {
         Button(
           onClick = { isReviewing = true },
-          colors = ButtonDefaults.buttonColors(),
           transformation = SurfaceTransformation(transformSpec),
           modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
         ) {
@@ -124,7 +130,6 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
             Text("Sync $outstandingAnswersCount Reviews")
           }
         }
-        // Nudge when reviews have been waiting to reach the phone for a day or more.
         if (outstandingOldestSecs >= 86_400) {
           item {
             Text(
@@ -135,12 +140,6 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
               modifier = Modifier.padding(horizontal = 12.dp),
             )
           }
-        }
-      }
-      item { Spacer(modifier = Modifier.height(8.dp)) }
-      item {
-        EdgeButton(onClick = { clearSession() }, buttonSize = EdgeButtonSize.Medium) {
-          Text("Change Deck")
         }
       }
     }

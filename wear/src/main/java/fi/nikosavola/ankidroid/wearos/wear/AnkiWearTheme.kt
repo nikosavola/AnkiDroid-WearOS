@@ -3,20 +3,20 @@ package fi.nikosavola.ankidroid.wearos.wear
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.wear.compose.material3.ColorScheme
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.MotionScheme
+import androidx.wear.compose.material3.dynamicColorScheme
 
 /**
  * Wraps content in a Wear Material 3 theme honoring the user's [WatchSettings.ThemeMode].
  *
- * Wear devices are dark by default (OLED, always-on power), so DARK uses the library's default
- * scheme untouched. LIGHT swaps in a high-contrast light scheme. SYSTEM defers to
- * [isSystemInDarkTheme]; note many round Wear OS devices always report dark, so SYSTEM may look
- * identical to DARK on them — that's expected, not a bug.
- *
- * NOTE FOR VERIFICATION: the light [ColorScheme] below is constructed with named color roles that
- * exist in wear.compose.material3 1.6.2. If a future catalog bump renames a role, only this file
- * needs updating.
+ * Wear devices are dark by default (OLED, always-on power), so DARK prefers the watch face's
+ * dynamic colors (Wear OS 6+) and falls back to the library's default scheme elsewhere. LIGHT swaps
+ * in a high-contrast light scheme. SYSTEM defers to [isSystemInDarkTheme]; note many round Wear OS
+ * devices always report dark, so SYSTEM may look identical to DARK on them; that's expected, not a
+ * bug. Motion is always the expressive scheme.
  */
 @Composable
 fun AnkiWearTheme(mode: WatchSettings.ThemeMode, content: @Composable () -> Unit) {
@@ -26,7 +26,12 @@ fun AnkiWearTheme(mode: WatchSettings.ThemeMode, content: @Composable () -> Unit
       WatchSettings.ThemeMode.LIGHT -> false
       WatchSettings.ThemeMode.SYSTEM -> isSystemInDarkTheme()
     }
-  MaterialTheme(colorScheme = if (dark) ColorScheme() else LIGHT_SCHEME, content = content)
+  val context = LocalContext.current
+  MaterialTheme(
+    colorScheme = if (dark) dynamicColorScheme(context) ?: ColorScheme() else LIGHT_SCHEME,
+    motionScheme = MotionScheme.expressive(),
+    content = content,
+  )
 }
 
 // A minimal light scheme: light surfaces with dark on-content. Accent roles keep their defaults.
