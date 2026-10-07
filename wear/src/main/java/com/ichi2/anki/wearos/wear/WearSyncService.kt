@@ -187,9 +187,12 @@ class WearSyncService : WearableListenerService() {
       poolStoreBatch(batch)
       Log.i(TAG, "Stored deck ${batch.deckId} ('${batch.deckName}') into the pool.")
 
-      // Drop cached bitmaps for cards no longer in the pool (fresh ones for current cards are kept,
-      // and re-sends overwrite in place). Runs after storing so the new cards count as valid.
-      CardImageCache.pruneImages(this, poolCardIds().toSet())
+      // Drop cached bitmaps for cards no longer in the pool (fresh ones for current cards are kept).
+      // The phone no longer re-sends unchanged images, so pull back any still-pooled card's image
+      // we may have pruned earlier or lost. Runs after storing so the new cards count as valid.
+      val ids = poolCardIds().toSet()
+      CardImageCache.pruneImages(this, ids)
+      CardImageCache.restoreMissingImages(this, ids)
 
       // 4. Broadcast to the MainActivity UI that new cards are ready, tagged with the deck id
       val intent =
@@ -246,7 +249,9 @@ class WearSyncService : WearableListenerService() {
   /** Drop pooled decks (and their card images) no longer in [validIds]. */
   private fun pruneOrphanDecks(validIds: Set<Long>) {
     poolForgetDecks(validIds.toList())
-    CardImageCache.pruneImages(this, poolCardIds().toSet())
+    val ids = poolCardIds().toSet()
+    CardImageCache.pruneImages(this, ids)
+    runBlocking { CardImageCache.restoreMissingImages(this@WearSyncService, ids) }
   }
 
   private fun broadcastDecksUpdated() {

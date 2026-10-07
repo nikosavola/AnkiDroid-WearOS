@@ -13,9 +13,12 @@ import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import com.google.android.gms.wearable.Asset
+import com.google.android.gms.wearable.DataClient
+import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import java.io.ByteArrayOutputStream
+import java.security.MessageDigest
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -25,7 +28,13 @@ class CardBitmapRenderer(private val context: Context) {
   companion object {
     private const val TAG = "CardBitmapRenderer"
     private const val AUTHORITY = "com.ichi2.anki.flashcards"
+    private const val KEY_CONTENT = "content_key"
+    private const val IMAGE_PATH_PREFIX = "/card_image/"
     private var slowDrawEnabled = false
+
+    // Bump when the render output changes (WebView wrapper, capture size, sanitizing) so existing
+    // Data Items with an old content key are treated as stale and re-rendered.
+    private const val RENDER_VERSION = 1
 
     // Render square at a resolution that covers the largest current Wear round displays (~450-480px)
     // so the watch downscales (ContentScale.Fit) to a crisp image on any device. True per-device
@@ -254,50 +263,87 @@ class CardBitmapRenderer(private val context: Context) {
       lower.contains("text-decoration")
   }
 
+  /** Stable hex SHA-256 of a side's HTML plus the renderer version. */
+  private fun contentKey(html: String): String {
+    val digest = MessageDigest.getInstance("SHA-256")
+    val bytes = digest.digest("$RENDER_VERSION:$html".toByteArray(Charsets.UTF_8))
+    return bytes.joinToString("") { "%02x".format(it) }
+  }
+
+  /** Content keys of every card image already in the Data Layer, by path, in one query. */
+  private suspend fun existingContentKeys(dataClient: DataClient): Map<String, String> {
+    val uri = Uri.Builder().scheme("wear").path(IMAGE_PATH_PREFIX).build()
+    val buffer = dataClient.getDataItems(uri, DataClient.FILTER_PREFIX).await()
+    try {
+      return buffer
+        .mapNotNull { item ->
+          val key = DataMapItem.fromDataItem(item).dataMap.getString(KEY_CONTENT)
+          item.uri.path?.let { path -> key?.let { path to it } }
+        }
+        .toMap()
+    } finally {
+      buffer.release()
+    }
+  }
+
+  /**
+   * Render [html] for one card side and put it, unless [existing] shows the Data Layer already
+   * holds an item with the same content key. Returns true when a render and put happened.
+   */
+  private suspend fun syncSide(
+    dataClient: DataClient,
+    existing: Map<String, String>,
+    cardId: Long,
+    side: String,
+    html: String,
+  ): Boolean {
+    val key = contentKey(html)
+    val imagePath = "$IMAGE_PATH_PREFIX$cardId/$side"
+    if (existing[imagePath] == key) {
+      Log.d(TAG, "Skipping unchanged $side image for card $cardId")
+      return false
+    }
+
+    Log.d(TAG, "Card $cardId ($side) needs rich rendering. Rendering offscreen...")
+    val bytes = render(html)
+    if (bytes == null) {
+      return false
+    }
+    val asset = Asset.createFromBytes(bytes)
+    val putImageReq =
+      PutDataMapRequest.create(imagePath)
+        .apply {
+          dataMap.putAsset("image_asset", asset)
+          dataMap.putString(KEY_CONTENT, key)
+          setUrgent()
+        }
+        .asPutDataRequest()
+    dataClient.putDataItem(putImageReq).await()
+    Log.d(TAG, "Sent $side image asset for card $cardId on path $imagePath")
+    return true
+  }
+
   suspend fun syncBitmapsForBatch(batch: uniffi.wearos_core.WearosDueBatch) {
     val dataClient = Wearable.getDataClient(context)
+    val existing = existingContentKeys(dataClient)
+    var rendered = 0
+    var skipped = 0
     for (card in batch.cards) {
       if (needsRichRendering(card.front)) {
-        Log.d(TAG, "Card ${card.id} (front) needs rich rendering. Rendering offscreen...")
-        val frontBytes = render(card.front)
-        if (frontBytes != null) {
-          val asset = Asset.createFromBytes(frontBytes)
-          val imagePath = "/card_image/${card.id}/front"
-          val putImageReq =
-            PutDataMapRequest.create(imagePath)
-              .apply {
-                dataMap.putAsset("image_asset", asset)
-                // Vary the item so re-rendering the same card still propagates; without this the Data
-                // Layer dedups a byte-identical re-send and the watch never receives it (same reason
-                // the due-batch path stamps synced_at).
-                dataMap.putLong("synced_at", System.currentTimeMillis())
-                setUrgent()
-              }
-              .asPutDataRequest()
-          dataClient.putDataItem(putImageReq).await()
-          Log.d(TAG, "Sent front image asset for card ${card.id} on path $imagePath")
+        if (syncSide(dataClient, existing, card.id, "front", card.front)) {
+          rendered++
+        } else {
+          skipped++
         }
       }
-
       if (needsRichRendering(card.back)) {
-        Log.d(TAG, "Card ${card.id} (back) needs rich rendering. Rendering offscreen...")
-        val backBytes = render(card.back)
-        if (backBytes != null) {
-          val asset = Asset.createFromBytes(backBytes)
-          val imagePath = "/card_image/${card.id}/back"
-          val putImageReq =
-            PutDataMapRequest.create(imagePath)
-              .apply {
-                dataMap.putAsset("image_asset", asset)
-                // See the front path: stamp the item so an identical re-render still reaches the watch.
-                dataMap.putLong("synced_at", System.currentTimeMillis())
-                setUrgent()
-              }
-              .asPutDataRequest()
-          dataClient.putDataItem(putImageReq).await()
-          Log.d(TAG, "Sent back image asset for card ${card.id} on path $imagePath")
+        if (syncSide(dataClient, existing, card.id, "back", card.back)) {
+          rendered++
+        } else {
+          skipped++
         }
       }
     }
+    Log.i(TAG, "Bitmap sync done: $rendered rendered, $skipped unchanged")
   }
 }
