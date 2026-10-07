@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.padding
@@ -46,7 +45,7 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
     ) {
       item {
         Text(
-          text = "📚 Deck Stats",
+          text = "Deck stats",
           style = MaterialTheme.typography.labelMedium,
           color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.padding(bottom = 2.dp),
@@ -78,13 +77,17 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
               )
               if (reviewedToday > 0) {
                 Spacer(modifier = Modifier.width(32.dp))
-                StatNumeral(label = "Today", value = "$reviewedToday", color = Color(0xFFFFA726))
+                StatNumeral(
+                  label = "Today",
+                  value = "$reviewedToday",
+                  color = MaterialTheme.colorScheme.tertiary,
+                )
               }
             }
             Text(
               text = "Progress ${session.getProgressString()}",
               style = MaterialTheme.typography.labelSmall,
-              color = Color.LightGray,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
           }
         }
@@ -119,11 +122,7 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
         item {
           Button(
             onClick = { triggerAnswersSync() },
-            colors =
-              ButtonDefaults.buttonColors(
-                containerColor = Color(0xFF66BB6A).copy(alpha = 0.2f),
-                contentColor = Color(0xFF66BB6A),
-              ),
+            colors = ButtonDefaults.filledTonalButtonColors(),
             transformation = SurfaceTransformation(transformSpec),
             modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
           ) {
@@ -135,7 +134,7 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
             Text(
               text = "⚠ Oldest unsynced ${humanAge(outstandingOldestSecs)} ago",
               style = MaterialTheme.typography.labelSmall,
-              color = Color(0xFFFFA726),
+              color = MaterialTheme.colorScheme.error,
               textAlign = TextAlign.Center,
               modifier = Modifier.padding(horizontal = 12.dp),
             )

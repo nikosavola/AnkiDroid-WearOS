@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.text.style.TextAlign
@@ -124,7 +123,7 @@ fun FinishedScreenContent(
         Text(
           text = "Outstanding reviews: $outstandingCount",
           style = MaterialTheme.typography.labelSmall,
-          color = Color.LightGray,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
           modifier = Modifier.padding(vertical = 8.dp),
         )
       }
