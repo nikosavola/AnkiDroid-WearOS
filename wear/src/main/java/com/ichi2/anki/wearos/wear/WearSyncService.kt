@@ -31,6 +31,7 @@ class WearSyncService : WearableListenerService() {
     private const val PATH_CLEAR_ANSWERS = "/clear_answers"
     private const val PATH_UNPLACED_ANSWERS = "/unplaced_answers"
     private const val PATH_DECKS = "/decks"
+    private const val PATH_CARD_IMAGE = "/card_image/"
     // Legacy "id:name" text key. A phone built from this commit onward only sends
     // KEY_DECKS_PROTO_BYTES (dual-writing both roughly doubles the DataMap size, and this codebase
     // has already hit DATA_ITEM_TOO_LARGE once); this key is read only in case an older-built phone
@@ -86,26 +87,43 @@ class WearSyncService : WearableListenerService() {
             val bytes = dataMap.getByteArray(KEY_DECKS_BYTES)
             if (bytes != null) saveDecksCacheLegacyText(bytes)
           }
-        } else if (path != null && path.startsWith("/card_image/")) {
-          val parts = path.split("/")
-          if (parts.size >= 4) {
-            val cardIdStr = parts[2]
-            val side = parts[3]
-            val cardId = cardIdStr.toLongOrNull()
-            if (cardId != null) {
-              val dataMapItem = DataMapItem.fromDataItem(event.dataItem)
-              val asset = dataMapItem.dataMap.getAsset("image_asset")
-              if (asset != null) {
-                runBlocking {
-                  Log.d(TAG, "Received image asset for card $cardId ($side) on path: $path")
-                  CardImageCache.saveImage(this@WearSyncService, cardId, side, asset)
-                }
+        } else if (path != null && path.startsWith(PATH_CARD_IMAGE)) {
+          val target = cardImageTarget(path)
+          if (target != null) {
+            val (cardId, side) = target
+            val dataMap = DataMapItem.fromDataItem(event.dataItem).dataMap
+            val asset = dataMap.getAsset("image_asset")
+            if (asset != null) {
+              runBlocking {
+                Log.d(TAG, "Received image asset for card $cardId ($side) on path: $path")
+                CardImageCache.saveImage(this@WearSyncService, cardId, side, asset)
               }
             }
           }
         }
+      } else if (event.type == DataEvent.TYPE_DELETED) {
+        // The phone withdraws a side's image once it stops needing rich rendering; drop the cached
+        // PNG so the card falls back to the native text path instead of a stale bitmap.
+        val path = event.dataItem.uri.path
+        val target = cardImageTarget(path)
+        if (target != null) {
+          val (cardId, side) = target
+          Log.d(TAG, "Card image withdrawn by the phone: $path")
+          CardImageCache.deleteImage(this, cardId, side)
+        }
       }
     }
+  }
+
+  /** Parses a "/card_image/<cardId>/<side>" path; null for any other path or a malformed one. */
+  private fun cardImageTarget(path: String?): Pair<Long, String>? {
+    if (path == null || !path.startsWith(PATH_CARD_IMAGE)) {
+      return null
+    }
+    val parts = path.split("/")
+    val cardId = parts.getOrNull(2)?.toLongOrNull() ?: return null
+    val side = parts.getOrNull(3) ?: return null
+    return cardId to side
   }
 
   override fun onMessageReceived(messageEvent: MessageEvent) {
