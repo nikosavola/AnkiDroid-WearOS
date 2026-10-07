@@ -1452,6 +1452,37 @@ mod tests {
         .to_string()
     }
 
+    /// The FSRS-6 weights and 0.85 retention from the collection that exposed the missing floors.
+    fn fsrs_floors_deck_options() -> String {
+        serde_json::json!({
+            "new": { "delays": [1.0, 10.0], "ints": [1, 4] },
+            "rev": { "ease4": 1.3, "ivlFct": 1.0, "maxIvl": 36500, "hardFactor": 1.2 },
+            "lapse": { "delays": [10.0], "mult": 0.0, "minInt": 1 },
+            "fsrs_params_6": vec![0.055_251_993, 1.441_699, 12.829_912, 20.253_813, 6.677_253_7,
+                                  0.561_969_04, 3.171_826_1, 0.027_641_475, 1.688_151_8,
+                                  0.247_312_81, 0.629_756_15, 1.505_075_5, 0.036_390_96,
+                                  0.288_118_63, 1.706_024_4, 0.372_407_64, 1.816_298_8,
+                                  0.771_333_7, 0.018_401_38, 0.045_588_028, 0.212_830_99],
+            "desired_retention": 0.85
+        })
+        .to_string()
+    }
+
+    /// A review card with a tiny FSRS stability; AnkiDroid floors its buttons to 1d / 2d / 3d.
+    fn tiny_stability_review_state() -> CardScheduleState {
+        CardScheduleState {
+            queue: 2,
+            card_type: 2,
+            interval_days: 1.0,
+            learning_step: -1,
+            ease_factor: 2.5,
+            stability: 0.025,
+            difficulty: 9.4,
+            elapsed_days: 8.0,
+            last_review_secs: 0,
+        }
+    }
+
     /// Preview intervals are floats; pedantic clippy forbids direct float equality.
     fn assert_secs(actual: f64, expected: f64, msg: &str) {
         assert!((actual - expected).abs() < 0.5, "{msg}: got {actual}, want {expected}");
@@ -1614,6 +1645,79 @@ mod tests {
         assert_eq!(days(1), 23, "Hard");
         assert_eq!(days(2), 32, "Good");
         assert_eq!(days(3), 51, "Easy");
+    }
+
+    #[test]
+    fn test_fsrs_review_intervals_apply_ankis_floors() {
+        // rslib's passing_fsrs_review_intervals floors each button so a longer-than-current FSRS
+        // interval cannot round back below the card's own interval; on a tiny-stability card that
+        // lifts every passing button to strict days rather than the flat 1d we used to show.
+        let config = parse_deck_schedule_config(fsrs_floors_deck_options()).unwrap();
+        let secs = preview_interval_secs(&config, &tiny_stability_review_state(), 0);
+
+        assert_secs(secs[1], 86_400.0, "Hard is floored to one day");
+        assert_secs(secs[2], 172_800.0, "Good is floored one day above Hard");
+        assert_secs(secs[3], 259_200.0, "Easy is floored one day above Good");
+        assert!(secs[1] < secs[2] && secs[2] < secs[3], "each passing button is strictly above");
+    }
+
+    #[test]
+    fn test_advance_state_uses_the_floored_fsrs_interval() {
+        // The grading path must land on the same interval as the preview, not the raw FSRS value.
+        let config = parse_deck_schedule_config(fsrs_floors_deck_options()).unwrap();
+        let next = advance_state(&config, &tiny_stability_review_state(), 3, 0);
+        assert!(
+            (next.interval_days - 2.0).abs() < f64::EPSILON,
+            "Good lands on the preview's 2d, got {}",
+            next.interval_days
+        );
+    }
+
+    #[test]
+    fn test_fsrs_easy_graduation_is_floored_above_good() {
+        // rslib's answer_easy: Easy graduation is at least the rounded Good interval plus a day.
+        let config = parse_deck_schedule_config(fsrs_floors_deck_options()).unwrap();
+        let learning = CardScheduleState {
+            queue: 1,
+            card_type: 1,
+            learning_step: 0,
+            stability: 0.0203,
+            difficulty: 9.2,
+            elapsed_days: 1.0,
+            ..Default::default()
+        };
+        let secs = preview_interval_secs(&config, &learning, 0);
+
+        // Good graduates only from the last step, so read its graduation value from there.
+        let last_step = CardScheduleState { learning_step: 1, ..learning };
+        let good_graduation = preview_interval_secs(&config, &last_step, 0)[2];
+        assert!(
+            secs[3] >= good_graduation + 86_400.0,
+            "Easy graduation ({}) must be at least Good graduation ({good_graduation}) plus a day",
+            secs[3]
+        );
+        assert_secs(secs[3], 2.0 * 86_400.0, "Good rounds to 1d, so Easy is 2d");
+    }
+
+    #[test]
+    fn test_fsrs_floors_do_not_raise_a_shrinking_interval() {
+        // greater_than_last returns 0 when the new interval is not larger than the current one, so
+        // the floors must not inflate a card whose FSRS interval has shrunk.
+        let config = parse_deck_schedule_config(fsrs_floors_deck_options()).unwrap();
+        let state = CardScheduleState {
+            queue: 2,
+            card_type: 2,
+            interval_days: 30.0,
+            learning_step: -1,
+            ease_factor: 2.5,
+            stability: 2.0,
+            difficulty: 5.0,
+            elapsed_days: 1.0,
+            last_review_secs: 0,
+        };
+        let secs = preview_interval_secs(&config, &state, 0);
+        let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
+        assert!(days(1) < 30 && days(2) < 30 && days(3) < 30, "shrinking intervals stay shrunk");
     }
 
     #[test]
