@@ -8,8 +8,8 @@
 //! (`new.delays`, `lapse.delays`, `new.ints`, `rev.*`, and the FSRS weights + desired retention).
 //!
 //! Division of labour with [`crate::session`]: learning steps are a plain ladder over the deck's
-//! configured delays, computed here; day-or-longer intervals come from FSRS-6 (the in-crate port in
-//! [`crate::fsrs6`]) when the deck has weights, and from the SM-2 factors otherwise. AnkiDroid
+//! configured delays, computed here; day-or-longer intervals come from the `fsrs` crate (the same
+//! scheduler rslib uses) when the deck has weights, and from the SM-2 factors otherwise. AnkiDroid
 //! still owns the real schedule: these previews only feed the watch UI and the session's requeue
 //! decision, and every grade is reconciled by AnkiDroid on write-back.
 //!
@@ -24,8 +24,8 @@
 //! modelled. Numbers are validated against AnkiDroid's own labels by
 //! `previews_match_shipped_labels` where a card has not been graded yet.
 
-use crate::fsrs6;
 use crate::models::CoreError;
+use fsrs::{FSRS, MemoryState};
 
 /// Anki's SM-2 constants (rslib `scheduler/states/review.rs`).
 const INITIAL_EASE_FACTOR: f64 = 2.5;
@@ -63,9 +63,10 @@ pub struct DeckScheduleConfig {
     pub lapse_multiplier: f64,
     /// Minimum interval in days after a lapse (`lapse.minInt`).
     pub lapse_min_interval_days: i32,
-    /// FSRS weights: 21 for FSRS-6, 19 or 17 for older presets (both filled to 21 the way fsrs-rs
-    /// does), from `fsrs_params_6`, falling back to `fsrs_params_5`/`fsrsWeights`. A list of any
-    /// other length means FSRS is off for this deck and SM-2 factors apply instead.
+    /// FSRS weights: 21 for FSRS-6, 19 or 17 for older presets (the `fsrs` crate fills shorter
+    /// lists to 21 the way rslib does), from `fsrs_params_6`, falling back to
+    /// `fsrs_params_5`/`fsrsWeights`. A list of any other length means FSRS is off for this deck
+    /// and SM-2 factors apply instead.
     pub fsrs_weights: Vec<f64>,
     /// Desired retention as a fraction (0.9). 0.0 means unset; Anki's default applies.
     pub desired_retention: f64,
@@ -400,7 +401,7 @@ fn fsrs_scheduled_days(
     fsrs_outcome(config, state, ease).map(|o| o.days).filter(|days| *days >= 1.0)
 }
 
-/// Run the in-crate FSRS-6 scheduler for one rating and report what it does to the card.
+/// Run the `fsrs` crate's scheduler for one rating and report what it does to the card.
 fn fsrs_outcome(
     config: &DeckScheduleConfig,
     state: &CardScheduleState,
@@ -411,21 +412,31 @@ fn fsrs_outcome(
 
     // A card that has never been answered carries no memory state (Anki stores it on first answer),
     // so it gets FSRS's initial values for the rating instead of a state update.
-    let (stability, difficulty) = if state.stability > 0.0 {
-        fsrs6::next_state(
-            &params.w,
-            state.stability,
-            state.difficulty,
-            elapsed_days(state) as f64,
-            rating,
-        )
+    let memory_state = if state.stability > 0.0 {
+        Some(MemoryState {
+            stability: state.stability as f32,
+            difficulty: state.difficulty as f32,
+        })
     } else {
-        fsrs6::initial_state(&params.w, rating)
+        None
+    };
+    let days_elapsed = u32::try_from(elapsed_days(state)).unwrap_or(0);
+    let next = params.scheduler.next_states(memory_state, params.retention, days_elapsed).ok()?;
+    let item = match rating {
+        1 => next.again,
+        2 => next.hard,
+        3 => next.good,
+        _ => next.easy,
     };
 
-    let raw_days = fsrs6::next_interval(&params.w, stability, params.retention);
+    let raw_days = f64::from(item.interval);
     let days = raw_days.round().max(1.0);
-    Some(FsrsOutcome { days, raw_days, stability, difficulty })
+    Some(FsrsOutcome {
+        days,
+        raw_days,
+        stability: f64::from(item.memory.stability),
+        difficulty: f64::from(item.memory.difficulty),
+    })
 }
 
 /// Anki's floored FSRS passing intervals (Hard, Good, Easy) for a review card, in whole days.
@@ -474,17 +485,25 @@ fn fsrs_graduation_days(
     }
 }
 
-/// FSRS parameters from the deck's weights and desired retention, clamped to a usable range.
+/// FSRS parameters from the deck's weights and desired retention, ready for one preview.
+///
+/// The crate validates and fills the weight list itself (17- and 19-weight presets are upgraded to
+/// 21); an empty or unsupported list leaves FSRS off. Desired retention defaults to 0.9 and is
+/// clamped to the range the crate accepts.
 fn fsrs_parameters(config: &DeckScheduleConfig) -> Option<FsrsParameters> {
-    let w = fsrs6::fill_parameters(&config.fsrs_weights)?;
+    if !config.fsrs_enabled() {
+        return None;
+    }
+    let weights: Vec<f32> = config.fsrs_weights.iter().map(|w| *w as f32).collect();
+    let scheduler = FSRS::new(&weights).ok()?;
     let retention = if config.desired_retention > 0.0 { config.desired_retention } else { 0.9 };
-    Some(FsrsParameters { w, retention: retention.clamp(0.7, 0.99) })
+    Some(FsrsParameters { scheduler, retention: retention.clamp(0.7, 0.99) as f32 })
 }
 
-/// Weights filled to FSRS-6's 21 and the retention to target, ready for [`crate::fsrs6`].
+/// The deck's FSRS scheduler and the retention to target.
 struct FsrsParameters {
-    w: Vec<f64>,
-    retention: f64,
+    scheduler: FSRS,
+    retention: f32,
 }
 
 /// Where a card graduates to when it leaves the step ladder.

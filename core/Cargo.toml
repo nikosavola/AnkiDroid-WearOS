@@ -30,6 +30,8 @@ zstd = "0.13"
 # Protobuf encoding via derive macros only — no protoc / build.rs needed (messages are annotated
 # Rust structs). The due-batch wire format (see proto.rs).
 prost = "0.13"
+# The same FSRS crate rslib uses, so preview intervals match AnkiDroid exactly; burn-free since 6.x.
+fsrs = { version = "6.6.2", default-features = false }
 
 # Release profile for the shipped Android .so. cargo-ndk builds --release, so this is what ships.
 # LTO + a single codegen unit let the optimizer inline across crates and drop dead code (zstd,
