@@ -13,7 +13,6 @@ import androidx.activity.compose.setContent
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,17 +26,21 @@ import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.ButtonGroup
+import androidx.compose.material3.ButtonGroupDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3ExpressiveApi
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.IconButtonDefaults
+import androidx.compose.material3.LinearWavyProgressIndicator
+import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Slider
@@ -45,6 +48,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberSliderState
+import androidx.compose.material3.toShape
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
@@ -219,13 +224,21 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
           value = vm.deckFilter,
           onValueChange = { vm.deckFilter = it.trim() },
           label = { Text("Search decks") },
+          leadingIcon = {
+            Icon(painter = painterResource(id = R.drawable.ic_search), contentDescription = null)
+          },
           singleLine = true,
+          shape = MaterialTheme.shapes.extraLarge,
           modifier = Modifier.fillMaxWidth(),
         )
 
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          OutlinedButton(onClick = { vm.setAllDecksSelected(true) }) { Text("Select all") }
-          OutlinedButton(onClick = { vm.setAllDecksSelected(false) }) { Text("Select none") }
+        // Connected group: the two bulk-selection actions read as one control.
+        ButtonGroup(
+          overflowIndicator = { ButtonGroupDefaults.OverflowIndicator(it) },
+          horizontalArrangement = Arrangement.spacedBy(ButtonGroupDefaults.ConnectedSpaceBetween),
+        ) {
+          clickableItem(onClick = { vm.setAllDecksSelected(true) }, label = "Select all")
+          clickableItem(onClick = { vm.setAllDecksSelected(false) }, label = "Select none")
         }
 
         DeckTreeContent(modifier = Modifier.weight(1f))
@@ -243,9 +256,9 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
         }
         if (vm.progressVisible) {
           if (vm.progressIndeterminate) {
-            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+            LinearWavyProgressIndicator(modifier = Modifier.fillMaxWidth())
           } else {
-            LinearProgressIndicator(
+            LinearWavyProgressIndicator(
               progress = { vm.progressFraction },
               modifier = Modifier.fillMaxWidth(),
             )
@@ -254,7 +267,9 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
 
         Button(
           onClick = { triggerSyncToWatch() },
+          shapes = ButtonDefaults.shapes(),
           enabled = vm.syncEnabled,
+          contentPadding = ButtonDefaults.contentPaddingFor(ButtonDefaults.MediumContainerHeight),
           modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
         ) {
           Text(
@@ -262,7 +277,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
               "Sync $cardsDue cards to watch"
             } else {
               "Sync due cards to watch"
-            }
+            },
+            style = ButtonDefaults.textStyleFor(ButtonDefaults.MediumContainerHeight),
           )
         }
       }
@@ -277,6 +293,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   }
 
   /** Branded header: dynamic-colored app mark on a primary chip, the wordmark, and overflow menu. */
+  @OptIn(ExperimentalMaterial3ExpressiveApi::class)
   @Composable
   private fun BrandHeader() {
     Row(
@@ -284,7 +301,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
     ) {
       Surface(
-        shape = CircleShape,
+        shape = MaterialShapes.Cookie9Sided.toShape(),
         color = MaterialTheme.colorScheme.primary,
         modifier = Modifier.size(44.dp),
       ) {
@@ -321,15 +338,14 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   /** Connection status as a rounded chip (colored dot + message); tapping opens the info dialog. */
   @Composable
   private fun StatusChip() {
-    val dark = isSystemInDarkTheme()
-    // "Connected" gets a semantic green (M3's dynamic palette has no success role); error + neutral
-    // reuse theme roles so they still track the wallpaper palette.
+    // Roles over fixed colors so every tone tracks the dynamic palette. Tertiary stands in for the
+    // success state, which M3 has no role for.
     val bg: Color
     val fg: Color
     when (vm.statusTone) {
       StatusTone.CONNECTED -> {
-        bg = if (dark) Color(0xFF14361F) else Color(0xFFDDF3E4)
-        fg = if (dark) Color(0xFF7CE0A3) else Color(0xFF12683B)
+        bg = MaterialTheme.colorScheme.tertiaryContainer
+        fg = MaterialTheme.colorScheme.onTertiaryContainer
       }
       StatusTone.ERROR -> {
         bg = MaterialTheme.colorScheme.errorContainer
@@ -341,7 +357,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       }
     }
     Surface(
-      shape = RoundedCornerShape(percent = 50),
+      shape = CircleShape,
       color = bg,
       modifier = Modifier.fillMaxWidth().clickable { activeDialog = PhoneDialog.CONNECTION_INFO },
     ) {
@@ -376,7 +392,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     val onPrimary = MaterialTheme.colorScheme.onPrimary
     Card(
       colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primary),
-      shape = RoundedCornerShape(24.dp),
+      shape = MaterialTheme.shapes.extraLargeIncreased,
       modifier = Modifier.fillMaxWidth(),
     ) {
       Column(modifier = Modifier.padding(20.dp)) {
@@ -406,7 +422,7 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
   private fun OverflowMenu() {
     var expanded by remember { mutableStateOf(false) }
     Box {
-      IconButton(onClick = { expanded = true }) {
+      IconButton(onClick = { expanded = true }, shapes = IconButtonDefaults.shapes()) {
         Icon(
           painter = painterResource(id = R.drawable.ic_more_vert),
           contentDescription = "More options",
@@ -676,11 +692,19 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
             color = if (auto) MaterialTheme.colorScheme.onSurface else dim,
             modifier = Modifier.padding(top = 4.dp),
           )
+          val intervalState =
+            rememberSliderState(
+              value = interval.toFloat(),
+              steps = (AutoSync.MAX_INTERVAL_HOURS - AutoSync.MIN_INTERVAL_HOURS - 1).coerceAtLeast(0),
+              trackRange =
+                AutoSync.MIN_INTERVAL_HOURS.toFloat()..AutoSync.MAX_INTERVAL_HOURS.toFloat(),
+            )
           Slider(
-            value = interval.toFloat(),
-            onValueChange = { interval = it.roundToInt() },
-            valueRange = AutoSync.MIN_INTERVAL_HOURS.toFloat()..AutoSync.MAX_INTERVAL_HOURS.toFloat(),
-            steps = (AutoSync.MAX_INTERVAL_HOURS - AutoSync.MIN_INTERVAL_HOURS - 1).coerceAtLeast(0),
+            state = intervalState,
+            onValueChange = {
+              intervalState.value = it
+              interval = it.roundToInt()
+            },
             enabled = auto,
           )
           Text(
@@ -688,11 +712,18 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(top = 8.dp),
           )
+          val capState =
+            rememberSliderState(
+              value = cap.toFloat(),
+              steps = ((PREPUSH_MAX - PREPUSH_MIN) / 5 - 1).coerceAtLeast(0),
+              trackRange = PREPUSH_MIN.toFloat()..PREPUSH_MAX.toFloat(),
+            )
           Slider(
-            value = cap.toFloat(),
-            onValueChange = { cap = (it / 5).roundToInt() * 5 },
-            valueRange = PREPUSH_MIN.toFloat()..PREPUSH_MAX.toFloat(),
-            steps = ((PREPUSH_MAX - PREPUSH_MIN) / 5 - 1).coerceAtLeast(0),
+            state = capState,
+            onValueChange = {
+              capState.value = it
+              cap = (it / 5).roundToInt() * 5
+            },
           )
         }
       },

@@ -1,9 +1,7 @@
 package com.ichi2.anki.wearos.phone
 
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.spring
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -24,6 +22,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -32,6 +31,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
@@ -91,15 +91,20 @@ private fun DeckNodeRow(
 
   if (node.children.isNotEmpty()) {
     val isExpanded = expanded[path] ?: false
-    // Springy chevron rotation — the Expressive motion the Views tree couldn't do.
     val chevron by
       animateFloatAsState(
         targetValue = if (isExpanded) 180f else 0f,
-        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy),
+        animationSpec = MaterialTheme.motionScheme.defaultSpatialSpec(),
         label = "chevron",
       )
     val deckIds = remember(node) { node.deckIds() }
     val allChecked = deckIds.isNotEmpty() && deckIds.all { checkedOf(it) }
+    val checkState =
+      when {
+        allChecked -> ToggleableState.On
+        deckIds.any { checkedOf(it) } -> ToggleableState.Indeterminate
+        else -> ToggleableState.Off
+      }
 
     Surface(
       color = MaterialTheme.colorScheme.surfaceVariant,
@@ -116,9 +121,17 @@ private fun DeckNodeRow(
           modifier = Modifier.size(24.dp).rotate(chevron),
         )
         Spacer(Modifier.width(4.dp))
-        Checkbox(checked = allChecked, onCheckedChange = { onFolderChecked(node, it) })
+        // A folder that is only partly selected shows the indeterminate dash; a tap still selects
+        // everything, or clears everything when it already is.
+        TriStateCheckbox(state = checkState, onClick = { onFolderChecked(node, !allChecked) })
+        Icon(
+          painter = painterResource(id = R.drawable.ic_folder),
+          contentDescription = null,
+          tint = MaterialTheme.colorScheme.onSurfaceVariant,
+          modifier = Modifier.padding(start = 4.dp).size(20.dp),
+        )
         Text(
-          text = "📁 ${node.name}",
+          text = node.name,
           style = MaterialTheme.typography.titleSmall,
           fontWeight = FontWeight.SemiBold,
           modifier = Modifier.padding(start = 4.dp),
@@ -129,8 +142,12 @@ private fun DeckNodeRow(
     }
     AnimatedVisibility(
       visible = isExpanded,
-      enter = expandVertically(spring(stiffness = Spring.StiffnessMediumLow)) + fadeIn(),
-      exit = shrinkVertically(spring(stiffness = Spring.StiffnessMediumLow)) + fadeOut(),
+      enter =
+        expandVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) +
+          fadeIn(MaterialTheme.motionScheme.defaultEffectsSpec()),
+      exit =
+        shrinkVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) +
+          fadeOut(MaterialTheme.motionScheme.defaultEffectsSpec()),
     ) {
       Column {
         for (child in node.children.values) {
