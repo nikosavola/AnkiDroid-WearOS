@@ -20,7 +20,6 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
@@ -55,6 +54,15 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import uniffi.wearos_core.*
+
+/** A card side's phone-rendered image, as far as it has loaded. */
+internal sealed interface SideImage {
+  data object Loading : SideImage
+
+  data object None : SideImage
+
+  data class Ready(val bitmap: androidx.compose.ui.graphics.ImageBitmap) : SideImage
+}
 
 /** A deck shown in the picker; [dueNow] is null when the deck has not been pooled on the watch yet. */
 data class DeckEntry(val id: Long, val name: String, val dueNow: Int?)
@@ -772,8 +780,9 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * Renders the pre-rendered card bitmap side if cached locally on the watch, falling back to
-   * standard HtmlText if not.
+   * Renders the phone-rendered bitmap for a card side if the watch has one, else the HTML. The
+   * bitmap is decoded off the main thread; until it is ready (only on a cache miss, prefetching
+   * usually covers it) the side draws nothing rather than flashing the HTML fallback.
    */
   @Composable
   fun CardSideContent(
@@ -783,30 +792,48 @@ class MainActivity : ComponentActivity() {
     modifier: Modifier = Modifier,
   ) {
     val context = androidx.compose.ui.platform.LocalContext.current
-    val hasCachedImage = remember(cardId, side) { CardImageCache.hasImage(context, cardId, side) }
-
-    if (hasCachedImage) {
-      val bitmap =
-        remember(cardId, side) {
-          try {
-            val file = CardImageCache.getImagePath(context, cardId, side)
-            android.graphics.BitmapFactory.decodeFile(file.absolutePath)?.asImageBitmap()
-          } catch (e: Exception) {
-            null
-          }
-        }
-      if (bitmap != null) {
+    val widthPx = decodeWidthPx()
+    // Keyed state rather than produceState, which would keep showing the previous card's image
+    // until the new decode lands.
+    var image by
+      remember(cardId, side) {
+        mutableStateOf(CardBitmaps.cached(cardId, side)?.let { SideImage.Ready(it) } ?: SideImage.Loading)
+      }
+    if (image == SideImage.Loading) {
+      LaunchedEffect(cardId, side) {
+        val bitmap = withContext(Dispatchers.IO) { CardBitmaps.load(context, cardId, side, widthPx) }
+        image = bitmap?.let { SideImage.Ready(it) } ?: SideImage.None
+      }
+    }
+    when (val current = image) {
+      is SideImage.Ready ->
         androidx.compose.foundation.Image(
-          bitmap = bitmap,
+          bitmap = current.bitmap,
           contentDescription = "Card side $side",
           modifier = modifier.fillMaxWidth(),
           contentScale = androidx.compose.ui.layout.ContentScale.Fit,
         )
-      } else {
+      SideImage.None ->
         HtmlText(html = fallbackHtml, fontScale = fontScale, cardFont = cardFont, modifier = modifier)
+      SideImage.Loading -> Unit
+    }
+  }
+
+  /** Width to decode card images at; the window size can still read 0 before the first layout. */
+  @Composable
+  private fun decodeWidthPx(): Int =
+    androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.width.takeIf { it > 0 }
+      ?: resources.displayMetrics.widthPixels
+
+  /** Decode the next cards' images in the background so moving on doesn't wait on a decode. */
+  @Composable
+  internal fun PrefetchUpcomingImages(session: ReviewSession, cardId: Long) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val widthPx = decodeWidthPx()
+    LaunchedEffect(session, cardId, cardCompletedTrigger) {
+      withContext(Dispatchers.IO) {
+        CardBitmaps.prefetch(context, listOf(cardId) + session.upcomingCardIds(2u), widthPx)
       }
-    } else {
-      HtmlText(html = fallbackHtml, fontScale = fontScale, cardFont = cardFont, modifier = modifier)
     }
   }
 
