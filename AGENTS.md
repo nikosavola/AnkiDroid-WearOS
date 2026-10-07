@@ -20,8 +20,9 @@ We use **UniFFI** and **JNA** to auto-generate safe Kotlin interfaces from our R
 ---
 
 ## 3. Passive Background Sync Architecture
-- **Companion Sync Service (`:phone`):** A passive background `WearSyncService` intercepts watch grades on the `/answers` data layer path, processes them via Rust, and writes them back to AnkiDroid's content database. It returns a `/clear_answers` confirmation message back to the watch.
-- **Watch Sync Service (`:wear`):** Intercepts incoming `/due_batch` payloads from the phone, validates and deserializes them in Rust, and saves them locally per-deck as `deck_<id>.json` in local watch storage (so multiple decks can be cached and switched offline).
+- **Companion Sync Service (`:phone`):** A passive background `WearSyncService` intercepts watch grades on the `/answers` data layer path, writes them back to AnkiDroid (see §7), and replies with `/clear_answers` (ids that settled) and `/unplaced_answers` (ids it examined but couldn't place). Only unplaced reports count toward the watch's orphan prune (8 reports and at least 3 days old); launches and offline sends never do.
+- **Watch Sync Service (`:wear`):** Intercepts incoming `/due_batch` pools from the phone, validates and deserializes them in Rust, and stores them in the on-watch SQLite card pool (`core/src/pool.rs`), so several decks stay reviewable offline for days.
+- **Answer upload (`:wear`):** grades are handed to the Data Layer by the `answer-upload` WorkManager job, 20s after the last grade and immediately when the app stops. The Data Layer queues the item until the phone is reachable.
 
 ---
 
@@ -97,8 +98,10 @@ grade, so a card that advanced a learning step or graduated would still show pre
 - **Math**: learning/relearning steps are Anki's ladder (Again restarts it, Hard is Anki's hard
   delay — the average of the first two steps on step 1, otherwise a repeat — Good advances and
   graduates from the last step, Easy graduates immediately). Day-or-longer intervals come from
-  FSRS-6 via the `rs-fsrs` crate (chosen over the `fsrs` crate rslib uses — same formula family, no
-  ndarray/rayon/Burn dependency in a watch `.so`). Decks without weights follow Anki's SM-2 review
+  FSRS-6 via an in-crate port of fsrs-rs `model_v6.rs` (`core/src/fsrs6.rs`: 21 weights with the
+  trainable decay `w[20]`; 17/19-weight presets are filled the way fsrs-rs does). The `fsrs` crate
+  itself is avoided because it pulls ndarray/rayon/Burn into the watch `.so`; reference values in
+  the tests come from py-fsrs 6. Decks without weights follow Anki's SM-2 review
   rules ported from rslib `review.rs`: the card's own ease factor (fetched from `sm2_factor`) and
   its days-late drive Hard/Good/Easy, each floored above the previous button and bounded by the
   deck's maximum interval, with Anki's separate early-review branch when a card is answered ahead
@@ -137,13 +140,46 @@ frequently ship **no WebView provider** (e.g. Galaxy Watch), so constructing a `
 
 ---
 
-## 7. Stand-Alone Refresh Handshake & Selective Sync
+
+## 7. Offline Multi-Day Reviewing (watch-owned queue, AnkiDroid reconciles)
+
+The watch is meant to work for days without the phone. Under the current API it owns *what is due
+when*; AnkiDroid still owns the real schedule and re-derives it on write-back.
+
+- **Pool (phone, `AnkiDroidBridge.fetchDuePool`)**: per deck, today's scheduler batch (AnkiDroid's
+  exact labels), intraday learning cards (`due_at_secs`), cards from `prop:due=k` searches on the
+  `cards` URI for k = 1..7 (`due_day`, an absolute Anki day), and `new.perDay * 7` new cards in
+  position order. Capped at 400 cards; rich bitmaps are rendered only for near-term cards. Older
+  AnkiDroid builds without the `cards` URI get today's batch only.
+- **Day model (`core/src/day.rs`)**: Anki day numbers with a rollover hour. AnkiDroid doesn't expose
+  the collection's rollover yet (ankidroid/Anki-Android#20773), so both sides use Anki's default 4am.
+- **Today's queue (`pool_today_batch`)**: learning cards within Anki's 20-minute learn-ahead, then
+  due and overdue reviews up to `rev.perDay`, then new cards up to `new.perDay`. The limits count
+  local grades per Anki day (`grade_log`). `ReviewSession.fromPool` builds the session; grading
+  advances the card with `sched.rs` and stores its next due day or due time, and undo reverts it.
+  A fresh pool from the phone replaces stored cards except those with answers still buffered.
+- **Write-back timing**: AnkiDroid's `ReviewInfo` update applies each answer *as of sync time*
+  (`answeredAtMillis = now`); there is no way to pass the real review time. Reviews synced days later
+  are therefore rescheduled from the sync day (FSRS-6 defaults, S=10, Good: due on day 32 per the
+  watch, day 39 in AnkiDroid when synced 3 days later). The early upload above keeps that gap
+  small. Issue #32 tracks the upstream `answered_at` fix.
+- **Write-back order**: rslib only rejects a non-head answer ("not at top of queue") while its study
+  queues are built, and the provider swallows that error, still reports one row, and spends seconds
+  filing a crash report. Selecting another deck and then the original one drops the queues, after
+  which answers apply by (note_id, ord) in any order, learning chains included. `writeAnswersBack`
+  does that toggle once, answers oldest-first, confirms each by re-reading the card's `reps`,
+  re-toggles and retries once if the queues were rebuilt, and restores the selected deck. A
+  single-deck collection falls back to head-gated draining. Verified on AnkiDroid 2.25.1.
+
+---
+
+## 8. Stand-Alone Refresh Handshake & Selective Sync
 - **Refresh Handshake (`/request_decks`):** To support independent Wear OS operation, the watch can broadcast a `/request_decks` refresh message over Bluetooth. The phone background service intercepts this, queries the available decks, applies user-selected filters, and pushes back a filtered `/decks` dataset asynchronously.
 - **Selective Sync Configuration:** The phone companion app displays a dynamic, scrollable checkbox list of all available AnkiDroid decks. Checkbox preferences are persisted in `SharedPreferences`, and both background syncs and manual syncs filter out unchecked decks, keeping the watch's deck list clean and uncluttered.
 
 ---
 
-## 8. Unified Code Formatting and Linting
+## 9. Unified Code Formatting and Linting
 - **Modern Kotlin Tooling Suite:** The project standardizes on `ktfmt` (Facebook/Google style) as the sole formatter, and `ktlint` as the code-quality linter. Style conflicts (such as `function-signature` and `parameter-list-wrapping` rules) are resolved via custom `.editorconfig` rules, with `ktfmt` operating as the absolute formatting authority.
 - **Parallel Pre-commit Runner (`prek`):** A `.pre-commit-config.yaml` file configures local format and lint tasks on concurrent pipelines using priority keys (formatting at `priority: 10` and linting at `priority: 20`), executed via:
 ```bash
