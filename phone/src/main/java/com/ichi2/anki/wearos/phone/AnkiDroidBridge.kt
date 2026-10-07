@@ -106,6 +106,7 @@ class AnkiDroidBridge(
 
     // Deck scheduling config lives in the deck's OPTIONS column as rslib's schema11 JSON.
     private const val COL_DECK_OPTIONS = "options"
+    private const val COL_DECK_COUNTS = "deck_count"
 
     /**
      * Anki's stored `left` packs two counters: `left % 1000` is the reps left before graduation,
@@ -401,7 +402,8 @@ class AnkiDroidBridge(
 
   /**
    * Best-effort per-deck due counts from the Deck provider's counts column, when the installed
-   * AnkiDroid exposes one (`deck_counts`, typically a bracketed `[learn, review, new]`). Returns
+   * AnkiDroid exposes one (`FlashCardsContract.Deck.DECK_COUNTS`, whose column is named `deck_count`,
+   * a JSON `[learn, review, new]`). Returns
    * `deckId -> total` (sum of whatever integers the column holds). Empty map when the column is
    * absent, AnkiDroid is unavailable, or anything fails — callers MUST treat a missing entry as
    * "unknown", never as zero. This does one provider query, but the provider may compute counts for
@@ -413,7 +415,7 @@ class AnkiDroidBridge(
     try {
       context.contentResolver.query(DECKS_URI, null, null, null, null)?.use { c ->
         val idIdx = c.getColumnIndex(COL_DECK_ID)
-        val countsIdx = c.getColumnIndex("deck_counts")
+        val countsIdx = c.getColumnIndex(COL_DECK_COUNTS)
         if (idIdx == -1 || countsIdx == -1) return emptyMap()
         while (c.moveToNext()) {
           val id = c.getLong(idIdx)
