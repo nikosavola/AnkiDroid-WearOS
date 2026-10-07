@@ -133,10 +133,9 @@ class MainActivity : ComponentActivity() {
           }
           WearSyncService.ACTION_ANSWERS_CLEARED -> {
             updateOutstandingCount()
-            // The phone just applied our answers to AnkiDroid; reconcile the last-reviewed deck's
-            // cached queue with AnkiDroid's real post-answer schedule (the in-session requeue was a
-            // local approximation).
-            activeDeckId?.let { silentlyRefreshDeck(it) }
+            // The phone just applied our answers to AnkiDroid; reconcile the last-reviewed deck
+            // with AnkiDroid's real schedule, but only once its pool has aged (see the core).
+            activeDeckId?.let { reconcileIfStale(it) }
           }
           WearSyncService.ACTION_DECKS_UPDATED -> {
             vm.loadDecks()
@@ -327,6 +326,21 @@ class MainActivity : ComponentActivity() {
         Log.e(TAG, "Failed to send $path to phone: ${e.message}", e)
         launch(Dispatchers.Main) { onError(e) }
       }
+    }
+  }
+
+  private fun reconcileIfStale(deckId: Long) {
+    scope.launch {
+      val stale =
+        withContext(Dispatchers.IO) {
+          try {
+            poolNeedsReconcile(deckId, systemWatchClock.nowMs())
+          } catch (e: CoreException) {
+            Log.w(TAG, "Couldn't check deck $deckId's pool age: ${e.message}")
+            false
+          }
+        }
+      if (stale) silentlyRefreshDeck(deckId)
     }
   }
 

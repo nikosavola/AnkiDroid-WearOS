@@ -2342,6 +2342,19 @@ mod tests {
     }
 
     #[test]
+    fn a_pool_is_reconciled_after_write_back_only_once_it_has_aged() {
+        let _guard = db_test_guard();
+        let path = pool_db("reconcile");
+
+        pool_store_batch(pool_batch(12, "Deck", vec![])).unwrap();
+        assert!(!pool_needs_reconcile(12, POOL_NOW_MS + 60_000).unwrap(), "a fresh pool is kept");
+        assert!(pool_needs_reconcile(12, POOL_NOW_MS + 30 * 60_000).unwrap());
+        assert!(!pool_needs_reconcile(99, POOL_NOW_MS).unwrap(), "an unpooled deck is not fetched");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
     fn restoring_a_batch_keeps_a_card_with_a_buffered_answer_and_replaces_the_rest() {
         let _guard = db_test_guard();
         let path = pool_db("restore");
