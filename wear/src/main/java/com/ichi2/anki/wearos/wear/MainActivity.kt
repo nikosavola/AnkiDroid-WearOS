@@ -763,7 +763,6 @@ class MainActivity : ComponentActivity() {
         fallbackHtml = displayBack,
         modifier = Modifier.fillMaxWidth(),
       )
-      GradeIntervalLabels(labels = card.nextReviewTimes)
     }
     GradeEdgeButtons(card = card, enabled = gradeEnabled, colored = coloredGradeButtons) { ease ->
       onGrade(ease, duration)
