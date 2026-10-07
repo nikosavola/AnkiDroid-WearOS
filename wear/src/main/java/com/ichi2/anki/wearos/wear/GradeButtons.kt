@@ -12,6 +12,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
@@ -33,16 +34,17 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.curvedText
 import uniffi.wearos_core.WearosCard
 
-// Angular gap (degrees) between adjacent pills. Sized to clear the StrokeCap.Round caps, which
-// extend ~half the pill thickness past each end, so a smaller gap lets adjacent caps overlap.
-private const val GAP_SWEEP_DEG = 14f
+// Angular gap (degrees) between adjacent segments. Round caps would stick out half the two-line
+// pill's thickness past each end, more than any gap that still fits four pills on the bottom arc,
+// so the segments are square-ended and the gap alone separates them.
+private const val GAP_SWEEP_DEG = 3f
 // The tap strip covers the bottom this fraction of the screen (where the arc sits), so it doesn't
 // swallow taps meant for the card text / reveal above it.
 private const val TAP_STRIP_FRACTION = 0.42f
 
 /**
- * Grade buttons as real curved pills hugging the bottom bezel: a rounded-cap arc background
- * ([CurvedModifier.background] + StrokeCap.Round) with centered [curvedText], one per grade.
+ * Grade buttons as curved segments hugging the bottom bezel: an arc background
+ * ([CurvedModifier.background]) with centered [curvedText], one per grade.
  *
  * wear-compose has no clickable curved modifier, so taps are handled by a single pointerInput strip
  * over the bottom arc that maps the tap's x-position to a button (the pills are ordered left->right
@@ -67,6 +69,9 @@ fun GradeEdgeButtons(
   val labels = card.nextReviewTimes.takeIf { it.size == grades.size }.orEmpty()
   // Neutral color for the uncolored mode; read here (a @Composable context), not inside CurvedScope.
   val neutral = MaterialTheme.colorScheme.onSurfaceVariant
+  // Segments are opaque (the tint blended over the background) so the answer scrolling underneath
+  // never shows through the labels.
+  val background = MaterialTheme.colorScheme.background
   Box(modifier = Modifier.fillMaxSize()) {
     // Visual layer: the caller's [chrome] (progress ring etc.) and the pills, cached as one GPU layer
     // so the arcs and rotated glyphs aren't re-rasterized while the card scrolls underneath. Pills
@@ -89,8 +94,11 @@ fun GradeEdgeButtons(
           curvedColumn(
             angularAlignment = CurvedAlignment.Angular.Center,
             modifier =
-              CurvedModifier.background(color = pill.copy(alpha = 0.32f), cap = StrokeCap.Round)
-                .padding(angular = 6.dp, radial = 4.dp),
+              CurvedModifier.background(
+                color = pill.copy(alpha = 0.32f).compositeOver(background),
+                cap = StrokeCap.Butt,
+              )
+                .padding(angular = 10.dp, radial = 4.dp),
           ) {
             curvedText(text = g.text, color = pill, fontSize = 13.sp)
             labels.getOrNull(i)?.let { label ->
