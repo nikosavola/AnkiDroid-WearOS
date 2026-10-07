@@ -104,6 +104,30 @@ class DuePoolProviderTest {
   }
 
   @Test
+  fun `only the new cards the pool ships are rendered`() {
+    provider.newCards = (100L until 160L).map { FakeCardRow(it, it + 1000, 0, due = it) }
+
+    val pool = bridge().fetchDuePool(DeckId(DECK_ID), todayLimit = 20)
+    val shipped = pool.cards.map { it.id }.filter { it >= 100L }
+
+    assertEquals((100L until 100L + shipped.size).toList(), shipped)
+    assertTrue("a few days' worth, not the whole deck", shipped.size in 1..20)
+    assertEquals(1, provider.renderedSearches.size)
+    assertEquals(shipped.size, provider.renderedSearches.single().split(",").size)
+  }
+
+  @Test
+  fun `a deck with no new cards per day renders none`() {
+    provider.newPerDay = 0
+    provider.newCards = listOf(FakeCardRow(100L, 1100L, 0, due = 1))
+
+    val pool = bridge().fetchDuePool(DeckId(DECK_ID), todayLimit = 20)
+
+    assertTrue(pool.cards.none { it.id == 100L })
+    assertTrue(provider.renderedSearches.isEmpty())
+  }
+
+  @Test
   fun `a provider without the cards endpoint returns today's batch only`() {
     provider.exposeCardsEndpoint = false
 
@@ -153,6 +177,8 @@ class FakeCardsProvider : ContentProvider() {
   var learningCards: List<FakeCardRow> = emptyList()
   var dueCardsByOffset: Map<Long, List<FakeCardRow>> = emptyMap()
   var newCards: List<FakeCardRow> = emptyList()
+  val renderedSearches = mutableListOf<String>()
+  var newPerDay = 2
 
   override fun onCreate() = true
 
@@ -177,7 +203,7 @@ class FakeCardsProvider : ContentProvider() {
         arrayOf<Any>(
           DECK_ID,
           "Japani",
-          """{"new":{"delays":[1.0,10.0],"ints":[1,4],"perDay":2},"rev":{},"lapse":{}}""",
+          """{"new":{"delays":[1.0,10.0],"ints":[1,4],"perDay":$newPerDay},"rev":{},"lapse":{}}""",
         )
       )
     }
@@ -213,6 +239,13 @@ class FakeCardsProvider : ContentProvider() {
     }
   }
 
+  /** The `cid:` search the pool renders its chosen new cards with; recorded for the tests. */
+  private fun renderedRows(search: String): List<FakeCardRow> {
+    renderedSearches += search
+    val ids = search.removePrefix("cid:").split(",").map { it.toLong() }.toSet()
+    return (newCards + learningCards).filter { it.id in ids }
+  }
+
   private fun dueOffset(search: String): Long? =
     search.substringAfter("prop:due=").takeWhile { it.isDigit() }.toLongOrNull()
 
@@ -223,6 +256,7 @@ class FakeCardsProvider : ContentProvider() {
       when {
         search.contains("is:learn") -> learningCards
         search.contains("is:new") -> newCards
+        search.startsWith("cid:") -> renderedRows(search)
         search.contains("prop:due=") -> dueCardsByOffset[dueOffset(search)] ?: emptyList()
         else -> emptyList()
       }

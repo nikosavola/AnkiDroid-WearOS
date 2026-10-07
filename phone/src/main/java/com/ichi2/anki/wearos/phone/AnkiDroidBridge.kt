@@ -629,15 +629,9 @@ class AnkiDroidBridge(
       }
     }
 
-    val newRows = searchCards("is:new -is:suspended -is:buried $deckSelector", config) ?: return today
     // No config means no known daily new limit, so ship none rather than an unbounded slice.
     val allowance = if (config == null) 0 else newCardAllowance(config.newPerDay, horizonDays)
-    val newCards =
-      newRows
-        .sortedBy { it.due ?: Long.MAX_VALUE }
-        .filter { collected.add(it.id) }
-        .take(allowance)
-        .map { poolCard(it, dueDay = null, dueAtSecs = null) }
+    val newCards = fetchNewForPool(deckSelector, allowance, collected, config)
 
     return WearosDueBatch(
       deckId = resolvedDeckId.value,
@@ -654,6 +648,52 @@ class AnkiDroidBridge(
     val now = clock()
     return dayIndex(now, timeZone.getOffset(now) / 1000, defaultRolloverHour())
   }
+
+  /**
+   * The first [allowance] new cards by position, skipping ids already [collected]. The provider
+   * renders a card's question and answer for every row that asks for them, so a deck with thousands
+   * of new cards is listed by id and position first and only the shipped ones are rendered.
+   */
+  private fun fetchNewForPool(
+    deckSelector: String,
+    allowance: Int,
+    collected: MutableSet<Long>,
+    config: DeckScheduleConfig?,
+  ): List<WearosCard> {
+    if (allowance <= 0) return emptyList()
+    val picked =
+      searchCardPositions("is:new -is:suspended -is:buried $deckSelector")
+        .sortedBy { it.second }
+        .map { it.first }
+        .filter { it !in collected }
+        .take(allowance)
+    if (picked.isEmpty()) return emptyList()
+    val rows = searchCards("cid:${picked.joinToString(",")}", config)?.associateBy { it.id }.orEmpty()
+    return picked.mapNotNull { id ->
+      rows[id]?.takeIf { collected.add(id) }?.let { poolCard(it, dueDay = null, dueAtSecs = null) }
+    }
+  }
+
+  /** Card ids and their `due` (a new card's queue position) for [search], without rendering. */
+  private fun searchCardPositions(search: String): List<Pair<Long, Long>> =
+    try {
+      context.contentResolver
+        .query(CARDS_URI, arrayOf("_id", COL_DUE), search, null, null)
+        ?.use { cursor ->
+          val idIdx = cursor.getColumnIndexOrThrow("_id")
+          val dueIdx = cursor.getColumnIndexOrThrow(COL_DUE)
+          buildList {
+            while (cursor.moveToNext()) {
+              val due = if (cursor.isNull(dueIdx)) Long.MAX_VALUE else cursor.getLong(dueIdx)
+              add(cursor.getLong(idIdx) to due)
+            }
+          }
+        }
+        .orEmpty()
+    } catch (e: Exception) {
+      Log.w(TAG, "Cards search '$search' failed (${e.message}); shipping no new cards.")
+      emptyList()
+    }
 
   /** One Anki browser search against the cards endpoint; null when the endpoint is unavailable. */
   private fun searchCards(search: String, config: DeckScheduleConfig?): List<CardRow>? =
