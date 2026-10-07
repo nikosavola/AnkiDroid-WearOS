@@ -413,10 +413,7 @@ fn fsrs_outcome(
     // A card that has never been answered carries no memory state (Anki stores it on first answer),
     // so it gets FSRS's initial values for the rating instead of a state update.
     let memory_state = if state.stability > 0.0 {
-        Some(MemoryState {
-            stability: state.stability as f32,
-            difficulty: state.difficulty as f32,
-        })
+        Some(MemoryState { stability: state.stability as f32, difficulty: state.difficulty as f32 })
     } else {
         None
     };
