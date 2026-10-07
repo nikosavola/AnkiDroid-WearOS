@@ -14,7 +14,9 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
 import uniffi.wearos_core.deserializeDecks
 import uniffi.wearos_core.deserializeDueBatch
-import uniffi.wearos_core.initDatabase
+import uniffi.wearos_core.poolCardIds
+import uniffi.wearos_core.poolForgetDecks
+import uniffi.wearos_core.poolStoreBatch
 import uniffi.wearos_core.recordUnplacedAnswers
 import uniffi.wearos_core.removeBufferedAnswers
 
@@ -44,14 +46,8 @@ class WearSyncService : WearableListenerService() {
 
   override fun onCreate() {
     super.onCreate()
+    // The Rust core database is initialised by WearApp.onCreate.
     Log.d(TAG, "WearSyncService created on Wear OS Watch.")
-    try {
-      val dbPath = File(filesDir, "wearos_buffer.db").absolutePath
-      initDatabase(dbPath)
-      Log.d(TAG, "Rust Core SQLite database initialized at: $dbPath")
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to initialize Rust database: ${e.message}", e)
-    }
   }
 
   override fun onDataChanged(dataEvents: DataEventBuffer) {
@@ -187,13 +183,13 @@ class WearSyncService : WearableListenerService() {
         "Successfully validated batch: '${batch.deckName}' with ${batch.cards.size} cards.",
       )
 
-      // 3. Persist per-deck so multiple decks can be cached and switched offline
-      DeckCache.saveBatch(this, batch.deckId, bytes)
-      Log.i(TAG, "Saved deck ${batch.deckId} ('${batch.deckName}') to local cache.")
+      // 3. Store the deck's whole pool so it can be reviewed offline on later days
+      poolStoreBatch(batch)
+      Log.i(TAG, "Stored deck ${batch.deckId} ('${batch.deckName}') into the pool.")
 
-      // Drop cached bitmaps for cards no longer in any cached deck (fresh ones for current cards are
-      // kept, and re-sends overwrite in place). Runs after saveBatch so the new cards count as valid.
-      CardImageCache.pruneImages(this, DeckCache.allCachedCardIds(this))
+      // Drop cached bitmaps for cards no longer in the pool (fresh ones for current cards are kept,
+      // and re-sends overwrite in place). Runs after storing so the new cards count as valid.
+      CardImageCache.pruneImages(this, poolCardIds().toSet())
 
       // 4. Broadcast to the MainActivity UI that new cards are ready, tagged with the deck id
       val intent =
@@ -247,10 +243,10 @@ class WearSyncService : WearableListenerService() {
     }
   }
 
-  /** Drop cached due batches (and their card images) for decks no longer in [validIds]. */
+  /** Drop pooled decks (and their card images) no longer in [validIds]. */
   private fun pruneOrphanDecks(validIds: Set<Long>) {
-    DeckCache.pruneOrphans(this, validIds)
-    CardImageCache.pruneImages(this, DeckCache.allCachedCardIds(this))
+    poolForgetDecks(validIds.toList())
+    CardImageCache.pruneImages(this, poolCardIds().toSet())
   }
 
   private fun broadcastDecksUpdated() {

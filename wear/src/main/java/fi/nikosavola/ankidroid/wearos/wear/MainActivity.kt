@@ -41,7 +41,6 @@ import androidx.wear.compose.material3.lazy.TransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.curvedText
 import com.google.android.gms.wearable.Wearable
-import java.io.File
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -51,8 +50,8 @@ import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import uniffi.wearos_core.*
 
-/** A deck shown in the picker; [cardCount] is null when the deck has not been downloaded yet. */
-data class DeckEntry(val id: Long, val name: String, val cardCount: Int?)
+/** A deck shown in the picker; [dueNow] is null when the deck has not been pooled on the watch yet. */
+data class DeckEntry(val id: Long, val name: String, val dueNow: Int?)
 
 class MainActivity : ComponentActivity() {
   companion object {
@@ -96,9 +95,6 @@ class MainActivity : ComponentActivity() {
   internal var pendingDeckId: Long? by mutableStateOf(null)
   // The deck currently open in a review session (for requesting more new cards of it).
   internal var activeDeckId by mutableStateOf<Long?>(null)
-  // The exact bytes the open session was built from. Session progress is only persisted over these,
-  // so a fresh phone batch delivered mid-session isn't clobbered by the session's stale queue.
-  private var sessionCacheBytes: ByteArray? = null
   // Whether the pending request was for new cards, so we can report when none came back.
   internal var pendingIsNew = false
 
@@ -114,15 +110,25 @@ class MainActivity : ComponentActivity() {
             vm.loadDecks()
             val arrived = intent.getLongExtra(WearSyncService.EXTRA_DECK_ID, -1L)
             val pending = pendingDeckId
-            if (
-              pending != null &&
-                (arrived == pending || DeckCache.deckFile(this@MainActivity, pending).exists())
-            ) {
-              val wasNew = pendingIsNew
-              pendingDeckId = null
-              pendingIsNew = false
-              // toastIfEmptyNew runs the "no studyable new cards" check after the async load.
-              loadDeckSession(pending, toastIfEmptyNew = wasNew)
+            if (pending != null) {
+              scope.launch {
+                try {
+                  val pooled =
+                    arrived == pending ||
+                      withContext(Dispatchers.IO) { poolHasDeck(pending) }
+                  if (pooled) {
+                    val wasNew = pendingIsNew
+                    pendingDeckId = null
+                    pendingIsNew = false
+                    // toastIfEmptyNew runs the "no studyable new cards" check after the async load.
+                    loadDeckSession(pending, toastIfEmptyNew = wasNew)
+                  }
+                } catch (e: CancellationException) {
+                  throw e
+                } catch (e: Exception) {
+                  Log.e(TAG, "Failed to check pooled deck $pending: ${e.message}", e)
+                }
+              }
             }
           }
           WearSyncService.ACTION_ANSWERS_CLEARED -> {
@@ -142,16 +148,9 @@ class MainActivity : ComponentActivity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
 
-    // 1. Initialize Rust Core Database
-    try {
-      val dbPath = File(filesDir, "wearos_buffer.db").absolutePath
-      initDatabase(dbPath)
-      Log.d(TAG, "Rust database initialized at: $dbPath")
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to initialize Rust database: ${e.message}", e)
-    }
+    // Rust core database is initialised by WearApp.onCreate.
 
-    // 2. Initialize TTS Engine
+    // 1. Initialize TTS Engine
     tts =
       TextToSpeech(this) { status ->
         if (status == TextToSpeech.SUCCESS) {
@@ -164,7 +163,7 @@ class MainActivity : ComponentActivity() {
         }
       }
 
-    // 3. Load persisted user settings (theme, card font) into Compose state.
+    // 2. Load persisted user settings (theme, card font) into Compose state.
     themeMode = WatchSettings.themeMode(this)
     fontScale = WatchSettings.fontScale(this)
     cardFont = WatchSettings.cardFont(this)
@@ -175,7 +174,7 @@ class MainActivity : ComponentActivity() {
     ttsEnabled = WatchSettings.ttsEnabled(this)
     speechRate = WatchSettings.speechRate(this)
 
-    // 4. Load the list of decks (cached locally + known from the phone). Start on the picker.
+    // 3. Load the list of decks (pooled locally + known from the phone). Start on the picker.
     vm.loadDecks()
     updateOutstandingCount()
 
@@ -185,7 +184,7 @@ class MainActivity : ComponentActivity() {
     // putDataItem succeeds the Data Layer guarantees delivery to the phone.
     AnswerUploadWorker.scheduleNow(this)
 
-    // 5. Register Receiver
+    // 4. Register Receiver
     val filter =
       IntentFilter().apply {
         addAction(WearSyncService.ACTION_BATCH_UPDATED)
@@ -225,34 +224,33 @@ class MainActivity : ComponentActivity() {
   internal fun clearSession() {
     reviewSession?.destroy()
     reviewSession = null
-    sessionCacheBytes = null
   }
 
   /** Parent of a `::` deck path; "" when already at a top-level segment. */
   internal fun parentFolder(path: String): String = path.substringBeforeLast("::", "")
 
   /**
-   * Load an already-downloaded deck into a review session entirely offline. When [toastIfEmptyNew]
+   * Build a review session from the deck's pooled cards, entirely offline. When [toastIfEmptyNew]
    * is set (a "learn new cards" request), warn if nothing studyable came back once the session is
    * loaded.
    */
   private fun loadDeckSession(deckId: Long, toastIfEmptyNew: Boolean = false) {
     scope.launch {
       try {
-        // File read + Rust deserialize is I/O; keep it off the main thread.
-        val (batch, cachedBytes) =
-          withContext(Dispatchers.IO) {
-            val bytes = DeckCache.deckFile(this@MainActivity, deckId).readBytes()
-            deserializeDueBatch(bytes) to bytes
-          }
-        val session = ReviewSession(batch)
+        val nowMs = systemWatchClock.nowMs()
+        val offset = utcOffsetSecs(nowMs)
+        // Building today's queue from the pool is blocking SQLite work; keep it off the main thread.
+        val session =
+          withContext(Dispatchers.IO) { ReviewSession.fromPool(deckId, nowMs, offset) }
         // Free any previous native session before replacing it.
         reviewSession?.destroy()
         reviewSession = session
         activeDeckId = deckId
-        sessionCacheBytes = cachedBytes
         isReviewing = false
-        Log.i(TAG, "Loaded deck '${batch.deckName}' with ${batch.cards.size} cards from cache.")
+        Log.i(
+          TAG,
+          "Loaded deck '${session.getDeckName()}' with ${session.getTotalCards()} cards from pool.",
+        )
         if (toastIfEmptyNew && session.getTotalCards() == 0) {
           Toast.makeText(
               this@MainActivity,
@@ -264,46 +262,28 @@ class MainActivity : ComponentActivity() {
       } catch (e: CancellationException) {
         throw e
       } catch (e: Exception) {
-        Log.e(TAG, "Failed to load cached deck $deckId: ${e.message}", e)
+        Log.e(TAG, "Failed to load pooled deck $deckId: ${e.message}", e)
         Toast.makeText(this@MainActivity, "Could not open deck.", Toast.LENGTH_SHORT).show()
       }
     }
   }
 
-  /**
-   * Overwrite the cached batch with the session's remaining cards so a reopened deck resumes where
-   * the user left off. Best-effort: a failure is logged and never shown, since the graded answer is
-   * already safely buffered. Skipped when the phone replaced the file mid-session (the fresh batch
-   * wins) and when no session/deck is active.
-   */
-  private suspend fun persistSessionProgress(session: ReviewSession) {
-    val deckId = activeDeckId ?: return
-    val expected = sessionCacheBytes ?: return
-    try {
-      val bytes =
-        withContext(Dispatchers.IO) {
-          val serialized = serializeDueBatch(session.remainingBatch())
-          val saved = DeckCache.saveSessionProgress(this@MainActivity, deckId, expected, serialized)
-          serialized.takeIf { saved }
-        }
-      if (bytes != null) {
-        sessionCacheBytes = bytes
-        // The picker's card count is read back from the cache; refresh it to match.
-        vm.loadDecks()
-      }
-    } catch (e: CancellationException) {
-      throw e
-    } catch (e: Exception) {
-      Log.e(TAG, "Failed to persist session progress for deck $deckId: ${e.message}", e)
-    }
-  }
-
-  /** Pick a deck: open it offline if cached, otherwise download it from the phone. */
+  /** Pick a deck: open it offline if it is pooled, otherwise download it from the phone. */
   internal fun selectDeck(deckId: Long) {
-    if (vm.cachedDecks.any { it.id == deckId }) {
-      loadDeckSession(deckId)
-    } else {
-      requestDeckFromPhone(deckId)
+    scope.launch {
+      try {
+        val pooled = withContext(Dispatchers.IO) { poolHasDeck(deckId) }
+        if (pooled) {
+          loadDeckSession(deckId)
+        } else {
+          requestDeckFromPhone(deckId)
+        }
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to check pooled deck $deckId: ${e.message}", e)
+        requestDeckFromPhone(deckId)
+      }
     }
   }
 
@@ -471,8 +451,9 @@ class MainActivity : ComponentActivity() {
       try {
         Log.d(TAG, "Answering card with ease: $ease, duration: $duration")
         kotlinx.coroutines.withContext(Dispatchers.IO) { session.answerCard(ease, duration) }
-        persistSessionProgress(session)
         updateOutstandingCount()
+        // The grade moved the card in the pool, so the picker's due counts are stale.
+        vm.loadDecks()
         // Hand the grade over soon without putting on every single answer (each put triggers a full
         // write-back pass on the phone).
         AnswerUploadWorker.scheduleDebounced(this@MainActivity)
@@ -500,8 +481,9 @@ class MainActivity : ComponentActivity() {
     scope.launch {
       try {
         withContext(Dispatchers.IO) { session.undoLastAnswer() }
-        persistSessionProgress(session)
         updateOutstandingCount()
+        // Undo reverted the card in the pool, so the picker's due counts are stale.
+        vm.loadDecks()
         cardCompletedTrigger++ // recompose the review screen onto the restored card
       } catch (e: CancellationException) {
         throw e
@@ -830,10 +812,16 @@ class MainActivity : ComponentActivity() {
     val transformSpec = rememberEdgeMorphSpec()
     // Tally what was graded this session (recomputed if an undo/answer changed it).
     val summary = remember(cardCompletedTrigger) { session.getSummary() }
+    // Learning cards of this deck that come due later today, so finishing the queue can say when.
+    val pooledDeck = activeDeckId?.let { id -> vm.cachedDecks.firstOrNull { it.deckId == id } }
+    val nowSecs = systemWatchClock.nowMs() / 1000
     FinishedScreenContent(
       summary = summary,
       reviewedToday = reviewedToday,
       outstandingCount = outstandingAnswersCount,
+      learningLater = pooledDeck?.learningLater ?: 0,
+      learningDueInMinutes =
+        pooledDeck?.nextLearningDueSecs?.let { ((it - nowSecs) / 60).coerceAtLeast(0) },
       transformSpec = transformSpec,
       onSyncAndBack = {
         triggerAnswersSync()

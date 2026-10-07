@@ -61,6 +61,25 @@ class FinishedScreenTest {
   }
 
   @Test
+  fun showsLearningDueLaterLine_whenTheDeckHasCardsComingUpToday() {
+    composeRule.setContent {
+      MaterialTheme {
+        FinishedScreenContent(
+          summary = summary(total = 3, again = 0, hard = 0, good = 3, easy = 0),
+          reviewedToday = 3,
+          outstandingCount = 0,
+          transformSpec = rememberEdgeMorphSpec(),
+          onSyncAndBack = {},
+          learningLater = 2,
+          learningDueInMinutes = 5,
+        )
+      }
+    }
+
+    composeRule.onNodeWithText("2 learning cards due in 5 min").assertIsDisplayed()
+  }
+
+  @Test
   fun emptySession_hidesRecapButStillShowsHeaderAndOutstanding() {
     composeRule.setContent {
       MaterialTheme {

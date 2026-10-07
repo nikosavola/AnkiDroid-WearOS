@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <plurals name="learning_cards_due_in_minutes">
+        <item quantity="one">%1$d learning card due in %2$d min</item>
+        <item quantity="other">%1$d learning cards due in %2$d min</item>
+    </plurals>
+</resources>

@@ -31,7 +31,7 @@ internal fun MainActivity.WelcomeScreen() {
   // List each call, so keying the remembers on it would defeat them and re-run the deckChildren FFI
   // + the maps on every recomposition. Now they recompute only when the decks/folder actually change.
   val entries = remember(vm.cachedDecks, vm.knownDecks) { vm.deckEntries() }
-  val countById = remember(entries) { entries.associate { it.id to it.cardCount } }
+  val countById = remember(entries) { entries.associate { it.id to it.dueNow } }
   // Resolve one folder level from the flat deck list in Rust; card counts stay a UI concern here.
   val level =
     remember(entries, deckFolderPath) {
@@ -100,7 +100,7 @@ internal fun MainActivity.WelcomeScreen() {
           item {
             DeckCard(
               label = "Study ${own.name}",
-              cardCount = countById[own.id],
+              dueNow = countById[own.id],
               transformation = SurfaceTransformation(transformSpec),
               modifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec),
               onClick = { selectDeck(own.id) },
@@ -121,7 +121,7 @@ internal fun MainActivity.WelcomeScreen() {
           } else {
             DeckCard(
               label = node.name,
-              cardCount = countById[node.id],
+              dueNow = countById[node.id],
               transformation = transformation,
               modifier = cardModifier,
               onClick = { selectDeck(node.id) },

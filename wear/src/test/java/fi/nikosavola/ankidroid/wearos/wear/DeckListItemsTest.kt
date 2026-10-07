@@ -34,7 +34,7 @@ class DeckListItemsTest {
       MaterialTheme {
         DeckCard(
           label = "Kaishi 1.5k",
-          cardCount = 5,
+          dueNow = 5,
           modifier = Modifier.testTag("deck"),
           onClick = { clicks++ },
         )
@@ -50,7 +50,7 @@ class DeckListItemsTest {
   fun deckCard_cached_oneCard_usesSingular() {
     composeRule.setContent {
       MaterialTheme {
-        DeckCard(label = "Kaishi 1.5k", cardCount = 1, modifier = Modifier, onClick = {})
+        DeckCard(label = "Kaishi 1.5k", dueNow = 1, modifier = Modifier, onClick = {})
       }
     }
     composeRule.onNodeWithText("1 card ready").assertIsDisplayed()
@@ -59,7 +59,7 @@ class DeckListItemsTest {
   @Test
   fun deckCard_uncached_showsTapToDownload() {
     composeRule.setContent {
-      MaterialTheme { DeckCard(label = "Yomitan", cardCount = null, modifier = Modifier, onClick = {}) }
+      MaterialTheme { DeckCard(label = "Yomitan", dueNow = null, modifier = Modifier, onClick = {}) }
     }
     composeRule.onNodeWithText("Yomitan").assertIsDisplayed()
     composeRule.onNodeWithText("Tap to download").assertIsDisplayed()
