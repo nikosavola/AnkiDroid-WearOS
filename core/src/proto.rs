@@ -260,6 +260,27 @@ pub fn decode_due_batch(bytes: &[u8]) -> Result<WearosDueBatch, CoreError> {
     Ok(DueBatchPb::decode(bytes)?.into())
 }
 
+/// Encode one card as protobuf bytes (infallible; prost encoding cannot fail). Used to store a
+/// card's full state in the watch's local pool.
+pub fn encode_card(card: WearosCard) -> Vec<u8> {
+    CardPb::from(card).encode_to_vec()
+}
+
+/// Decode protobuf bytes produced by [`encode_card`].
+pub fn decode_card(bytes: &[u8]) -> Result<WearosCard, CoreError> {
+    Ok(CardPb::decode(bytes)?.into())
+}
+
+/// Encode a deck schedule config as protobuf bytes (infallible).
+pub fn encode_deck_config(config: DeckScheduleConfig) -> Vec<u8> {
+    DeckConfigPb::from(config).encode_to_vec()
+}
+
+/// Decode protobuf bytes produced by [`encode_deck_config`].
+pub fn decode_deck_config(bytes: &[u8]) -> Result<DeckScheduleConfig, CoreError> {
+    Ok(DeckConfigPb::decode(bytes)?.into())
+}
+
 #[derive(Clone, PartialEq, prost::Message)]
 struct AnswerPb {
     #[prost(string, tag = "1")]
