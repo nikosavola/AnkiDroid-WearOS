@@ -660,6 +660,52 @@ mod tests {
     }
 
     #[test]
+    fn test_remaining_batch_drops_a_graduated_card() {
+        let _guard = no_db_guard();
+        let session = single_card_session(learning_card(1));
+
+        // Good = "4d" (day+) graduates the card out of the queue.
+        session.answer_card(3, 0).unwrap();
+
+        let batch = session.remaining_batch();
+        assert!(batch.cards.is_empty(), "a graduated card must not be re-presented on reopen");
+    }
+
+    #[test]
+    fn test_remaining_batch_keeps_a_requeued_card_at_the_back() {
+        let _guard = no_db_guard();
+        let session = ReviewSession::new(WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![learning_card(1), learning_card(2)],
+            schedule_config: None,
+        });
+
+        // Again requeues card 1, so it comes back behind card 2.
+        session.answer_card(1, 0).unwrap();
+
+        let batch = session.remaining_batch();
+        assert_eq!(batch.cards.len(), 2);
+        assert_eq!(batch.cards[0].id, 2, "card 2 is now current");
+        assert_eq!(batch.cards[1].id, 1, "the requeued card is at the back");
+    }
+
+    #[test]
+    fn test_remaining_batch_carries_deck_identity_and_config() {
+        let _guard = no_db_guard();
+        let session = ReviewSession::new(WearosDueBatch {
+            deck_id: 42,
+            deck_name: "Japani".to_string(),
+            cards: vec![learning_card(1)],
+            schedule_config: Some(sm2_deck_config()),
+        });
+
+        let batch = session.remaining_batch();
+        assert_eq!(batch.deck_id, 42);
+        assert_eq!(batch.deck_name, "Japani");
+        assert!(batch.schedule_config.is_some(), "the deck config must survive");
+    }
+    #[test]
     fn test_interval_index_maps_ease_for_3_and_4_buttons() {
         let _guard = no_db_guard();
 

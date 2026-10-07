@@ -2,6 +2,8 @@ package fi.nikosavola.ankidroid.wearos.wear
 
 import android.content.Context
 import java.io.File
+import java.io.FileOutputStream
+import java.io.IOException
 import uniffi.wearos_core.deserializeDueBatch
 
 /**
@@ -11,6 +13,11 @@ import uniffi.wearos_core.deserializeDueBatch
 object DeckCache {
   private const val PREFIX = "deck_"
   private const val SUFFIX = ".json"
+  private const val TMP_SUFFIX = ".tmp"
+
+  // The sync service (phone batches) and the activity (session progress) write the same files from
+  // different threads; one lock keeps the compare-then-write atomic and the temp file unshared.
+  private val writeLock = Any()
   private const val LEGACY = "due_batch.json"
 
   data class CachedDeck(val id: Long, val name: String, val cardCount: Int)
@@ -18,8 +25,50 @@ object DeckCache {
   fun deckFile(context: Context, deckId: Long): File =
     File(context.filesDir, "$PREFIX$deckId$SUFFIX")
 
-  fun saveBatch(context: Context, deckId: Long, bytes: ByteArray) {
-    deckFile(context, deckId).writeBytes(bytes)
+  /**
+   * Persist a deck batch atomically: write a temp file, fsync it, then rename over the final path so
+   * a crash can't leave a right-length file of zeros behind a successful-looking write.
+   */
+  fun saveBatch(context: Context, deckId: Long, bytes: ByteArray): Boolean =
+    synchronized(writeLock) { writeAtomically(context, deckId, bytes) }
+
+  private fun writeAtomically(context: Context, deckId: Long, bytes: ByteArray): Boolean {
+    val target = deckFile(context, deckId)
+    val tmp = File(context.filesDir, "${target.name}$TMP_SUFFIX")
+    return try {
+      FileOutputStream(tmp).use { out ->
+        out.write(bytes)
+        out.fd.sync()
+      }
+      if (tmp.renameTo(target)) {
+        true
+      } else {
+        tmp.delete()
+        false
+      }
+    } catch (_: IOException) {
+      tmp.delete()
+      false
+    }
+  }
+
+  /**
+   * Save a session's remaining cards, but only when [expectedCurrent] still matches what is on disk.
+   * A mismatch means the phone delivered a fresh batch while the session was open, and that fresh
+   * batch must win over the session's now-stale queue, so this is skipped.
+   */
+  fun saveSessionProgress(
+    context: Context,
+    deckId: Long,
+    expectedCurrent: ByteArray,
+    bytes: ByteArray,
+  ): Boolean {
+    val target = deckFile(context, deckId)
+    return synchronized(writeLock) {
+      target.exists() &&
+        target.readBytes().contentEquals(expectedCurrent) &&
+        writeAtomically(context, deckId, bytes)
+    }
   }
 
   /**

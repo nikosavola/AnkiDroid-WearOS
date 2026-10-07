@@ -131,6 +131,19 @@ impl ReviewSession {
         self.queue.lock().unwrap().front().map(|qc| qc.card.clone())
     }
 
+    /// The cards still to review, front first (requeued learning cards included with their refreshed
+    /// previews/state). The watch persists this so a reopened deck resumes where the user left off.
+    pub fn remaining_batch(&self) -> WearosDueBatch {
+        let _op = self.op_lock.lock().unwrap();
+        let cards = self.queue.lock().unwrap().iter().map(|qc| qc.card.clone()).collect();
+        WearosDueBatch {
+            deck_id: self.deck_id,
+            deck_name: self.deck_name.clone(),
+            cards,
+            schedule_config: self.schedule_config.clone(),
+        }
+    }
+
     pub fn reveal_answer(&self) {
         *self.is_revealed.lock().unwrap() = true;
     }

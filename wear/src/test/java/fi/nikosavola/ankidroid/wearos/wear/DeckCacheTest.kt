@@ -9,6 +9,7 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import uniffi.wearos_core.WearosCard
 import uniffi.wearos_core.WearosDueBatch
+import uniffi.wearos_core.deserializeDueBatch
 import uniffi.wearos_core.serializeDueBatch
 
 /**
@@ -78,5 +79,43 @@ class DeckCacheTest {
     val cached = DeckCache.listCached(context)
     assertEquals(1, cached.size)
     assertTrue(cached.all { it.name == "Good" })
+  }
+
+  @Test
+  fun `session progress overwrites the cache when the expected bytes still match`() {
+    val original = serializeDueBatch(batch(300, "Alpha", 3))
+    DeckCache.saveBatch(context, 300, original)
+    val updated = serializeDueBatch(batch(300, "Alpha", 1))
+
+    assertTrue(DeckCache.saveSessionProgress(context, 300, original, updated))
+    assertEquals(
+      1,
+      deserializeDueBatch(DeckCache.deckFile(context, 300).readBytes()).cards.size,
+    )
+  }
+
+  @Test
+  fun `a fresh phone batch is not overwritten by session progress`() {
+    val original = serializeDueBatch(batch(300, "Alpha", 3))
+    DeckCache.saveBatch(context, 300, original)
+    // The phone delivers a new batch while the session still holds the old bytes.
+    DeckCache.saveBatch(context, 300, serializeDueBatch(batch(300, "Alpha", 5)))
+    val stale = serializeDueBatch(batch(300, "Alpha", 1))
+
+    assertFalse(DeckCache.saveSessionProgress(context, 300, original, stale))
+    assertEquals(
+      5,
+      deserializeDueBatch(DeckCache.deckFile(context, 300).readBytes()).cards.size,
+    )
+  }
+
+  @Test
+  fun `an atomic save leaves no temp file behind`() {
+    DeckCache.saveBatch(context, 300, serializeDueBatch(batch(300, "Alpha", 2)))
+    val leftovers = context.filesDir.listFiles { f -> f.name.endsWith(".tmp") }
+    assertTrue(
+      "no temp files should remain: ${leftovers?.map { it.name }}",
+      leftovers.isNullOrEmpty(),
+    )
   }
 }
