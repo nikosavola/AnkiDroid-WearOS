@@ -38,6 +38,7 @@ play-services-wearable = { group = "com.google.android.gms", name = "play-servic
 
 # WorkManager — periodic background deck sync on the phone
 androidx-work-runtime = { group = "androidx.work", name = "work-runtime-ktx", version = "2.9.1" }
+androidx-work-testing = { group = "androidx.work", name = "work-testing", version = "2.9.1" }
 
 # Wear OS Compose
 wear-compose-material3 = { group = "androidx.wear.compose", name = "compose-material3", version.ref = "wear-compose" }
