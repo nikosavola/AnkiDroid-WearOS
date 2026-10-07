@@ -14,6 +14,7 @@ import uniffi.wearos_core.previewIntervalSecs
  * Compares AnkiDroid's own interval labels with our offline previews for every due card in every
  * deck of the installed collection. It only reads, so unlike [AnkiDroidProviderLiveTest] it is safe
  * against a real collection, which is where FSRS decks with real weights and odd card states live.
+ * It also fetches each top-level deck's seven-day pool, whose searches real deck names stress.
  * Fetching a deck's schedule makes AnkiDroid select it briefly and then reselect the previous deck.
  *
  * `adb shell am instrument -w -e class com.ichi2.anki.wearos.phone.RealDeckPreviewAuditTest \
@@ -61,8 +62,39 @@ class RealDeckPreviewAuditTest {
     )
   }
 
+  @Test
+  fun poolFetchCoversEveryTopLevelDeckWithoutDuplicates() {
+    assumeTrue("AnkiDroid not installed/reachable", bridge.isAnkiDroidAvailable())
+    val today = bridge.todayDayIndex()
+    val problems = mutableListOf<String>()
+
+    for ((deckId, name) in bridge.fetchAllDecks().filter { !it.second.contains("::") }) {
+      val pool = bridge.fetchDuePool(deckId = deckId, todayLimit = POOL_TODAY_LIMIT).cards
+      val dupes = pool.groupingBy { it.id }.eachCount().filter { it.value > 1 }.keys
+      if (dupes.isNotEmpty()) problems += "deck '$name' ships duplicate cards $dupes"
+      pool
+        .filter { card -> card.dueDay?.let { it < today || it > today + POOL_HORIZON_DAYS } == true }
+        .forEach { problems += "deck '$name' card ${it.id} due day ${it.dueDay} outside the horizon" }
+      pool
+        .filter { it.state?.queue == 1 && it.nextReviewTimes.isEmpty() && it.dueAtSecs == null }
+        .forEach { problems += "deck '$name' learning card ${it.id} has no due time" }
+      val byDay = pool.mapNotNull { it.dueDay }.groupingBy { it - today }.eachCount().toSortedMap()
+      Log.i(
+        TAG,
+        "pool '$name': ${pool.size} cards, today ${pool.count { it.nextReviewTimes.isNotEmpty() }}, " +
+          "learning ${pool.count { it.dueAtSecs != null }}, new " +
+          "${pool.count { it.state?.queue == 0 && it.nextReviewTimes.isEmpty() }}, by day $byDay",
+      )
+    }
+
+    problems.forEach { Log.w(TAG, it) }
+    assertTrue("${problems.size} pool problems; first: ${problems.firstOrNull()}", problems.isEmpty())
+  }
+
   private companion object {
     const val TAG = "PreviewAudit"
     const val CARDS_PER_DECK = 200
+    // What DeckSync asks for, so the pool is the one the watch would get.
+    const val POOL_TODAY_LIMIT = 20
   }
 }
