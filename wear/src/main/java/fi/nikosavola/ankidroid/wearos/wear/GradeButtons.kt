@@ -27,6 +27,7 @@ import androidx.wear.compose.foundation.CurvedLayout
 import androidx.wear.compose.foundation.CurvedModifier
 import androidx.wear.compose.foundation.angularSize
 import androidx.wear.compose.foundation.background
+import androidx.wear.compose.foundation.curvedColumn
 import androidx.wear.compose.foundation.curvedRow
 import androidx.wear.compose.foundation.padding
 import androidx.wear.compose.material3.MaterialTheme
@@ -36,7 +37,7 @@ import uniffi.wearos_core.WearosCard
 
 // Angular gap (degrees) between adjacent pills. Sized to clear the StrokeCap.Round caps, which
 // extend ~half the pill thickness past each end, so a smaller gap lets adjacent caps overlap.
-private const val GAP_SWEEP_DEG = 18f
+private const val GAP_SWEEP_DEG = 14f
 // The tap strip covers the bottom this fraction of the screen (where the arc sits), so it doesn't
 // swallow taps meant for the card text / reveal above it.
 private const val TAP_STRIP_FRACTION = 0.42f
@@ -48,8 +49,8 @@ private const val TAP_STRIP_FRACTION = 0.42f
  * wear-compose has no clickable curved modifier, so taps are handled by a single pointerInput strip
  * over the bottom arc that maps the tap's x-position to a button (the pills are ordered left->right
  * along the arc, matching [gradeSpecs]). This reliably receives taps and leaves the card area above
- * untouched. The pills carry the grade name only (they have no room for more text); what each grade
- * would schedule is shown by [GradeIntervalLabels] just above them.
+ * untouched. Each pill shows the grade name with what that grade would schedule beneath it (from
+ * [WearosCard.nextReviewTimes]), so the intervals are visible without scrolling.
  */
 
 @Composable
@@ -62,6 +63,9 @@ fun GradeEdgeButtons(
   // Stable across recompositions of the same card so the pointerInput gesture isn't re-registered
   // each frame (gradeSpecs depends only on the button count).
   val grades = remember(card.buttonCount) { gradeSpecs(card) }
+  // One label per button, in gradeSpecs order. A phone that sent no scheduling config yields an
+  // empty list, and a stale/mismatched one would mislabel buttons, so both fall back to names only.
+  val labels = card.nextReviewTimes.takeIf { it.size == grades.size }.orEmpty()
   // Neutral color for the uncolored mode; read here (a @Composable context), not inside CurvedScope.
   val neutral = MaterialTheme.colorScheme.onSurfaceVariant
   Box(modifier = Modifier.fillMaxSize()) {
@@ -77,13 +81,18 @@ fun GradeEdgeButtons(
       grades.forEachIndexed { i, g ->
         if (i > 0) curvedRow(modifier = CurvedModifier.angularSize(GAP_SWEEP_DEG)) {}
         val pill = if (colored) g.color else neutral
-        curvedRow(
-          radialAlignment = CurvedAlignment.Radial.Center,
+        // Name and interval stack radially inside one pill, so showing the interval makes the pill
+        // thicker rather than longer and four of them still fit the bottom arc.
+        curvedColumn(
+          angularAlignment = CurvedAlignment.Angular.Center,
           modifier =
             CurvedModifier.background(color = pill.copy(alpha = 0.32f), cap = StrokeCap.Round)
-              .padding(angular = 6.dp, radial = 5.dp),
+              .padding(angular = 6.dp, radial = 4.dp),
         ) {
           curvedText(text = g.text, color = pill, fontSize = 13.sp)
+          labels.getOrNull(i)?.let { label ->
+            curvedText(text = label, color = pill.copy(alpha = 0.8f), fontSize = 11.sp)
+          }
         }
       }
     }
@@ -109,11 +118,12 @@ fun GradeEdgeButtons(
         modifier =
           Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(TAP_STRIP_FRACTION)
       ) {
-        grades.forEach { g ->
+        grades.forEachIndexed { i, g ->
+          val label = labels.getOrNull(i)
           Box(
             modifier =
               Modifier.weight(1f).fillMaxHeight().semantics {
-                contentDescription = g.text
+                contentDescription = if (label != null) "${g.text}, $label" else g.text
                 onClick(label = "Grade ${g.text}") {
                   onGrade(g.ease)
                   true
@@ -127,14 +137,15 @@ fun GradeEdgeButtons(
 }
 
 /**
- * What each grade button would schedule ("1m · 6m · 10m · 4d"), in the same left-to-right order as
- * the curved pills, so the numbers line up with the buttons without crowding them.
+ * What each grade button would schedule ("1m · 6m · 10m · 4d") as one line.
+ *
+ * Superseded by the intervals [GradeEdgeButtons] now renders inside each pill: this line sits at the
+ * bottom of the scrolling card content, so on a real watch it is usually scrolled off-screen. Kept
+ * for callers that have no pill row to draw into.
  *
  * AnkiDroid ships one label per button; the Rust core recomputes them when a card is graded and
- * requeued, so these stay correct for the card's current state. Rendered inside the scrolling card
- * content (above the pills and clear of the round bezel) rather than on the arc itself, which has no
- * room for text without squeezing the grade names out. Renders nothing when a card carries no labels
- * (mock cards, or a phone that sent no scheduling config).
+ * requeued, so these stay correct for the card's current state. Renders nothing when a card carries
+ * no labels (mock cards, or a phone that sent no scheduling config).
  */
 @Composable
 fun GradeIntervalLabels(labels: List<String>, modifier: Modifier = Modifier) {
