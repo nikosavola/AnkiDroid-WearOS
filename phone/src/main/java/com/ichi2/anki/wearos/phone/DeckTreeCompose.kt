@@ -6,7 +6,7 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -19,7 +19,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedListItem
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TriStateCheckbox
@@ -59,12 +61,18 @@ fun DeckSelectionTree(
   dueCountOf: (DeckNode) -> Int? = { null },
 ) {
   val expanded = remember { mutableStateMapOf<String, Boolean>() }
-  Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState())) {
-    for (child in root.children.values) {
+  val topLevel = root.children.values.toList()
+  Column(
+    modifier.fillMaxWidth().verticalScroll(rememberScrollState()),
+    verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
+  ) {
+    topLevel.forEachIndexed { index, child ->
       DeckNodeRow(
         child,
         child.name,
         0,
+        index,
+        topLevel.size,
         expanded,
         checkedOf,
         onDeckChecked,
@@ -80,6 +88,8 @@ private fun DeckNodeRow(
   node: DeckNode,
   path: String,
   depth: Int,
+  index: Int,
+  count: Int,
   expanded: MutableMap<String, Boolean>,
   checkedOf: (DeckId) -> Boolean,
   onDeckChecked: (DeckId, Boolean) -> Unit,
@@ -88,6 +98,7 @@ private fun DeckNodeRow(
 ) {
   val indent = (depth * 16).dp
   val due = dueCountOf(node)
+  val shapes = ListItemDefaults.segmentedShapes(index, count)
 
   if (node.children.isNotEmpty()) {
     val isExpanded = expanded[path] ?: false
@@ -106,39 +117,37 @@ private fun DeckNodeRow(
         else -> ToggleableState.Off
       }
 
-    Surface(
-      color = MaterialTheme.colorScheme.surfaceVariant,
-      shape = MaterialTheme.shapes.medium,
-      modifier = Modifier.fillMaxWidth().padding(start = indent, top = 2.dp, bottom = 2.dp),
+    SegmentedListItem(
+      onClick = { expanded[path] = !isExpanded },
+      shapes = shapes,
+      modifier = Modifier.fillMaxWidth().padding(start = indent),
+      leadingContent = {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+          Icon(
+            painter = painterResource(id = R.drawable.ic_expand_more),
+            contentDescription =
+              if (isExpanded) "Collapse ${node.name}" else "Expand ${node.name}",
+            modifier = Modifier.size(24.dp).rotate(chevron),
+          )
+          Spacer(Modifier.width(4.dp))
+          // A folder that is only partly selected shows the indeterminate dash; a tap still
+          // selects everything, or clears everything when it already is.
+          TriStateCheckbox(state = checkState, onClick = { onFolderChecked(node, !allChecked) })
+          Icon(
+            painter = painterResource(id = R.drawable.ic_folder),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(start = 4.dp).size(20.dp),
+          )
+        }
+      },
+      trailingContent = { if (due != null) DuePill(due) },
     ) {
-      Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.fillMaxWidth().clickable { expanded[path] = !isExpanded }.padding(8.dp),
-      ) {
-        Icon(
-          painter = painterResource(id = R.drawable.ic_expand_more),
-          contentDescription = if (isExpanded) "Collapse ${node.name}" else "Expand ${node.name}",
-          modifier = Modifier.size(24.dp).rotate(chevron),
-        )
-        Spacer(Modifier.width(4.dp))
-        // A folder that is only partly selected shows the indeterminate dash; a tap still selects
-        // everything, or clears everything when it already is.
-        TriStateCheckbox(state = checkState, onClick = { onFolderChecked(node, !allChecked) })
-        Icon(
-          painter = painterResource(id = R.drawable.ic_folder),
-          contentDescription = null,
-          tint = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.padding(start = 4.dp).size(20.dp),
-        )
-        Text(
-          text = node.name,
-          style = MaterialTheme.typography.titleSmall,
-          fontWeight = FontWeight.SemiBold,
-          modifier = Modifier.padding(start = 4.dp),
-        )
-        Spacer(Modifier.weight(1f))
-        if (due != null) DuePill(due)
-      }
+      Text(
+        text = node.name,
+        style = MaterialTheme.typography.titleSmall,
+        fontWeight = FontWeight.SemiBold,
+      )
     }
     AnimatedVisibility(
       visible = isExpanded,
@@ -149,12 +158,15 @@ private fun DeckNodeRow(
         shrinkVertically(MaterialTheme.motionScheme.defaultSpatialSpec()) +
           fadeOut(MaterialTheme.motionScheme.defaultEffectsSpec()),
     ) {
-      Column {
-        for (child in node.children.values) {
+      val children = node.children.values.toList()
+      Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+        children.forEachIndexed { index, child ->
           DeckNodeRow(
             child,
             "$path::${child.name}",
             depth + 1,
+            index,
+            children.size,
             expanded,
             checkedOf,
             onDeckChecked,
@@ -166,18 +178,15 @@ private fun DeckNodeRow(
     }
   } else {
     val id = node.deckId ?: return
-    Row(
-      verticalAlignment = Alignment.CenterVertically,
-      modifier = Modifier.fillMaxWidth().padding(start = indent + 28.dp, top = 2.dp, bottom = 2.dp),
+    SegmentedListItem(
+      checked = checkedOf(id),
+      onCheckedChange = { onDeckChecked(id, it) },
+      shapes = shapes,
+      modifier = Modifier.fillMaxWidth().padding(start = indent + 28.dp),
+      leadingContent = { Checkbox(checked = checkedOf(id), onCheckedChange = null) },
+      trailingContent = { if (due != null) DuePill(due) },
     ) {
-      Checkbox(checked = checkedOf(id), onCheckedChange = { onDeckChecked(id, it) })
-      Text(
-        text = node.name,
-        style = MaterialTheme.typography.bodyLarge,
-        modifier = Modifier.padding(start = 4.dp),
-      )
-      Spacer(Modifier.weight(1f))
-      if (due != null) DuePill(due)
+      Text(text = node.name, style = MaterialTheme.typography.bodyLarge)
     }
   }
 }
