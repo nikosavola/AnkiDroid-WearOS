@@ -620,7 +620,9 @@ class MainActivity : ComponentActivity() {
     if (currentCard == null) {
       FinishedScreen(session)
     } else {
-      ReviewCardScreen(session, currentCard)
+      // Every presentation starts fresh (unrevealed, scrolled to the top, timer reset), even when
+      // a requeued card comes straight back with the same id.
+      key(session, cardCompletedTrigger) { ReviewCardScreen(session, currentCard) }
     }
   }
 
@@ -741,7 +743,6 @@ class MainActivity : ComponentActivity() {
     curvedStyle: CurvedTextStyle,
     onGrade: (ease: Int, durationMs: Long) -> Unit,
   ) {
-    val duration = System.currentTimeMillis() - cardStartTime
     Column(
       modifier =
         Modifier.fillMaxSize()
@@ -775,7 +776,7 @@ class MainActivity : ComponentActivity() {
     }
     if (!hideProgress) ReviewProgress(session, curvedStyle)
     GradeEdgeButtons(card = card, enabled = gradeEnabled, colored = coloredGradeButtons) { ease ->
-      onGrade(ease, duration)
+      onGrade(ease, System.currentTimeMillis() - cardStartTime)
     }
   }
 
