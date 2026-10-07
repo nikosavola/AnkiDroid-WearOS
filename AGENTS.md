@@ -132,14 +132,38 @@ frequently ship **no WebView provider** (e.g. Galaxy Watch), so constructing a `
 - **Rust `clean_html`:** sanitizes the card HTML for display and TTS: strips tags, removes HTML
   comments (Anki hides fields like `{{Pitch Accent}}` inside them) and `[sound:...]` refs, and
   converts furigana `<ruby>base<rt>reading</rt></ruby>` to `base(reading)`.
-- **Compose rendering:** the watch shows the cleaned text in a weighted, vertically-scrolling
-  `Column` (never a nested scrollable that passes infinite constraints). Grade buttons are a
-  centered 2x2 grid so all of Again/Hard/Good/Easy stay inside the round display.
+- **Compose rendering:** the watch shows the display HTML as Compose text
+  (`AnnotatedString.fromHtml`, no interop `TextView`) in a vertically-scrolling `Column` (never a
+  nested scrollable that passes infinite constraints). Grade buttons are opaque curved segments
+  along the bottom bezel, tapped through one strip that shares its gestures with the scrolling
+  answer, so a swipe starting over the buttons still scrolls.
 - **Rich fidelity via phone-rendered bitmaps:** CSS-styled pitch-accent overlines and images can't
   render natively, so cards that need them (`CardBitmapRenderer.needsRichRendering`) are rendered on
   the phone (which has a WebView) into a PNG, streamed to the watch as a per-card Data Layer asset,
   cached (`CardImageCache`), and shown by `CardSideContent` in place of the cleaned text. The native
   text path above remains the fallback when no bitmap is cached.
+
+### Keeping it smooth
+Compose already draws through the GPU (HWUI on the RenderThread); what costs frames on a watch is
+main-thread work and redrawing the same chrome every frame. The rules the review screen follows:
+- **No IO or decoding in composition.** `CardBitmaps` decodes card PNGs on `Dispatchers.IO`,
+  scaled to the screen width, straight into `Bitmap.Config.HARDWARE` (uploaded to a GPU texture on
+  the decoding thread), and prefetches the next cards via `ReviewSession.upcomingCardIds`.
+- **Static chrome in one cached layer.** The progress ring, curved labels and grade segments sit in
+  a single `Modifier.cachedLayer()` (an offscreen `graphicsLayer`) per side, so scrolling the card
+  composites a texture instead of re-rasterizing arcs and rotated glyphs. Keep it to one layer per
+  screen: each extra full-screen layer is another full-screen fill (check with
+  `adb shell setprop debug.hwui.overdraw show`).
+- **No native calls in draw lambdas.** Read session state once per grade
+  (`remember(session, cardCompletedTrigger)`).
+
+To profile, build `:wear:assembleBenchmark` (R8, not debuggable, debug-signed, `profileable`), seed
+a deck with `cargo run --example mock_deck` pushed as `files/deck_<id>.json` from the debug build
+(`run-as`), install the benchmark APK over it, then compile with its baseline profile
+(`am broadcast -a androidx.profileinstaller.action.INSTALL_PROFILE <pkg>/androidx.profileinstaller.ProfileInstallReceiver`
+and `cmd package compile -f -m speed-profile <pkg>`). Read `dumpsys gfxinfo <pkg>` and a perfetto
+trace (`gfx view input sched`); on the emulator, `dequeueBuffer` waits are the host compositor, not
+the app. Debug builds are far too slow to profile meaningfully.
 
 ---
 
@@ -160,6 +184,8 @@ when*; AnkiDroid still owns the real schedule and re-derives it on write-back.
   due and overdue reviews up to `rev.perDay`, then new cards up to `new.perDay`. The limits count
   local grades per Anki day (`grade_log`). `ReviewSession.fromPool` builds the session; grading
   advances the card with `sched.rs` and stores its next due day or due time, and undo reverts it.
+  As in Anki, a requeued learning card that isn't due yet waits behind the remaining new and review
+  cards, and is shown early (learn-ahead) only once nothing else is left.
   A fresh pool from the phone replaces stored cards except those with answers still buffered.
 - **Write-back timing**: AnkiDroid's `ReviewInfo` update applies each answer *as of sync time*
   (`answeredAtMillis = now`); there is no way to pass the real review time. Reviews synced days later
