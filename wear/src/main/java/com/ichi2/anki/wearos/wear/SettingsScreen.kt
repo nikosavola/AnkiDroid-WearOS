@@ -24,7 +24,14 @@ internal fun MainActivity.SettingsScreen() {
   val activity = this
   val listState = rememberTransformingLazyColumnState()
   val transformSpec = rememberEdgeMorphSpec()
-  ScreenScaffold(scrollState = listState) { contentPadding ->
+  ScreenScaffold(
+    scrollState = listState,
+    edgeButton = {
+      EdgeButton(onClick = { showSettings = false }, buttonSize = EdgeButtonSize.Medium) {
+        Icon(painter = painterResource(id = R.drawable.ic_check), contentDescription = "Done")
+      }
+    },
+  ) { contentPadding ->
     TransformingLazyColumn(
       state = listState,
       contentPadding = contentPadding,
@@ -58,7 +65,7 @@ internal fun MainActivity.SettingsScreen() {
       item {
         settingChoiceRow(
           label = "Text size",
-          options = listOf(0.9f to "S", 1.0f to "M", 1.3f to "L", 1.6f to "XL", 1.8f to "XXL"),
+          options = listOf(0.9f to "S", 1.0f to "M", 1.3f to "L", 1.6f to "XL", 1.8f to "2XL"),
           selected = fontScale,
           modifier = Modifier.transformedHeight(this, transformSpec),
         ) { scale ->
@@ -131,12 +138,6 @@ internal fun MainActivity.SettingsScreen() {
         WatchSettings.setKeepScreenOn(activity, it)
       }
       appearanceToggles(transformSpec)
-      item { Spacer(modifier = Modifier.height(8.dp)) }
-      item {
-        EdgeButton(onClick = { showSettings = false }, buttonSize = EdgeButtonSize.Medium) {
-          Icon(painter = painterResource(id = R.drawable.ic_check), contentDescription = "Done")
-        }
-      }
     }
   }
 }

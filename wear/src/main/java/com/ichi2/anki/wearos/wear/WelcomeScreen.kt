@@ -43,7 +43,23 @@ internal fun MainActivity.WelcomeScreen() {
   val title =
     if (deckFolderPath.isEmpty()) "AnkiDroid WearOS" else deckFolderPath.substringAfterLast("::")
 
-  ScreenScaffold(scrollState = listState) { contentPadding ->
+  ScreenScaffold(
+    scrollState = listState,
+    edgeButton = {
+      EdgeButton(
+        onClick = {
+          requestDecksFromPhone()
+          vm.loadDecks()
+        },
+        buttonSize = EdgeButtonSize.Medium,
+      ) {
+        Icon(
+          painter = painterResource(id = R.drawable.ic_refresh),
+          contentDescription = "Refresh decks",
+        )
+      }
+    },
+  ) { contentPadding ->
     // M3 Expressive edge-hugging list: TransformingLazyColumn morphs each item container toward the
     // round bezel, so deck cards visibly widen and round as they approach the vertical center and
     // shrink at the top/bottom edges. SurfaceTransformation + transformedHeight drive the morph.
@@ -137,22 +153,6 @@ internal fun MainActivity.WelcomeScreen() {
           modifier = Modifier.fillMaxWidth(0.7f),
         ) {
           Text("Settings")
-        }
-      }
-
-      item { Spacer(modifier = Modifier.height(8.dp)) }
-      item {
-        EdgeButton(
-          onClick = {
-            requestDecksFromPhone()
-            vm.loadDecks()
-          },
-          buttonSize = EdgeButtonSize.Medium,
-        ) {
-          Icon(
-            painter = painterResource(id = R.drawable.ic_refresh),
-            contentDescription = "Refresh decks",
-          )
         }
       }
     }
