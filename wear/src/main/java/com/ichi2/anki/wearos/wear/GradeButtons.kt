@@ -56,6 +56,7 @@ fun GradeEdgeButtons(
   card: WearosCard,
   enabled: Boolean,
   colored: Boolean,
+  chrome: @Composable () -> Unit = {},
   onGrade: (ease: Int) -> Unit,
 ) {
   // Stable across recompositions of the same card so the pointerInput gesture isn't re-registered
@@ -67,29 +68,34 @@ fun GradeEdgeButtons(
   // Neutral color for the uncolored mode; read here (a @Composable context), not inside CurvedScope.
   val neutral = MaterialTheme.colorScheme.onSurfaceVariant
   Box(modifier = Modifier.fillMaxSize()) {
-    // Visual layer: curved pills sized to their text (so the label is centered inside each pill).
-    // Decorative for a11y - curvedText would otherwise expose each label as its own node, duplicating
-    // the accessible overlay below; the overlay is the single labelled + activatable representation.
-    CurvedLayout(
-      modifier = Modifier.clearAndSetSemantics {}.cachedLayer(),
-      anchor = 90f,
-      anchorType = AnchorType.Center,
-      angularDirection = CurvedDirection.Angular.Reversed,
-    ) {
-      grades.forEachIndexed { i, g ->
-        if (i > 0) curvedRow(modifier = CurvedModifier.angularSize(GAP_SWEEP_DEG)) {}
-        val pill = if (colored) g.color else neutral
-        // Name and interval stack radially inside one pill, so showing the interval makes the pill
-        // thicker rather than longer and four of them still fit the bottom arc.
-        curvedColumn(
-          angularAlignment = CurvedAlignment.Angular.Center,
-          modifier =
-            CurvedModifier.background(color = pill.copy(alpha = 0.32f), cap = StrokeCap.Round)
-              .padding(angular = 6.dp, radial = 4.dp),
-        ) {
-          curvedText(text = g.text, color = pill, fontSize = 13.sp)
-          labels.getOrNull(i)?.let { label ->
-            curvedText(text = label, color = pill.copy(alpha = 0.8f), fontSize = 11.sp)
+    // Visual layer: the caller's [chrome] (progress ring etc.) and the pills, cached as one GPU layer
+    // so the arcs and rotated glyphs aren't re-rasterized while the card scrolls underneath. Pills
+    // are sized to their text (so the label is centered inside each pill) and decorative for a11y:
+    // curvedText would otherwise expose each label as its own node, duplicating the accessible
+    // overlay below, which is the single labelled + activatable representation.
+    Box(modifier = Modifier.fillMaxSize().cachedLayer()) {
+      chrome()
+      CurvedLayout(
+      modifier = Modifier.clearAndSetSemantics {},
+        anchor = 90f,
+        anchorType = AnchorType.Center,
+        angularDirection = CurvedDirection.Angular.Reversed,
+      ) {
+        grades.forEachIndexed { i, g ->
+          if (i > 0) curvedRow(modifier = CurvedModifier.angularSize(GAP_SWEEP_DEG)) {}
+          val pill = if (colored) g.color else neutral
+          // Name and interval stack radially inside one pill, so showing the interval makes the pill
+          // thicker rather than longer and four of them still fit the bottom arc.
+          curvedColumn(
+            angularAlignment = CurvedAlignment.Angular.Center,
+            modifier =
+              CurvedModifier.background(color = pill.copy(alpha = 0.32f), cap = StrokeCap.Round)
+                .padding(angular = 6.dp, radial = 4.dp),
+          ) {
+            curvedText(text = g.text, color = pill, fontSize = 13.sp)
+            labels.getOrNull(i)?.let { label ->
+              curvedText(text = label, color = pill.copy(alpha = 0.8f), fontSize = 11.sp)
+            }
           }
         }
       }

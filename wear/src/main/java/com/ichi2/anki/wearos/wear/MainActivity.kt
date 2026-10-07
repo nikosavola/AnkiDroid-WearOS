@@ -230,6 +230,9 @@ class MainActivity : ComponentActivity() {
     )
 
     setContent { WearAppScreen() }
+    // AppScaffold paints the background; the window's own would be a second full-screen fill under
+    // it on every frame. The starting window still uses the theme background.
+    window.setBackgroundDrawable(null)
   }
 
   override fun onDestroy() {
@@ -628,22 +631,19 @@ class MainActivity : ComponentActivity() {
 
   /**
    * Session progress: a determinate ring hugging the round edge, filling clockwise in proportion to
-   * cards graduated this session, with the N/M label curved along the top. Drawn above the card body
-   * so an opaque card image can't cover it, from one cached layer so scrolling the card doesn't
-   * re-rasterize the arcs and glyphs every frame.
+   * cards graduated this session, with the N/M label curved along the top. Callers draw it inside
+   * their single cached overlay layer, above the card body so an opaque card image can't cover it.
    */
   @Composable
   private fun ReviewProgress(session: ReviewSession, style: CurvedTextStyle) {
     // Native calls once per grade rather than on every draw of the ring.
     val fraction = remember(session, cardCompletedTrigger) { session.getProgressFraction() }
     val label = remember(session, cardCompletedTrigger) { session.getProgressString() }
-    Box(modifier = Modifier.fillMaxSize().cachedLayer()) {
-      androidx.wear.compose.material3.CircularProgressIndicator(
-        progress = { fraction },
-        modifier = Modifier.fillMaxSize().padding(2.dp),
-      )
-      TopCurvedProgress(label, style)
-    }
+    androidx.wear.compose.material3.CircularProgressIndicator(
+      progress = { fraction },
+      modifier = Modifier.fillMaxSize().padding(2.dp),
+    )
+    TopCurvedProgress(label, style)
   }
 
   /**
@@ -697,15 +697,17 @@ class MainActivity : ComponentActivity() {
         modifier = Modifier.fillMaxWidth(),
       )
     }
-    if (!hideProgress) ReviewProgress(session, curvedStyle)
     val hintColor = MaterialTheme.colorScheme.onSurfaceVariant
-    CurvedLayout(
-      modifier = Modifier.fillMaxSize().cachedLayer(),
-      anchor = 90f,
-      anchorType = AnchorType.Center,
-      angularDirection = CurvedDirection.Angular.Reversed,
-    ) {
-      curvedText(text = "Tap to show answer", style = curvedStyle, color = hintColor)
+    Box(modifier = Modifier.fillMaxSize().cachedLayer()) {
+      if (!hideProgress) ReviewProgress(session, curvedStyle)
+      CurvedLayout(
+        modifier = Modifier.fillMaxSize(),
+        anchor = 90f,
+        anchorType = AnchorType.Center,
+        angularDirection = CurvedDirection.Angular.Reversed,
+      ) {
+        curvedText(text = "Tap to show answer", style = curvedStyle, color = hintColor)
+      }
     }
     // Undo the previous grade (steps back a card and drops its buffered answer). A bare glyph with
     // no background, tucked just left of the progress text at the top. Drawn LAST so it sits above
@@ -774,8 +776,12 @@ class MainActivity : ComponentActivity() {
         modifier = Modifier.fillMaxWidth(),
       )
     }
-    if (!hideProgress) ReviewProgress(session, curvedStyle)
-    GradeEdgeButtons(card = card, enabled = gradeEnabled, colored = coloredGradeButtons) { ease ->
+    GradeEdgeButtons(
+      card = card,
+      enabled = gradeEnabled,
+      colored = coloredGradeButtons,
+      chrome = { if (!hideProgress) ReviewProgress(session, curvedStyle) },
+    ) { ease ->
       onGrade(ease, System.currentTimeMillis() - cardStartTime)
     }
   }
