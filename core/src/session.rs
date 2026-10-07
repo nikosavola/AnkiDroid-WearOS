@@ -12,10 +12,15 @@
 //! the ones fetched before the grade. Without that config the labels stay as fetched, and a per-card
 //! cap still forces graduation so the session terminates either way.
 
+use crate::day::day_index;
 use crate::db::{get_db_connection, remove_buffered_answers, save_answer};
 use crate::models::{CoreError, WearosAnswer, WearosCard, WearosDueBatch};
+use crate::pool::{
+    GRADE_KIND_LEARNING, GRADE_KIND_NEW, GRADE_KIND_REVIEW, LEARN_AHEAD_SECS, PoolCardSnapshot,
+    pool_card_snapshot, pool_log_grade, pool_today_batch, pool_unlog_grade, pool_update_card,
+};
 use crate::sched::{
-    DeckScheduleConfig, SECS_PER_DAY, advance_state, preview_interval_secs,
+    CardScheduleState, DeckScheduleConfig, SECS_PER_DAY, advance_state, preview_interval_secs,
     preview_labels_for_buttons,
 };
 use crate::util::unix_millis;
@@ -61,6 +66,29 @@ struct QueuedCard {
     learn_requeues: u32,
 }
 
+/// What a pool-backed session needs to reschedule grades offline: the day boundary the pool was
+/// built with. Present only for [`ReviewSession::from_pool`]; a batch-built session leaves it None
+/// and keeps the old label-driven behaviour.
+struct PoolContext {
+    utc_offset_secs: i32,
+    rollover_hour: i32,
+}
+
+/// The stored pool row a grade overwrote, so undo can put it back exactly (plus the grade_log row
+/// to drop). Captured before the grade, since the grade mutates both.
+struct PoolUndo {
+    snapshot: PoolCardSnapshot,
+    grade_log_id: i64,
+}
+
+/// What [`ReviewSession::reschedule_in_pool`] wrote and what the session needs to requeue the card.
+struct PoolGradeOutcome {
+    stored_card: WearosCard,
+    due_at_secs: Option<i64>,
+    now_secs: i64,
+    undo: PoolUndo,
+}
+
 /// One graded review, kept so undo can reverse it (LIFO) and the summary can aggregate.
 struct GradeEvent {
     answer: WearosAnswer,
@@ -69,6 +97,8 @@ struct GradeEvent {
     front_before: QueuedCard,
     /// Whether the grade requeued the card (pushed to the back) vs graduated it out.
     requeued: bool,
+    /// The pool row and grade_log this grade replaced, when grading in pool mode.
+    pool_undo: Option<PoolUndo>,
 }
 
 #[derive(uniffi::Object)]
@@ -88,6 +118,9 @@ pub struct ReviewSession {
     /// When the phone fetched the batch, epoch ms; 0 = unknown. Carried so a persisted session keeps
     /// the pool's age.
     fetched_at_ms: i64,
+    /// Set for a pool-backed session ([`ReviewSession::from_pool`]): grades then reschedule the card
+    /// in the pool too, not just in the buffer.
+    pool: Option<PoolContext>,
     /// Remaining cards, front = current. Learning-step grades push the card to the back.
     queue: Mutex<VecDeque<QueuedCard>>,
     is_revealed: Mutex<bool>,
@@ -113,6 +146,7 @@ impl ReviewSession {
             schedule_config: batch.schedule_config,
             rollover_hour: batch.rollover_hour,
             fetched_at_ms: batch.fetched_at_ms,
+            pool: None,
             initial_total: queue.len(),
             queue: Mutex::new(queue),
             is_revealed: Mutex::new(false),
@@ -120,6 +154,18 @@ impl ReviewSession {
             history: Mutex::new(Vec::new()),
             op_lock: Mutex::new(()),
         }
+    }
+
+    /// Build a session for a deck the watch has pooled, queuing today's batch. Unlike [`Self::new`],
+    /// grading also reschedules the card in the pool (new due day / learning due time) so it comes
+    /// back on the right day without the phone, and undo reverses that.
+    #[uniffi::constructor]
+    pub fn from_pool(deck_id: i64, now_ms: i64, utc_offset_secs: i32) -> Result<Self, CoreError> {
+        let batch = pool_today_batch(deck_id, now_ms, utc_offset_secs)?;
+        let rollover_hour = batch.rollover_hour;
+        let mut session = Self::new(batch);
+        session.pool = Some(PoolContext { utc_offset_secs, rollover_hour });
+        Ok(session)
     }
 
     pub fn get_deck_name(&self) -> String {
@@ -198,29 +244,167 @@ impl ReviewSession {
             return Err(e);
         }
 
-        // Again is always a relearn step and may repeat freely; other buttons requeue only while the
-        // chosen interval is a learning step and the per-card cap hasn't been hit.
-        let is_again = ease == 1;
-        let requeue = is_again
-            || (self.is_learning_step(card, ease) && front.learn_requeues < self.requeue_cap());
-        if requeue {
-            let learn_requeues = front.learn_requeues + u32::from(!is_again);
-            self.queue.lock().unwrap().push_back(QueuedCard {
-                card: self.refresh_previews(&front.card, ease),
-                learn_requeues,
-            });
-        } else {
-            *self.graduated.lock().unwrap() += 1;
-        }
+        // Pool mode additionally reschedules the card offline and logs the grade for the daily
+        // limits. That write shares save_answer's loud-failure contract: a failure rolls the buffered
+        // answer back and re-fronts the card rather than leaving the pool and the session disagreeing.
+        let pool_grade = match &self.pool {
+            Some(pool) => match self.reschedule_in_pool(card, ease, pool) {
+                Ok(outcome) => Some(outcome),
+                Err(e) => {
+                    if get_db_connection().is_ok() {
+                        let _ = remove_buffered_answers(vec![answer.id]);
+                    }
+                    self.queue.lock().unwrap().push_front(front);
+                    return Err(e);
+                }
+            },
+            None => None,
+        };
+
+        let requeued = self.requeue_or_graduate(&front, card, ease, pool_grade.as_ref());
 
         self.history.lock().unwrap().push(GradeEvent {
             answer: answer.clone(),
             front_before: front,
-            requeued: requeue,
+            requeued,
+            pool_undo: pool_grade.map(|o| o.undo),
         });
 
         *self.is_revealed.lock().unwrap() = false;
         Ok(Some(answer))
+    }
+}
+
+/// Session-internal helpers, kept out of the `#[uniffi::export]` impl so the macro never tries to
+/// lift/lower the private types (`QueuedCard`, `PoolContext`, `PoolGradeOutcome`) they traffic in.
+impl ReviewSession {
+    /// Put the graded card back in the session or let it graduate, returning whether it requeued.
+    ///
+    /// Again is always a relearn step and may repeat freely; other buttons requeue only while the
+    /// chosen interval is a learning step and the per-card cap hasn't been hit. In pool mode the
+    /// card's freshly scheduled due time (within the learn-ahead window) drives that instead, with
+    /// the same per-card cap bounding an endless Hard. A pool-mode copy is slotted by due time so it
+    /// comes back in the right order; cards with no due time (review/new) sort last.
+    fn requeue_or_graduate(
+        &self,
+        front: &QueuedCard,
+        card: &WearosCard,
+        ease: i32,
+        pool_grade: Option<&PoolGradeOutcome>,
+    ) -> bool {
+        let is_again = ease == 1;
+        let requeue = pool_grade.map_or_else(
+            || {
+                is_again
+                    || (self.is_learning_step(card, ease)
+                        && front.learn_requeues < self.requeue_cap())
+            },
+            |outcome| {
+                outcome.due_at_secs.is_some_and(|at| at <= outcome.now_secs + LEARN_AHEAD_SECS)
+                    && front.learn_requeues < self.requeue_cap()
+            },
+        );
+        if !requeue {
+            *self.graduated.lock().unwrap() += 1;
+            return false;
+        }
+
+        let next_card = pool_grade.map_or_else(
+            || self.refresh_previews(&front.card, ease),
+            |outcome| outcome.stored_card.clone(),
+        );
+        let entry = QueuedCard {
+            card: next_card,
+            learn_requeues: front.learn_requeues + u32::from(!is_again),
+        };
+        match pool_grade {
+            Some(outcome) => {
+                let due_at = outcome.due_at_secs.unwrap_or(i64::MAX);
+                let mut queue = self.queue.lock().unwrap();
+                match queue.iter().position(|qc| qc.card.due_at_secs.unwrap_or(i64::MAX) > due_at) {
+                    Some(pos) => queue.insert(pos, entry),
+                    None => queue.push_back(entry),
+                }
+            }
+            None => self.queue.lock().unwrap().push_back(entry),
+        }
+        true
+    }
+
+    /// Reschedule one graded card in the pool and log the grade, returning what the session needs to
+    /// requeue or (on undo) restore it.
+    fn reschedule_in_pool(
+        &self,
+        card: &WearosCard,
+        ease: i32,
+        pool: &PoolContext,
+    ) -> Result<PoolGradeOutcome, CoreError> {
+        let now_ms = unix_millis() as i64;
+        let now_secs = now_ms.div_euclid(1_000);
+        let today = day_index(now_ms, pool.utc_offset_secs, pool.rollover_hour);
+        let (stored_card, due_day, due_at_secs) =
+            self.pool_placement(card, ease, today, now_ms, now_secs);
+
+        let snapshot = pool_card_snapshot(card.id)?.unwrap_or_else(|| PoolCardSnapshot {
+            card: card.clone(),
+            due_day: None,
+            due_at_secs: None,
+            graded: false,
+        });
+        let kind_before = grade_kind_before(card.state.as_ref());
+
+        pool_update_card(stored_card.clone(), due_day, due_at_secs, true)?;
+        let grade_log_id = pool_log_grade(self.deck_id, card.id, today, kind_before)?;
+
+        Ok(PoolGradeOutcome {
+            stored_card,
+            due_at_secs,
+            now_secs,
+            undo: PoolUndo { snapshot, grade_log_id },
+        })
+    }
+
+    /// The card's next pool placement for this grade: the stored card with its refreshed state and
+    /// labels, plus the due day (day+) or due time (sub-day) it is scheduled for.
+    ///
+    /// With the deck's config and the card's state this mirrors the interval previews; without them
+    /// (older phone, mock cards) it falls back to the shipped label's unit, hiding the card until
+    /// tomorrow when the label is a day+ interval. The next phone refresh corrects either guess.
+    fn pool_placement(
+        &self,
+        card: &WearosCard,
+        ease: i32,
+        today: i64,
+        now_ms: i64,
+        now_secs: i64,
+    ) -> (WearosCard, Option<i64>, Option<i64>) {
+        let (Some(config), Some(state)) = (&self.schedule_config, &card.state) else {
+            let is_step = interval_label(card, ease).map_or(ease == 1, label_is_subday);
+            let (due_day, due_at_secs) =
+                if is_step { (None, Some(now_secs + 600)) } else { (Some(today + 1), None) };
+            return (WearosCard { due_day, due_at_secs, ..card.clone() }, due_day, due_at_secs);
+        };
+
+        let slot = usize::try_from(ease - 1).unwrap_or(0).min(3);
+        let secs = preview_interval_secs(config, state, now_ms).get(slot).copied().unwrap_or(0.0);
+        let next_state = CardScheduleState {
+            last_review_secs: now_secs,
+            ..advance_state(config, state, ease, now_ms)
+        };
+        let (due_day, due_at_secs) = if secs < SECS_PER_DAY {
+            (None, Some(now_secs + secs.round() as i64))
+        } else {
+            (Some(today + next_state.interval_days.round().max(1.0) as i64), None)
+        };
+        let labels = preview_labels_for_buttons(config, &next_state, now_ms, card.button_count);
+        let stored = WearosCard {
+            next_review_times: labels,
+            state: Some(next_state),
+            due_day,
+            due_at_secs,
+            ..card.clone()
+        };
+        (stored, due_day, due_at_secs)
     }
 
     /// How many learning-step reappearances this session tolerates before forcing graduation.
@@ -265,7 +449,10 @@ impl ReviewSession {
         let labels = preview_labels_for_buttons(config, &next_state, now_ms, card.button_count);
         WearosCard { next_review_times: labels, state: Some(next_state), ..card.clone() }
     }
+}
 
+#[uniffi::export]
+impl ReviewSession {
     /// Whether there's a graded review to step back to.
     pub fn can_undo(&self) -> bool {
         !self.history.lock().unwrap().is_empty()
@@ -292,11 +479,36 @@ impl ReviewSession {
             return Err(e);
         }
 
+        // Pool mode also put the grade back into the pool row and grade log; restore both, or fail
+        // loudly with the event back on history so nothing but the buffer diverges.
+        if let Some(undo) = &event.pool_undo {
+            let restore = pool_update_card(
+                undo.snapshot.card.clone(),
+                undo.snapshot.due_day,
+                undo.snapshot.due_at_secs,
+                undo.snapshot.graded,
+            )
+            .and_then(|()| pool_unlog_grade(undo.grade_log_id));
+            if let Err(e) = restore {
+                self.history.lock().unwrap().push(event);
+                return Err(e);
+            }
+        }
+
         {
             let mut queue = self.queue.lock().unwrap();
             if event.requeued {
-                // The copy we pushed on grade is the newest tail entry.
-                queue.pop_back();
+                if event.pool_undo.is_some() {
+                    // Pool mode slots the requeued copy by due time, so it is not necessarily the
+                    // tail: pull back the copy carrying this card's id.
+                    let card_id = event.front_before.card.id;
+                    if let Some(pos) = queue.iter().rposition(|qc| qc.card.id == card_id) {
+                        queue.remove(pos);
+                    }
+                } else {
+                    // The copy we pushed on grade is the newest tail entry.
+                    queue.pop_back();
+                }
             }
             queue.push_front(event.front_before);
         }
@@ -363,6 +575,17 @@ fn interval_label(card: &WearosCard, ease: i32) -> Option<&str> {
     };
     let idx = idx.min(card.next_review_times.len() - 1);
     card.next_review_times.get(idx).map(String::as_str)
+}
+
+/// The kind of card a grade consumed, for the pool's daily limits: 0 new, 2 review, else learning
+/// (including relearning). A card that was new is queue 0; a review-queue card is queue 2, or a
+/// review card sitting somewhere other than the learning queue.
+fn grade_kind_before(state: Option<&CardScheduleState>) -> i64 {
+    match state {
+        Some(s) if s.queue == 0 => GRADE_KIND_NEW,
+        Some(s) if s.queue == 2 || (s.card_type == 2 && s.queue != 1) => GRADE_KIND_REVIEW,
+        _ => GRADE_KIND_LEARNING,
+    }
 }
 
 /// True for sub-day interval units (seconds/minutes/hours), false for day/month/year. Labels look

@@ -2440,4 +2440,243 @@ mod tests {
 
         cleanup_db(&path);
     }
+
+    // ---- Pool-backed review sessions (grading schedules offline) ----
+
+    /// A deck config with the given learning steps (minutes) and daily limits, no FSRS.
+    fn pool_schedule_config(
+        learn_minutes: &[f64],
+        new_per_day: i32,
+        reviews_per_day: i32,
+    ) -> DeckScheduleConfig {
+        parse_deck_schedule_config(
+            serde_json::json!({
+                "new": { "delays": learn_minutes, "ints": [1, 4], "perDay": new_per_day },
+                "rev": { "hardFactor": 1.2, "ivlFct": 1.0, "ease4": 1.3, "perDay": reviews_per_day },
+                "lapse": { "delays": [10.0] }
+            })
+            .to_string(),
+        )
+        .unwrap()
+    }
+
+    fn pool_config_batch(
+        deck_id: i64,
+        config: DeckScheduleConfig,
+        cards: Vec<WearosCard>,
+    ) -> WearosDueBatch {
+        WearosDueBatch {
+            deck_id,
+            deck_name: "Deck".to_string(),
+            cards,
+            rollover_hour: DEFAULT_ROLLOVER_HOUR,
+            fetched_at_ms: POOL_NOW_MS,
+            schedule_config: Some(config),
+        }
+    }
+
+    /// A review-queue card with a 10-day interval and ease 2.5, due on `due_day`.
+    fn pool_review_card(id: i64, due_day: i64) -> WearosCard {
+        pool_card_full(
+            id,
+            "R",
+            Some(due_day),
+            None,
+            Some(CardScheduleState {
+                queue: 2,
+                card_type: 2,
+                interval_days: 10.0,
+                ease_factor: 2.5,
+                elapsed_days: 10.0,
+                ..Default::default()
+            }),
+        )
+    }
+
+    /// The Anki day of the real clock, which `answer_card` reschedules against. The fixed POOL_*
+    /// constants would drift from it, so pool-grading tests use this and a real `now_ms`.
+    fn pool_real_today() -> (i64, i64) {
+        let now_ms = crate::util::unix_millis() as i64;
+        (now_ms, day_index(now_ms, 0, DEFAULT_ROLLOVER_HOUR))
+    }
+
+    #[test]
+    fn grading_a_review_card_good_in_a_pool_session_schedules_it_for_its_interval_and_logs_the_grade()
+     {
+        let _guard = db_test_guard();
+        let path = pool_db("pool_grade_review");
+        let (now_ms, today) = pool_real_today();
+
+        // reviews_per_day = 1 so a second card stays held back until a grade is logged.
+        let config = pool_schedule_config(&[1.0, 10.0], 20, 1);
+        let cards = vec![pool_review_card(1, today), pool_review_card(2, today)];
+        pool_store_batch(pool_config_batch(1, config, cards)).unwrap();
+
+        let session = ReviewSession::from_pool(1, now_ms, 0).unwrap();
+        assert_eq!(session.get_total_cards(), 1, "the daily review limit caps today's queue");
+        session.answer_card(3, 1_000).unwrap();
+        assert_eq!(
+            session.get_progress_string(),
+            "1/1",
+            "Good schedules a day+ interval, so it graduates"
+        );
+
+        let snap = pool_card_snapshot(1).unwrap().unwrap();
+        assert_eq!(
+            snap.due_day,
+            Some(today + 25),
+            "Good on a 10-day review card schedules 25 days out"
+        );
+        assert!(snap.due_at_secs.is_none());
+        assert!(snap.graded, "a locally scheduled card is marked graded");
+
+        // The graded card left the pool for a future day, and the review grade spent the daily limit.
+        let after = pool_today_batch(1, now_ms, 0).unwrap();
+        assert!(after.cards.is_empty(), "the graded card is gone and the review limit is spent");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn grading_a_new_card_again_in_a_pool_session_requeues_it_at_its_first_step() {
+        let _guard = db_test_guard();
+        let path = pool_db("pool_grade_new_again");
+        let (now_ms, _) = pool_real_today();
+
+        let config = pool_schedule_config(&[1.0, 10.0], 20, 200);
+        let new_card = pool_card_full(1, "N", None, None, Some(pool_card_state(0)));
+        pool_store_batch(pool_config_batch(1, config, vec![new_card])).unwrap();
+
+        let session = ReviewSession::from_pool(1, now_ms, 0).unwrap();
+        let before = crate::util::unix_secs();
+        session.answer_card(1, 1_000).unwrap();
+        let after = crate::util::unix_secs();
+
+        assert_eq!(session.get_progress_string(), "0/1", "Again requeues the card this session");
+        assert_eq!(session.get_current_card().unwrap().id, 1);
+
+        let snap = pool_card_snapshot(1).unwrap().unwrap();
+        let due_at = snap.due_at_secs.unwrap();
+        assert!(
+            due_at >= before + 60 && due_at <= after + 60,
+            "the first step is one minute out: got {due_at}"
+        );
+        assert!(snap.due_day.is_none());
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn a_learning_card_whose_next_step_is_an_hour_away_leaves_the_session_and_returns_within_the_learn_ahead_window()
+     {
+        let _guard = db_test_guard();
+        let path = pool_db("pool_learning_hour");
+        let (now_ms, _) = pool_real_today();
+
+        let config = pool_schedule_config(&[1.0, 60.0], 20, 200);
+        let learning = pool_card_full(
+            1,
+            "L",
+            None,
+            Some(now_ms.div_euclid(1_000) - 60),
+            Some(CardScheduleState {
+                queue: 1,
+                card_type: 1,
+                learning_step: 0,
+                ..Default::default()
+            }),
+        );
+        pool_store_batch(pool_config_batch(1, config, vec![learning])).unwrap();
+
+        let session = ReviewSession::from_pool(1, now_ms, 0).unwrap();
+        session.answer_card(3, 0).unwrap();
+        assert_eq!(session.get_progress_string(), "1/1", "a step an hour out leaves the session");
+        assert!(session.get_current_card().is_none());
+
+        let due_at_ms = pool_card_snapshot(1).unwrap().unwrap().due_at_secs.unwrap() * 1_000;
+        let window_ms = 20 * 60 * 1_000;
+        let inside = pool_today_batch(1, due_at_ms - window_ms, 0).unwrap();
+        assert!(inside.cards.iter().any(|c| c.id == 1), "due inside the learn-ahead window");
+        let outside = pool_today_batch(1, due_at_ms - window_ms - 1, 0).unwrap();
+        assert!(outside.cards.is_empty(), "a moment before the window it is not yet due");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn undo_in_a_pool_session_restores_the_stored_row_and_the_grade_log() {
+        let _guard = db_test_guard();
+        let path = pool_db("pool_undo");
+        let (now_ms, today) = pool_real_today();
+
+        let config = pool_schedule_config(&[1.0, 10.0], 20, 1);
+        let cards = vec![pool_review_card(1, today), pool_review_card(2, today)];
+        pool_store_batch(pool_config_batch(1, config, cards)).unwrap();
+
+        let session = ReviewSession::from_pool(1, now_ms, 0).unwrap();
+        session.answer_card(3, 0).unwrap();
+        assert!(
+            pool_today_batch(1, now_ms, 0).unwrap().cards.is_empty(),
+            "the grade spent the day's review limit"
+        );
+
+        let back = session.undo_last_answer().unwrap().unwrap();
+        assert_eq!(back.id, 1);
+        assert_eq!(session.get_progress_string(), "0/1");
+
+        let snap = pool_card_snapshot(1).unwrap().unwrap();
+        assert_eq!(snap.due_day, Some(today), "the pre-grade due day is restored");
+        assert!(!snap.graded, "the graded flag is restored");
+
+        let after = pool_today_batch(1, now_ms, 0).unwrap();
+        assert_eq!(after.cards.len(), 1);
+        assert_eq!(after.cards[0].id, 1, "un-logging the grade frees the review limit again");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn a_pool_grade_stamps_last_review_on_the_stored_card_state() {
+        let _guard = db_test_guard();
+        let path = pool_db("pool_last_review");
+        let (now_ms, today) = pool_real_today();
+
+        let config = pool_schedule_config(&[1.0, 10.0], 20, 200);
+        pool_store_batch(pool_config_batch(1, config, vec![pool_review_card(1, today)])).unwrap();
+
+        let session = ReviewSession::from_pool(1, now_ms, 0).unwrap();
+        let before = crate::util::unix_secs();
+        session.answer_card(3, 0).unwrap();
+        let after = crate::util::unix_secs();
+
+        let state = pool_card_snapshot(1).unwrap().unwrap().card.state.unwrap();
+        assert!(
+            state.last_review_secs >= before && state.last_review_secs <= after,
+            "the stored card is stamped with the review time: got {}",
+            state.last_review_secs
+        );
+        assert!(state.elapsed_days.abs() < f64::EPSILON, "a just-graded card has no elapsed days");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn a_session_built_from_a_batch_leaves_the_card_pool_untouched() {
+        let _guard = db_test_guard();
+        let path = pool_db("non_pool_session");
+        let (_, today) = pool_real_today();
+
+        let card = pool_review_card(1, today);
+        pool_store_batch(pool_batch(1, "Deck", vec![card.clone()])).unwrap();
+
+        // A batch-built session has no pool context, so grading only touches the buffer.
+        let session = ReviewSession::new(pool_batch(1, "Deck", vec![card]));
+        session.answer_card(3, 0).unwrap();
+
+        let snap = pool_card_snapshot(1).unwrap().unwrap();
+        assert_eq!(snap.due_day, Some(today), "the stored row is untouched");
+        assert!(!snap.graded, "a batch-built session never writes the pool");
+
+        cleanup_db(&path);
+    }
 }
