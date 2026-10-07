@@ -6,11 +6,14 @@ import android.database.Cursor
 import android.content.Context
 import android.net.Uri
 import android.util.Log
+import java.util.TimeZone
 import uniffi.wearos_core.CardScheduleState
 import uniffi.wearos_core.DeckScheduleConfig
 import uniffi.wearos_core.WearosAnswer
 import uniffi.wearos_core.WearosCard
 import uniffi.wearos_core.WearosDueBatch
+import uniffi.wearos_core.dayIndex
+import uniffi.wearos_core.defaultRolloverHour
 import uniffi.wearos_core.parseDeckScheduleConfig
 import uniffi.wearos_core.parseReviewTimes
 
@@ -25,7 +28,11 @@ data class WriteBackOutcome(val settled: List<String>, val unplaced: List<String
   }
 }
 
-class AnkiDroidBridge(private val context: Context) {
+class AnkiDroidBridge(
+  private val context: Context,
+  private val clock: () -> Long = System::currentTimeMillis,
+  private val timeZone: TimeZone = TimeZone.getDefault(),
+) {
   companion object {
     private const val TAG = "AnkiDroidBridge"
     private const val AUTHORITY = "com.ichi2.anki.flashcards"
@@ -72,6 +79,29 @@ class AnkiDroidBridge(private val context: Context) {
     // Review count, bumped by a real answerCard. Write-back re-reads it to confirm an answer stuck,
     // since the provider swallows a scheduler error and still reports a row (see writeAnswersBack).
     private const val COL_REPS = "reps"
+    // Raw due value: an Anki day number for review/day-learning cards, epoch seconds for intraday
+    // learning cards. The pool uses it for new-card ordering and intraday due times.
+    private const val COL_DUE = "due"
+
+    // Everything readCardRow needs. Explicit, because the provider's default Card projection carries
+    // no scheduler columns: a null projection on the cards search would ship stateless pool cards.
+    private val CARD_ROW_PROJECTION =
+      arrayOf(
+        "_id",
+        "question",
+        "answer",
+        COL_NOTE_ID,
+        COL_CARD_ORD,
+        COL_QUEUE,
+        COL_CARD_TYPE,
+        COL_DUE,
+        COL_INTERVAL,
+        COL_LEFT,
+        COL_FSRS_STABILITY,
+        COL_FSRS_DIFFICULTY,
+        COL_SM2_FACTOR,
+        COL_LAST_REVIEW_SECS,
+      )
 
     // Deck scheduling config lives in the deck's OPTIONS column as rslib's schema11 JSON.
     private const val COL_DECK_OPTIONS = "options"
@@ -108,12 +138,63 @@ class AnkiDroidBridge(private val context: Context) {
     // Notes search endpoint: the selection string is an Anki browser query (col.findNotes).
     private val NOTES_URI = Uri.parse("content://$AUTHORITY/notes")
 
+    // Cards search endpoint: the selection is an Anki browser query (col.findCards). Older AnkiDroid
+    // builds lack it (query throws or returns null), so the pool then falls back to today's batch.
+    private val CARDS_URI = Uri.parse("content://$AUTHORITY/cards")
+
     // Dedupe store: ids of answers already applied to the collection, so a re-send after a missed
     // clear_answers can never double-apply (e.g. a relearn card re-presented in the same session).
     // Persisted (re-sends span separate syncs / process restarts) and capped to the most recent N.
     private const val DEDUPE_PREFS = "writeback_applied"
     private const val KEY_APPLIED_IDS = "applied_ids"
     private const val MAX_APPLIED_IDS = 500
+  }
+
+  /**
+   * Shared columns of one card-cursor row, parsed once for both the per-card fetch and the pool
+   * searches. [due] is the raw `due` column when the cursor exposes it.
+   */
+  private class CardRow(
+    val id: Long,
+    val noteId: Long,
+    val ord: Int,
+    val front: String,
+    val back: String,
+    val due: Long?,
+    val state: CardScheduleState?,
+  )
+
+  /**
+   * Read one card cursor row's shared columns (id, note_id, ord, question, answer, scheduler state).
+   * note_id/ord come from the cursor only when it actually carries them: the per-card fetch's
+   * projection predates them and passes the schedule row's [fallbackNoteId]/[fallbackOrd] instead.
+   */
+  private fun readCardRow(
+    cursor: Cursor,
+    fallbackNoteId: Long,
+    fallbackOrd: Int,
+    config: DeckScheduleConfig?,
+  ): CardRow {
+    fun index(name: String): Int = cursor.getColumnIndex(name)
+
+    fun longOr(name: String, fallback: Long): Long =
+      index(name).let { if (it != -1 && !cursor.isNull(it)) cursor.getLong(it) else fallback }
+
+    val names = cursor.columnNames ?: emptyArray<String>()
+    return CardRow(
+      id = longOr("_id", 0L),
+      noteId = if ("note_id" in names) longOr(COL_NOTE_ID, fallbackNoteId) else fallbackNoteId,
+      ord =
+        if ("ord" in names) {
+          index(COL_CARD_ORD).let { if (it != -1 && !cursor.isNull(it)) cursor.getInt(it) else fallbackOrd }
+        } else {
+          fallbackOrd
+        },
+      front = index("question").let { if (it != -1 && !cursor.isNull(it)) cursor.getString(it) else "No Front Text" },
+      back = index("answer").let { if (it != -1 && !cursor.isNull(it)) cursor.getString(it) else "No Back Text" },
+      due = index(COL_DUE).let { if (it != -1 && !cursor.isNull(it)) cursor.getLong(it) else null },
+      state = readCardState(cursor, config),
+    )
   }
 
   /**
@@ -222,16 +303,22 @@ class AnkiDroidBridge(private val context: Context) {
           if (it != -1 && !cursor.isNull(it)) cursor.getDouble(it) else 0.0
         },
       elapsedDays = elapsedDaysFor(cursor),
+      lastReviewSecs = lastReviewSecsFor(cursor),
     )
+  }
+
+  /** The card's raw last-review epoch seconds, or 0 when unknown. */
+  private fun lastReviewSecsFor(cursor: Cursor): Long {
+    val idx = cursor.getColumnIndex(COL_LAST_REVIEW_SECS)
+    if (idx == -1 || cursor.isNull(idx)) return 0L
+    return cursor.getLong(idx).coerceAtLeast(0L)
   }
 
   /** Days since the card's last review, from the provider's epoch-seconds column. */
   private fun elapsedDaysFor(cursor: Cursor): Double {
-    val idx = cursor.getColumnIndex(COL_LAST_REVIEW_SECS)
-    if (idx == -1 || cursor.isNull(idx)) return 0.0
-    val lastSeconds = cursor.getLong(idx)
+    val lastSeconds = lastReviewSecsFor(cursor)
     if (lastSeconds <= 0) return 0.0
-    val elapsedSeconds = System.currentTimeMillis() / 1000.0 - lastSeconds
+    val elapsedSeconds = clock() / 1000.0 - lastSeconds
     return (elapsedSeconds / 86_400.0).coerceAtLeast(0.0)
   }
 
@@ -431,56 +518,40 @@ class AnkiDroidBridge(private val context: Context) {
           val nextReviewTimes = parseReviewTimes(reviewTimesRaw)
 
           // 2. Fetch Card Front/Back dynamically by path-appended card URI
-          var front = "No Front Text"
-          var back = "No Back Text"
-          var cardId = 0L
-
           val cardUri = Uri.parse("content://$AUTHORITY/notes/$noteId/cards/$ord")
-          var cardState: CardScheduleState? = null
+          var row =
+            CardRow(
+              id = 0L,
+              noteId = noteId,
+              ord = ord,
+              front = "No Front Text",
+              back = "No Back Text",
+              due = null,
+              state = null,
+            )
           val cardCursor =
             contentResolver.query(
               cardUri,
-              arrayOf(
-                "_id",
-                "question",
-                "answer",
-                COL_QUEUE,
-                COL_CARD_TYPE,
-                COL_INTERVAL,
-                COL_LEFT,
-                COL_FSRS_STABILITY,
-                COL_FSRS_DIFFICULTY,
-                COL_SM2_FACTOR,
-                COL_LAST_REVIEW_SECS,
-              ),
+              CARD_ROW_PROJECTION,
               null,
               null,
               null,
             )
 
           cardCursor?.use { cCursor ->
-            if (cCursor.moveToFirst()) {
-              val idIdx = cCursor.getColumnIndex("_id")
-              val qIdx = cCursor.getColumnIndex("question")
-              val aIdx = cCursor.getColumnIndex("answer")
-
-              if (idIdx != -1) cardId = cCursor.getLong(idIdx)
-              if (qIdx != -1) front = cCursor.getString(qIdx)
-              if (aIdx != -1) back = cCursor.getString(aIdx)
-              cardState = readCardState(cCursor, scheduleConfig)
-            }
+            if (cCursor.moveToFirst()) row = readCardRow(cCursor, noteId, ord, scheduleConfig)
           }
 
           cards.add(
             WearosCard(
-              id = cardId,
-              noteId = noteId,
-              ord = ord,
-              front = front,
-              back = back,
+              id = row.id,
+              noteId = row.noteId,
+              ord = row.ord,
+              front = row.front,
+              back = row.back,
               buttonCount = buttonCount,
               nextReviewTimes = nextReviewTimes,
-              state = cardState,
+              state = row.state,
             )
           )
         }
@@ -499,6 +570,118 @@ class AnkiDroidBridge(private val context: Context) {
       return WearosDueBatch(deckId = deckId.value, deckName = "Deck ${deckId.value}", cards = emptyList())
     }
   }
+
+  /**
+   * Fetch a multi-day card pool for [deckId]: today's scheduler queue plus the next [horizonDays]
+   * days of due cards, so the watch can keep reviewing offline for days. Today's cards keep
+   * AnkiDroid's exact interval labels; the rest carry their scheduler state and absolute due day and
+   * the watch recomputes the labels from the deck config.
+   *
+   * Falls back to today's batch alone in mock mode, when AnkiDroid is unreachable, when the deck no
+   * longer exists, or on an AnkiDroid too old to expose the cards search endpoint.
+   */
+  fun fetchDuePool(
+    deckId: DeckId,
+    todayLimit: Int,
+    horizonDays: Int = POOL_HORIZON_DAYS,
+    forceMock: Boolean = false,
+  ): WearosDueBatch {
+    val today = fetchDueBatch(deckId, todayLimit, forceMock)
+    if (forceMock || !isAnkiDroidAvailable()) return today
+    val allDecks = fetchAllDecks()
+    val (resolvedDeckId, resolvedDeckName) = allDecks.find { it.first == deckId } ?: return today
+    // did: matches one deck exactly, while today's scheduler batch includes subdecks; list them too.
+    val deckIds =
+      allDecks
+        .filter { (id, name) -> id == resolvedDeckId || name.startsWith("$resolvedDeckName::") }
+        .joinToString(",") { it.first.value.toString() }
+
+    val config = fetchDeckScheduleConfig(resolvedDeckId.value)
+    val now = clock()
+    val utcOffsetSecs = timeZone.getOffset(now) / 1000
+    // AnkiDroid doesn't expose its own "next day starts at" hour yet (ankidroid/Anki-Android#20773
+    // tracks that), so the pool uses Anki's default rollover to number its days.
+    val rollover = defaultRolloverHour()
+    val todayIndex = dayIndex(now, utcOffsetSecs, rollover)
+    // Kept last and parenthesized: on AnkiDroid 2.25.1 a search that starts with did: ignores every
+    // term after it (verified on-device), which would ship the whole deck as "due tomorrow".
+    val deckSelector = "(did:$deckIds)"
+
+    // Ids already in the pool, so a card that shows up in more than one search (or in today's queue)
+    // is carried once, under the earliest group.
+    val collected: MutableSet<Long> = today.cards.mapTo(HashSet<Long>()) { it.id }
+
+    val learningRows = searchCards("is:learn -is:suspended -is:buried $deckSelector", config) ?: return today
+    val learning =
+      learningRows
+        .filter { it.state?.queue == 1 }
+        .filter { collected.add(it.id) }
+        .map { poolCard(it, dueDay = null, dueAtSecs = it.due) }
+
+    val upcoming = buildList {
+      for (k in 1..horizonDays) {
+        val rows = searchCards("prop:due=$k -is:suspended -is:buried $deckSelector", config) ?: continue
+        for (row in rows) {
+          if (collected.add(row.id)) add(poolCard(row, dueDay = todayIndex + k, dueAtSecs = null))
+        }
+      }
+    }
+
+    val newRows = searchCards("is:new -is:suspended -is:buried $deckSelector", config) ?: return today
+    // No config means no known daily new limit, so ship none rather than an unbounded slice.
+    val allowance = if (config == null) 0 else newCardAllowance(config.newPerDay, horizonDays)
+    val newCards =
+      newRows
+        .sortedBy { it.due ?: Long.MAX_VALUE }
+        .filter { collected.add(it.id) }
+        .take(allowance)
+        .map { poolCard(it, dueDay = null, dueAtSecs = null) }
+
+    return WearosDueBatch(
+      deckId = resolvedDeckId.value,
+      deckName = resolvedDeckName,
+      cards = orderedPool(today.cards, learning, upcoming, newCards),
+      rolloverHour = rollover,
+      fetchedAtMs = now,
+      scheduleConfig = config,
+    )
+  }
+
+  /** Today's Anki day number for this bridge's clock and time zone, for date-scoped decisions. */
+  fun todayDayIndex(): Long {
+    val now = clock()
+    return dayIndex(now, timeZone.getOffset(now) / 1000, defaultRolloverHour())
+  }
+
+  /** One Anki browser search against the cards endpoint; null when the endpoint is unavailable. */
+  private fun searchCards(search: String, config: DeckScheduleConfig?): List<CardRow>? =
+    try {
+      context.contentResolver.query(CARDS_URI, CARD_ROW_PROJECTION, search, null, null)?.use { cursor ->
+        buildList {
+          while (cursor.moveToNext()) {
+            add(readCardRow(cursor, fallbackNoteId = 0L, fallbackOrd = 0, config = config))
+          }
+        }
+      }
+    } catch (e: Exception) {
+      Log.w(TAG, "Cards search '$search' failed (${e.message}); assuming no cards endpoint.")
+      null
+    }
+
+  /** A pool card: no interval labels (the watch recomputes them), always four grade buttons. */
+  private fun poolCard(row: CardRow, dueDay: Long?, dueAtSecs: Long?): WearosCard =
+    WearosCard(
+      id = row.id,
+      noteId = row.noteId,
+      ord = row.ord,
+      front = row.front,
+      back = row.back,
+      buttonCount = 4,
+      nextReviewTimes = emptyList(),
+      dueDay = dueDay,
+      dueAtSecs = dueAtSecs,
+      state = row.state,
+    )
 
   /**
    * Fetch up to [limit] NEW cards from a deck so the user can study ahead from the watch, bypassing
