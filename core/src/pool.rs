@@ -146,6 +146,27 @@ pub fn pool_has_deck(deck_id: i64) -> Result<bool, CoreError> {
     Ok(count > 0)
 }
 
+/// Minimum age of a deck's pool before a write-back triggers a refetch from the phone.
+const RECONCILE_INTERVAL_MS: i64 = 30 * 60 * 1_000;
+
+/// Whether a deck's pool is old enough to be worth refetching after a write-back.
+///
+/// The pool already schedules offline, so the refetch only corrects drift against AnkiDroid; doing it after every
+/// upload would re-send the whole pool every few minutes of study. A deck that isn't pooled is
+/// never refetched this way.
+#[uniffi::export]
+pub fn pool_needs_reconcile(deck_id: i64, now_ms: i64) -> Result<bool, CoreError> {
+    let conn = get_db_connection()?;
+    let fetched_at: Option<i64> = conn
+        .query_row(
+            "SELECT fetched_at_ms FROM pool_decks WHERE deck_id = ?1",
+            params![deck_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(fetched_at.is_some_and(|at| now_ms.saturating_sub(at) >= RECONCILE_INTERVAL_MS))
+}
+
 /// Every card id stored in the pool, so the watch can prune its cached card images against it.
 #[uniffi::export]
 pub fn pool_card_ids() -> Result<Vec<i64>, CoreError> {
