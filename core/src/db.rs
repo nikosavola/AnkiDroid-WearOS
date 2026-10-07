@@ -21,6 +21,12 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// weekly/monthly stat wants it later.
 const REVIEW_LOG_RETENTION_SECS: i64 = 30 * 24 * 60 * 60;
 
+/// How far back [`init_database`] keeps grade_log rows, in Anki days. The pool only consults today's
+/// counts, so older rows are dead weight. Rows carry an Anki day number (local, rollover-shifted),
+/// but init has no timezone, so the window is measured in UTC days: that can retain one day too
+/// many, never prune a current day.
+const GRADE_LOG_RETENTION_DAYS: i64 = 30;
+
 /// How many times the phone may report a buffered answer as examined-but-unplaceable before it is
 /// discarded. A genuinely applicable answer clears within a sync or two; one the phone keeps failing
 /// to place (card deleted / suspended / never reaching the deck head) would otherwise be re-sent
@@ -97,6 +103,53 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
     conn.execute(
         "DELETE FROM review_log WHERE answered_at < ?1",
         params![unix_secs() - REVIEW_LOG_RETENTION_SECS],
+    )?;
+
+    // The multi-day card pool (see pool.rs): each deck's schedule config + fetch age, its cards, and
+    // an append-only log of grades per day backing the daily new/review limits.
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS pool_decks (
+            deck_id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL,
+            config BLOB,
+            rollover_hour INTEGER NOT NULL,
+            fetched_at_ms INTEGER NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS pool_cards (
+            card_id INTEGER PRIMARY KEY,
+            deck_id INTEGER NOT NULL,
+            note_id INTEGER NOT NULL,
+            ord INTEGER NOT NULL,
+            position INTEGER NOT NULL,
+            card BLOB NOT NULL,
+            due_day INTEGER,
+            due_at_secs INTEGER,
+            is_new INTEGER NOT NULL,
+            graded INTEGER NOT NULL DEFAULT 0
+        )",
+        [],
+    )?;
+    // A missing column on a DB created before it existed; the CREATE above covers fresh DBs.
+    if !column_exists(&conn, "pool_cards", "graded")? {
+        conn.execute("ALTER TABLE pool_cards ADD COLUMN graded INTEGER NOT NULL DEFAULT 0", [])?;
+    }
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_pool_cards_deck_id ON pool_cards(deck_id)", [])?;
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS grade_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            deck_id INTEGER NOT NULL,
+            card_id INTEGER NOT NULL,
+            day INTEGER NOT NULL,
+            kind INTEGER NOT NULL
+        )",
+        [],
+    )?;
+    conn.execute(
+        "DELETE FROM grade_log WHERE day < ?1",
+        params![unix_secs().div_euclid(86_400) - GRADE_LOG_RETENTION_DAYS],
     )?;
 
     {

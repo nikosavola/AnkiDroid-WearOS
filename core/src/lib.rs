@@ -10,6 +10,7 @@ mod decks;
 mod fsrs6;
 mod html;
 mod models;
+mod pool;
 mod proto;
 mod sched;
 mod session;
@@ -31,6 +32,7 @@ pub use db::{
 pub use decks::*;
 pub use html::*;
 pub use models::*;
+pub use pool::*;
 pub use sched::*;
 pub use session::*;
 pub use sync::*;
@@ -2147,5 +2149,295 @@ mod tests {
         let defaults = parse_deck_schedule_config("{}".to_string()).unwrap();
         assert_eq!(defaults.new_per_day, 20);
         assert_eq!(defaults.reviews_per_day, 200);
+    }
+
+    // ---- Multi-day card pool (pool.rs) ----
+
+    /// 2026-10-07 05:00 UTC, which is Anki day 20733 with the default 4am rollover at UTC offset 0.
+    const POOL_NOW_SECS: i64 = 1_791_349_200;
+    const POOL_NOW_MS: i64 = POOL_NOW_SECS * 1_000;
+    const POOL_DAY: i64 = 20_733;
+
+    fn pool_card_state(queue: i32) -> CardScheduleState {
+        CardScheduleState { queue, ..Default::default() }
+    }
+
+    fn pool_card_full(
+        id: i64,
+        front: &str,
+        due_day: Option<i64>,
+        due_at_secs: Option<i64>,
+        state: Option<CardScheduleState>,
+    ) -> WearosCard {
+        WearosCard {
+            id,
+            note_id: id * 10,
+            ord: 0,
+            front: front.to_string(),
+            back: "A".to_string(),
+            button_count: 4,
+            next_review_times: vec![
+                "1m".to_string(),
+                "10m".to_string(),
+                "4d".to_string(),
+                "7d".to_string(),
+            ],
+            due_day,
+            due_at_secs,
+            state,
+        }
+    }
+
+    fn pool_batch(deck_id: i64, name: &str, cards: Vec<WearosCard>) -> WearosDueBatch {
+        WearosDueBatch {
+            deck_id,
+            deck_name: name.to_string(),
+            cards,
+            rollover_hour: DEFAULT_ROLLOVER_HOUR,
+            fetched_at_ms: POOL_NOW_MS,
+            schedule_config: None,
+        }
+    }
+
+    /// A fresh, empty DB on a unique path for a pool test.
+    fn pool_db(name: &str) -> String {
+        let path = std::env::temp_dir()
+            .join(format!("test_wearos_pool_{name}.db"))
+            .to_string_lossy()
+            .to_string();
+        cleanup_db(&path);
+        init_database(path.clone()).unwrap();
+        path
+    }
+
+    #[test]
+    fn storing_a_pool_builds_todays_queue_in_learning_review_new_order() {
+        let _guard = db_test_guard();
+        let path = pool_db("queue_order");
+
+        let learning =
+            pool_card_full(1, "L", None, Some(POOL_NOW_SECS - 60), Some(pool_card_state(1)));
+        let review = pool_card_full(2, "R", Some(POOL_DAY), None, Some(pool_card_state(2)));
+        let new_card = pool_card_full(3, "N", None, None, Some(pool_card_state(0)));
+        let tomorrow = pool_card_full(4, "T", Some(POOL_DAY + 1), None, Some(pool_card_state(2)));
+        pool_store_batch(pool_batch(1, "Deck", vec![learning, review, new_card, tomorrow]))
+            .unwrap();
+
+        let batch = pool_today_batch(1, POOL_NOW_MS, 0).unwrap();
+        assert_eq!(batch.deck_name, "Deck");
+        let ids: Vec<i64> = batch.cards.iter().map(|c| c.id).collect();
+        assert_eq!(ids, vec![1, 2, 3], "learning, then review, then new; tomorrow's card waits");
+
+        // Past tomorrow's rollover the pooled card joins the queue as a due review.
+        let next = pool_today_batch(1, POOL_NOW_MS + 86_400_000, 0).unwrap();
+        assert!(
+            next.cards.iter().any(|c| c.id == 4),
+            "the card due tomorrow is included the next day"
+        );
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn a_learning_card_due_in_thirty_minutes_is_not_yet_in_todays_queue() {
+        let _guard = db_test_guard();
+        let path = pool_db("learn_ahead");
+
+        let soon =
+            pool_card_full(1, "L", None, Some(POOL_NOW_SECS + 1_800), Some(pool_card_state(1)));
+        pool_store_batch(pool_batch(7, "Deck", vec![soon])).unwrap();
+
+        let batch = pool_today_batch(7, POOL_NOW_MS, 0).unwrap();
+        assert!(batch.cards.is_empty(), "30 minutes is past the 20-minute learn-ahead window");
+
+        let summaries = pool_deck_summaries(POOL_NOW_MS, 0).unwrap();
+        let summary = summaries.iter().find(|s| s.deck_id == 7).unwrap();
+        assert_eq!(summary.due_now, 0);
+        assert_eq!(summary.learning_later, 1, "the card is counted as due later today");
+        assert_eq!(summary.next_learning_due_secs, Some(POOL_NOW_SECS + 1_800));
+
+        // Fifteen minutes later the card falls inside the window and joins today's queue.
+        let batch = pool_today_batch(7, POOL_NOW_MS + 15 * 60 * 1_000, 0).unwrap();
+        assert_eq!(batch.cards.len(), 1);
+        assert_eq!(batch.cards[0].id, 1);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn daily_limits_cap_reviews_and_new_cards_then_reset_next_day() {
+        let _guard = db_test_guard();
+        let path = pool_db("limits");
+
+        let config = parse_deck_schedule_config(
+            serde_json::json!({ "new": { "perDay": 1 }, "rev": { "perDay": 2 } }).to_string(),
+        )
+        .unwrap();
+        let mut cards = Vec::new();
+        for id in 1..=3 {
+            cards.push(pool_card_full(id, "R", Some(POOL_DAY), None, Some(pool_card_state(2))));
+        }
+        for id in 4..=5 {
+            cards.push(pool_card_full(id, "N", None, None, Some(pool_card_state(0))));
+        }
+        let batch = WearosDueBatch {
+            deck_id: 9,
+            deck_name: "Deck".to_string(),
+            cards,
+            rollover_hour: DEFAULT_ROLLOVER_HOUR,
+            fetched_at_ms: POOL_NOW_MS,
+            schedule_config: Some(config),
+        };
+        pool_store_batch(batch).unwrap();
+
+        let today = pool_today_batch(9, POOL_NOW_MS, 0).unwrap();
+        let count_queue = |batch: &WearosDueBatch, queue: i32| {
+            batch
+                .cards
+                .iter()
+                .filter(|c| c.state.as_ref().is_some_and(|s| s.queue == queue))
+                .count()
+        };
+        assert_eq!(count_queue(&today, 2), 2, "reviews_per_day caps the review bucket");
+        assert_eq!(count_queue(&today, 0), 1, "new_per_day caps the new bucket");
+
+        // Two review grades and one new grade for today exhaust both limits.
+        pool_log_grade(9, 1, POOL_DAY, 2).unwrap();
+        pool_log_grade(9, 2, POOL_DAY, 2).unwrap();
+        pool_log_grade(9, 4, POOL_DAY, 0).unwrap();
+        let drained = pool_today_batch(9, POOL_NOW_MS, 0).unwrap();
+        assert_eq!(count_queue(&drained, 2), 0, "spent reviews stay spent for the day");
+        assert_eq!(count_queue(&drained, 0), 0, "spent new cards stay spent for the day");
+
+        // The next Anki day resets the counts.
+        let next = pool_today_batch(9, POOL_NOW_MS + 86_400_000, 0).unwrap();
+        assert_eq!(count_queue(&next, 2), 2);
+        assert_eq!(count_queue(&next, 0), 1);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn restoring_a_batch_keeps_a_card_with_a_buffered_answer_and_replaces_the_rest() {
+        let _guard = db_test_guard();
+        let path = pool_db("restore");
+
+        let x_old = pool_card_full(1, "old-x", None, None, Some(pool_card_state(2)));
+        let y_old = pool_card_full(2, "old-y", None, None, Some(pool_card_state(2)));
+        pool_store_batch(pool_batch(1, "Deck", vec![x_old, y_old])).unwrap();
+
+        // Card 1 has a locally buffered grade, so the watch's copy is newer than the phone's.
+        save_answer(WearosAnswer {
+            id: "buffered".to_string(),
+            note_id: 10,
+            ord: 0,
+            ease: 3,
+            time_taken_ms: 1_000,
+            deck_id: 1,
+        })
+        .unwrap();
+
+        let x_new = pool_card_full(1, "new-x", None, None, Some(pool_card_state(2)));
+        let y_new = pool_card_full(2, "new-y", None, None, Some(pool_card_state(2)));
+        pool_store_batch(pool_batch(1, "Deck", vec![x_new, y_new])).unwrap();
+
+        assert_eq!(
+            pool_card(1).unwrap().unwrap().front,
+            "old-x",
+            "the buffered card keeps local state"
+        );
+        assert_eq!(
+            pool_card(2).unwrap().unwrap().front,
+            "new-y",
+            "the un-buffered card is refreshed"
+        );
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn pool_queue_keeps_shipped_labels_for_a_fresh_today_card_and_recomputes_otherwise() {
+        let _guard = db_test_guard();
+        let path = pool_db("labels");
+
+        let config = sm2_deck_config();
+        // A due_day card's shipped labels are stale, so they must be recomputed from config + state.
+        let mut due_card = pool_card_full(
+            1,
+            "R",
+            Some(POOL_DAY),
+            None,
+            Some(CardScheduleState {
+                queue: 2,
+                card_type: 2,
+                interval_days: 10.0,
+                ease_factor: 2.5,
+                elapsed_days: 10.0,
+                ..Default::default()
+            }),
+        );
+        due_card.next_review_times = vec!["bogus".to_string()];
+        let untouched = pool_card_full(2, "U", None, None, Some(pool_card_state(2)));
+
+        let batch = WearosDueBatch {
+            deck_id: 3,
+            deck_name: "Deck".to_string(),
+            cards: vec![due_card.clone(), untouched.clone()],
+            rollover_hour: DEFAULT_ROLLOVER_HOUR,
+            fetched_at_ms: POOL_NOW_MS,
+            schedule_config: Some(config.clone()),
+        };
+        pool_store_batch(batch).unwrap();
+
+        let today = pool_today_batch(3, POOL_NOW_MS, 0).unwrap();
+        let by_id = |batch: &WearosDueBatch, id: i64| {
+            batch.cards.iter().find(|c| c.id == id).unwrap().next_review_times.clone()
+        };
+        let expected =
+            preview_labels_for_buttons(&config, due_card.state.as_ref().unwrap(), POOL_NOW_MS, 4);
+        assert_eq!(by_id(&today, 1), expected, "a due_day card is recomputed");
+        assert_eq!(
+            by_id(&today, 2),
+            untouched.next_review_times,
+            "an untouched card from today's fetched-today batch keeps the phone's labels"
+        );
+
+        // The next day the batch is stale, so even the untouched card is recomputed.
+        let next_ms = POOL_NOW_MS + 86_400_000;
+        let next = pool_today_batch(3, next_ms, 0).unwrap();
+        let expected_next =
+            preview_labels_for_buttons(&config, untouched.state.as_ref().unwrap(), next_ms, 4);
+        assert_eq!(by_id(&next, 2), expected_next, "a stale batch's labels are recomputed");
+        assert_ne!(by_id(&next, 2), untouched.next_review_times);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn pool_queue_refreshes_elapsed_days_from_the_last_review() {
+        let _guard = db_test_guard();
+        let path = pool_db("elapsed");
+
+        let stale = CardScheduleState {
+            queue: 2,
+            card_type: 2,
+            interval_days: 10.0,
+            ease_factor: 2.5,
+            elapsed_days: 999.0,
+            last_review_secs: POOL_NOW_SECS - 3 * 86_400,
+            ..Default::default()
+        };
+        let card = pool_card_full(1, "R", None, None, Some(stale));
+        pool_store_batch(pool_batch(1, "Deck", vec![card])).unwrap();
+
+        let batch = pool_today_batch(1, POOL_NOW_MS, 0).unwrap();
+        let refreshed = batch.cards[0].state.as_ref().unwrap();
+        assert!(
+            (refreshed.elapsed_days - 3.0).abs() < f64::EPSILON,
+            "elapsed days are recomputed at queue build: got {}",
+            refreshed.elapsed_days
+        );
+
+        cleanup_db(&path);
     }
 }
