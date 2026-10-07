@@ -10,6 +10,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
@@ -44,6 +45,8 @@ fun FinishedScreenContent(
   outstandingCount: Int,
   transformSpec: TransformationSpec,
   onSyncAndBack: () -> Unit,
+  learningLater: Int = 0,
+  learningDueInMinutes: Long? = null,
   newCardControls: (TransformingLazyColumnScope.() -> Unit)? = null,
 ) {
   val listState = rememberTransformingLazyColumnState()
@@ -114,6 +117,23 @@ fun FinishedScreenContent(
           color = Color.LightGray,
           modifier = Modifier.padding(vertical = 8.dp),
         )
+      }
+      // Learning cards that come due later today: finishing the due queue isn't the end of the deck.
+      if (learningLater > 0 && learningDueInMinutes != null) {
+        item {
+          Text(
+            text =
+              pluralStringResource(
+                R.plurals.learning_cards_due_in_minutes,
+                learningLater,
+                learningLater,
+                learningDueInMinutes,
+              ),
+            style = MaterialTheme.typography.labelSmall,
+            color = Color(0xFF66BB6A),
+            modifier = Modifier.padding(vertical = 4.dp),
+          )
+        }
       }
       newCardControls?.invoke(this)
       // Material 3 expressive edge button hugging the bottom bezel: sync answers and go back.

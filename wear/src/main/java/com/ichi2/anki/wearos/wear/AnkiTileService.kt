@@ -1,6 +1,5 @@
 package com.ichi2.anki.wearos.wear
 
-import android.content.Context
 import androidx.wear.protolayout.ActionBuilders
 import androidx.wear.protolayout.LayoutElementBuilders
 import androidx.wear.protolayout.ModifiersBuilders
@@ -16,16 +15,15 @@ import androidx.wear.tiles.RequestBuilders.TileRequest
 import androidx.wear.tiles.TileBuilders.Tile
 import androidx.wear.tiles.TileService
 import com.google.common.util.concurrent.ListenableFuture
-import java.io.File
 import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import uniffi.wearos_core.averageAnswerTimeMs
 import uniffi.wearos_core.formatQueueEta
-import uniffi.wearos_core.initDatabase
+import uniffi.wearos_core.poolDeckSummaries
 
 class AnkiTileService : TileService() {
   override fun onTileRequest(requestParams: TileRequest): ListenableFuture<Tile> {
-    val count = getDueCount(this)
+    val count = getDueCount()
     val caughtUp = count == 0
 
     // Make the whole tile tappable: open the app straight into the review flow.
@@ -72,7 +70,7 @@ class AnkiTileService : TileService() {
               )
               .addContent(
                 text(
-                  etaText(this@AnkiTileService, count).layoutString,
+                  etaText(count).layoutString,
                   typography = Typography.BODY_SMALL,
                   color = colorScheme.onSurfaceVariant,
                 )
@@ -109,9 +107,10 @@ class AnkiTileService : TileService() {
     return ImmediateFuture(resources)
   }
 
-  private fun getDueCount(context: Context): Int {
+  private fun getDueCount(): Int {
     return try {
-      DeckCache.totalDue(context)
+      val nowMs = systemWatchClock.nowMs()
+      poolDeckSummaries(nowMs, utcOffsetSecs(nowMs)).sumOf { it.dueNow }
     } catch (e: Exception) {
       0
     }
@@ -120,23 +119,16 @@ class AnkiTileService : TileService() {
   /**
    * Estimated time to clear the queue. The Rust core formats it from the user's real average answer
    * time (the mean of the locally-buffered reviews) when we have any, and falls back to a flat
-   * per-card estimate otherwise. Reading the buffer requires the Rust DB be initialized; the Tile
-   * process may not have gone through MainActivity, so point the core at the shared buffer first.
+   * per-card estimate otherwise. WearApp.onCreate has already pointed the core at the shared buffer.
    */
-  private fun etaText(context: Context, count: Int): String {
+  private fun etaText(count: Int): String {
     val avgMs =
       try {
-        initDatabase(File(context.filesDir, BUFFER_DB_NAME).absolutePath)
         averageAnswerTimeMs()
       } catch (e: Exception) {
         null
       }
     return formatQueueEta(count, avgMs)
-  }
-
-  companion object {
-    // Must match the buffer file MainActivity initializes, so both read the same answer history.
-    private const val BUFFER_DB_NAME = "wearos_buffer.db"
   }
 
   /**

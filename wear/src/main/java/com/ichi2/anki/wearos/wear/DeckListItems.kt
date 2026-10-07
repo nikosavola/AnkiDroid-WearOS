@@ -58,13 +58,13 @@ fun FolderCard(
 }
 
 /**
- * A studyable deck row. [cardCount] null means the deck isn't cached on the watch yet, shown as "Tap
- * to download"; otherwise "N cards ready" in green. Taps open it offline if cached, else request it.
+ * A studyable deck row. [dueNow] null means the deck isn't pooled on the watch yet, shown as "Tap to
+ * download"; otherwise "N cards ready" in green. Taps open it offline if pooled, else request it.
  */
 @Composable
 fun DeckCard(
   label: String,
-  cardCount: Int?,
+  dueNow: Int?,
   modifier: Modifier,
   onClick: () -> Unit,
   transformation: SurfaceTransformation? = null,
@@ -79,14 +79,14 @@ fun DeckCard(
       )
       Text(
         text =
-          when (cardCount) {
+          when (dueNow) {
             null -> "Tap to download"
             1 -> "1 card ready"
-            else -> "$cardCount cards ready"
+            else -> "$dueNow cards ready"
           },
         style = MaterialTheme.typography.labelSmall,
         color =
-          if (cardCount != null) Color(0xFF66BB6A) else MaterialTheme.colorScheme.onSurfaceVariant,
+          if (dueNow != null) Color(0xFF66BB6A) else MaterialTheme.colorScheme.onSurfaceVariant,
       )
     }
   }

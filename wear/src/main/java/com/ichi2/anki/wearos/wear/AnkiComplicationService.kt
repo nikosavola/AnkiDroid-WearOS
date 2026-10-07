@@ -1,7 +1,6 @@
 package com.ichi2.anki.wearos.wear
 
 import android.app.PendingIntent
-import android.content.Context
 import android.content.Intent
 import androidx.wear.watchface.complications.data.ComplicationData
 import androidx.wear.watchface.complications.data.ComplicationType
@@ -11,6 +10,7 @@ import androidx.wear.watchface.complications.datasource.ComplicationRequest
 import androidx.wear.watchface.complications.datasource.SuspendingComplicationDataSourceService
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import uniffi.wearos_core.poolDeckSummaries
 
 /** Watch-face complication showing the due-card count, same source of truth as [AnkiTileService]. */
 class AnkiComplicationService : SuspendingComplicationDataSourceService() {
@@ -21,15 +21,16 @@ class AnkiComplicationService : SuspendingComplicationDataSourceService() {
 
   override suspend fun onComplicationRequest(request: ComplicationRequest): ComplicationData? {
     if (request.complicationType != ComplicationType.SHORT_TEXT) return null
-    // The framework calls this suspend fn on the main dispatcher; DeckCache.totalDue reads and
-    // zstd-decompresses every cached deck batch via FFI, so it must not run there.
-    return buildComplicationData(getDueCount(this))
+    // The framework calls this suspend fn on the main dispatcher; summarising the pool hits SQLite
+    // via FFI, so it must not run there.
+    return buildComplicationData(getDueCount())
   }
 
-  private suspend fun getDueCount(context: Context): Int =
+  private suspend fun getDueCount(): Int =
     withContext(Dispatchers.IO) {
       try {
-        DeckCache.totalDue(context)
+        val nowMs = systemWatchClock.nowMs()
+        poolDeckSummaries(nowMs, utcOffsetSecs(nowMs)).sumOf { it.dueNow }
       } catch (e: Exception) {
         0
       }

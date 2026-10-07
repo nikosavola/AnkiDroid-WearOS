@@ -11,12 +11,14 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import uniffi.wearos_core.PoolDeckSummary
 import uniffi.wearos_core.deserializeDecks
+import uniffi.wearos_core.poolDeckSummaries
 
 /**
- * UI-state holder for the watch's deck list (cached + known decks), which is expensive to reload from
+ * UI-state holder for the watch's deck list (pooled + known decks), which is expensive to reload from
  * disk, so it survives configuration changes. The Activity stays the review/sync controller - the live
- * ReviewSession, TTS, Rust DB init, the Wearable Data Layer send/receive, the sync receiver, and the
+ * ReviewSession, TTS, the Wearable Data Layer send/receive, the sync receiver, and the
  * cheap-to-reload settings mirror all remain there; the Activity forwards events in (e.g. [loadDecks]
  * from the sync receiver).
  */
@@ -25,8 +27,8 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
     private const val TAG = "WatchViewModel"
   }
 
-  // Decks downloaded to the watch (switchable offline) and the full list known from the phone.
-  var cachedDecks by mutableStateOf<List<DeckCache.CachedDeck>>(emptyList())
+  // Decks pooled on the watch (switchable offline) and the full list known from the phone.
+  var cachedDecks by mutableStateOf<List<PoolDeckSummary>>(emptyList())
     private set
 
   var knownDecks by mutableStateOf<List<Pair<Long, String>>>(emptyList())
@@ -35,24 +37,26 @@ class WatchViewModel(app: Application) : AndroidViewModel(app) {
   fun loadDecks() {
     viewModelScope.launch {
       val app = getApplication<Application>()
-      val cached = withContext(Dispatchers.IO) { DeckCache.listCached(app) }
+      val nowMs = systemWatchClock.nowMs()
+      val offset = utcOffsetSecs(nowMs)
+      val cached = withContext(Dispatchers.IO) { poolDeckSummaries(nowMs, offset) }
       val known = withContext(Dispatchers.IO) { loadKnownDecks(app.filesDir) }
       cachedDecks = cached
       knownDecks = known
-      Log.d(TAG, "Loaded ${cached.size} cached decks, ${known.size} known decks.")
+      Log.d(TAG, "Loaded ${cached.size} pooled decks, ${known.size} known decks.")
     }
   }
 
-  /** The picker list: every known deck plus any cached deck, annotated with its downloaded state. */
+  /** The picker list: every known deck plus any pooled deck, annotated with what is due now. */
   fun deckEntries(): List<DeckEntry> {
-    val cachedById = cachedDecks.associateBy { it.id }
+    val pooledById = cachedDecks.associateBy { it.deckId }
     val byId = LinkedHashMap<Long, DeckEntry>()
     for ((id, name) in knownDecks) {
-      byId[id] = DeckEntry(id, name, cachedById[id]?.cardCount)
+      byId[id] = DeckEntry(id, name, pooledById[id]?.dueNow)
     }
     for (deck in cachedDecks) {
-      if (!byId.containsKey(deck.id)) {
-        byId[deck.id] = DeckEntry(deck.id, deck.name, deck.cardCount)
+      if (!byId.containsKey(deck.deckId)) {
+        byId[deck.deckId] = DeckEntry(deck.deckId, deck.name, deck.dueNow)
       }
     }
     return byId.values.toList()
