@@ -39,6 +39,7 @@ object CardImageCache {
       inputStream.use { input ->
         FileOutputStream(outputFile).use { output -> input.copyTo(output) }
       }
+      CardBitmaps.evict(cardId, side)
       Log.i(TAG, "Successfully cached image locally on watch: img_${cardId}_$side.png")
     } catch (e: Exception) {
       Log.e(TAG, "Failed to cache image asset for card $cardId ($side): ${e.message}", e)
@@ -52,6 +53,7 @@ object CardImageCache {
    */
   fun deleteImage(context: Context, cardId: Long, side: String) {
     try {
+      CardBitmaps.evict(cardId, side)
       if (getImagePath(context, cardId, side).delete()) {
         Log.i(TAG, "Deleted phone-withdrawn card image: img_${cardId}_$side.png")
       }
@@ -68,6 +70,7 @@ object CardImageCache {
    * [restoreMissingImages] from the Data Item the phone still holds.
    */
   fun pruneImages(context: Context, validCardIds: Set<Long>) {
+    CardBitmaps.clear()
     try {
       getImagesDir(context).listFiles()?.forEach { f ->
         val id = f.name.removePrefix("img_").substringBefore('_').toLongOrNull()
@@ -113,6 +116,7 @@ object CardImageCache {
   }
 
   fun clearAll(context: Context) {
+    CardBitmaps.clear()
     try {
       val dir = getImagesDir(context)
       dir.listFiles()?.forEach { it.delete() }

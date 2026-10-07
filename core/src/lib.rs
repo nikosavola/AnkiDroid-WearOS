@@ -646,6 +646,22 @@ mod tests {
     }
 
     #[test]
+    fn test_upcoming_card_ids_skip_the_current_card() {
+        let _guard = no_db_guard();
+        let session = ReviewSession::new(WearosDueBatch {
+            deck_id: 1,
+            deck_name: "T".to_string(),
+            cards: vec![learning_card(1), learning_card(2), learning_card(3)],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
+            schedule_config: None,
+        });
+        assert_eq!(session.upcoming_card_ids(1), vec![2]);
+        assert_eq!(session.upcoming_card_ids(5), vec![2, 3]);
+        assert_eq!(single_card_session(learning_card(9)).upcoming_card_ids(2), Vec::<i64>::new());
+    }
+
+    #[test]
     fn test_progress_fraction_tracks_graduated_over_initial() {
         let _guard = no_db_guard();
         let session = ReviewSession::new(WearosDueBatch {

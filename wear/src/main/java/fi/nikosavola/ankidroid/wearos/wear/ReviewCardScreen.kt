@@ -56,6 +56,7 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
   // the default clock from AppScaffold).
   val emptyTimeText: @Composable () -> Unit = {}
   val reviewTimeText = if (hideClock) emptyTimeText else null
+  PrefetchUpcomingImages(session, card.id)
   ScreenScaffold(scrollState = scrollState, timeText = reviewTimeText) {
     if (!isRevealed) {
       ReviewFront(session, card, displayFront, curvedStyle, scrollState) {
