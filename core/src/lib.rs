@@ -1141,6 +1141,37 @@ mod tests {
     }
 
     #[test]
+    fn test_same_second_answers_keep_insertion_order() {
+        // created_at has 1-second resolution, so grades answered back to back in a learning chain can
+        // share a timestamp; rowid breaks the tie. Swapping them would hand write-back a chain out of
+        // order, which it must never apply.
+        let _guard = db_test_guard();
+        let db_path =
+            std::env::temp_dir().join("test_wearos_same_second.db").to_string_lossy().to_string();
+        cleanup_db(&db_path);
+        init_database(db_path.clone()).unwrap();
+
+        let ids = ["first", "second", "third", "fourth"];
+        for (i, id) in ids.iter().enumerate() {
+            save_answer(WearosAnswer {
+                id: id.to_string(),
+                note_id: 7,
+                ord: 0,
+                ease: 3,
+                time_taken_ms: 100 + i as i64,
+                deck_id: 1,
+            })
+            .unwrap();
+        }
+
+        let buffered = get_buffered_answers().unwrap();
+        let got: Vec<&str> = buffered.iter().map(|a| a.id.as_str()).collect();
+        assert_eq!(got, ids, "same-second answers must come back in insertion order");
+
+        cleanup_db(&db_path);
+    }
+
+    #[test]
     fn test_record_unplaced_only_touches_reported_ids() {
         let _guard = db_test_guard();
         let db_path =

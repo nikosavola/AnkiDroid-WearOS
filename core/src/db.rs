@@ -165,9 +165,11 @@ pub fn reviews_since(since_secs: i64) -> Result<i32, CoreError> {
 #[uniffi::export]
 pub fn get_buffered_answers() -> Result<Vec<WearosAnswer>, CoreError> {
     let conn = get_db_connection()?;
+    // rowid breaks ties within the same second: created_at has 1-second resolution, so a fast
+    // learning chain can stamp several grades with one timestamp and come back swapped.
     let mut stmt = conn.prepare(
         "SELECT id, note_id, card_ord, ease, time_taken_ms, deck_id
-         FROM buffered_answers ORDER BY created_at ASC",
+         FROM buffered_answers ORDER BY created_at ASC, rowid ASC",
     )?;
 
     let rows = stmt.query_map([], |row| {
