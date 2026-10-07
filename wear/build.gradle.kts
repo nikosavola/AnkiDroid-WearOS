@@ -7,14 +7,15 @@ plugins {
 
 android {
   namespace = "com.ichi2.anki.wearos.wear"
-  compileSdk = 36
+  // Compose 1.13 needs the 37.1+ minor SDK.
+  compileSdk { version = release(37) { minorApiLevel = 2 } }
   // Match the NDK that cargo-ndk uses (ndk.dir) so AGP can strip the bundled .so and doesn't warn.
   ndkVersion = "27.0.12077973"
 
   defaultConfig {
     applicationId = "com.ichi2.anki.wearos"
     minSdk = 30
-    targetSdk = 36
+    targetSdk = 37
     // Play requires distinct versionCodes per form factor within one listing (same applicationId
     // as phone/build.gradle.kts). Scheme: versionCode = release * 10 + formFactor (0 = phone, 1 =
     // wear), so bumping "release" together on both sides keeps them numerically ordered and never
