@@ -11,6 +11,7 @@ import android.util.Log
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
 import android.webkit.WebView
+import androidx.annotation.WorkerThread
 import android.webkit.WebViewClient
 import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.DataClient
@@ -59,6 +60,12 @@ class CardBitmapRenderer(private val context: Context) {
   }
 
   suspend fun render(html: String, width: Int = RENDER_SIZE_PX): ByteArray? {
+    // WebView drawing has to happen on the main thread; PNG encoding is slow and must not.
+    val bitmap = drawOnMain(html, width) ?: return null
+    return withContext(Dispatchers.Default) { encodePng(bitmap) }
+  }
+
+  private suspend fun drawOnMain(html: String, width: Int): Bitmap? {
     return withContext(Dispatchers.Main) {
       if (!slowDrawEnabled) {
         try {
@@ -69,7 +76,7 @@ class CardBitmapRenderer(private val context: Context) {
         }
       }
 
-      val deferred = CompletableDeferred<ByteArray?>()
+      val deferred = CompletableDeferred<Bitmap?>()
       var webViewRef: WebView? = null
 
       try {
@@ -207,7 +214,7 @@ class CardBitmapRenderer(private val context: Context) {
         null
       } finally {
         // One WebView is created per card side; destroy it (native renderer + GL context) instead of
-        // leaking it. The PNG bytes are already captured by the time await() returns, so it's safe.
+        // leaking it. The bitmap is already drawn by the time await() returns, so it's safe.
         webViewRef?.destroy()
       }
     }
@@ -223,7 +230,7 @@ class CardBitmapRenderer(private val context: Context) {
     webView: WebView,
     width: Int,
     attempt: Int,
-    onReady: (ByteArray?) -> Unit,
+    onReady: (Bitmap?) -> Unit,
   ) {
     val readinessJs =
       "(function(){return document.readyState==='complete'&&" +
@@ -248,7 +255,7 @@ class CardBitmapRenderer(private val context: Context) {
    * height maps to device pixels by the display density. Re-lay-out first or the WebView still
    * clips at the old height. Clamped so a pathological layout can't allocate an enormous bitmap.
    */
-  private fun captureFullHeight(webView: WebView, width: Int, onReady: (ByteArray?) -> Unit) {
+  private fun captureFullHeight(webView: WebView, width: Int, onReady: (Bitmap?) -> Unit) {
     val heightJs = "(function(){return document.documentElement.scrollHeight;})()"
     webView.evaluateJavascript(heightJs) { result ->
       val density = context.resources.displayMetrics.density
@@ -260,17 +267,26 @@ class CardBitmapRenderer(private val context: Context) {
     }
   }
 
-  private fun captureBitmap(webView: WebView, width: Int, height: Int): ByteArray? =
+  private fun captureBitmap(webView: WebView, width: Int, height: Int): Bitmap? =
     try {
-      val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-      webView.draw(Canvas(bitmap))
-      val stream = ByteArrayOutputStream()
-      bitmap.compress(Bitmap.CompressFormat.PNG, 95, stream)
-      bitmap.recycle()
-      stream.toByteArray()
+      Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { webView.draw(Canvas(it)) }
     } catch (e: Exception) {
       Log.e(TAG, "Failed to draw WebView to bitmap: ${e.message}", e)
       null
+    }
+
+  @WorkerThread
+  private fun encodePng(bitmap: Bitmap): ByteArray? =
+    try {
+      ByteArrayOutputStream().use { stream ->
+        bitmap.compress(Bitmap.CompressFormat.PNG, 95, stream)
+        stream.toByteArray()
+      }
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to encode card bitmap: ${e.message}", e)
+      null
+    } finally {
+      bitmap.recycle()
     }
 
   /**
