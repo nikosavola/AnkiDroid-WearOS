@@ -44,6 +44,7 @@ import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import java.io.File
 import java.util.Locale
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -98,6 +99,9 @@ class MainActivity : ComponentActivity() {
   internal var pendingDeckId: Long? by mutableStateOf(null)
   // The deck currently open in a review session (for requesting more new cards of it).
   internal var activeDeckId by mutableStateOf<Long?>(null)
+  // The exact bytes the open session was built from. Session progress is only persisted over these,
+  // so a fresh phone batch delivered mid-session isn't clobbered by the session's stale queue.
+  private var sessionCacheBytes: ByteArray? = null
   // Whether the pending request was for new cards, so we can report when none came back.
   internal var pendingIsNew = false
 
@@ -217,6 +221,7 @@ class MainActivity : ComponentActivity() {
   internal fun clearSession() {
     reviewSession?.destroy()
     reviewSession = null
+    sessionCacheBytes = null
   }
 
   /** Parent of a `::` deck path; "" when already at a top-level segment. */
@@ -231,15 +236,17 @@ class MainActivity : ComponentActivity() {
     scope.launch {
       try {
         // File read + Rust deserialize is I/O; keep it off the main thread.
-        val batch =
+        val (batch, cachedBytes) =
           withContext(Dispatchers.IO) {
-            deserializeDueBatch(DeckCache.deckFile(this@MainActivity, deckId).readBytes())
+            val bytes = DeckCache.deckFile(this@MainActivity, deckId).readBytes()
+            deserializeDueBatch(bytes) to bytes
           }
         val session = ReviewSession(batch)
         // Free any previous native session before replacing it.
         reviewSession?.destroy()
         reviewSession = session
         activeDeckId = deckId
+        sessionCacheBytes = cachedBytes
         isReviewing = false
         Log.i(TAG, "Loaded deck '${batch.deckName}' with ${batch.cards.size} cards from cache.")
         if (toastIfEmptyNew && session.getTotalCards() == 0) {
@@ -250,10 +257,40 @@ class MainActivity : ComponentActivity() {
             )
             .show()
         }
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         Log.e(TAG, "Failed to load cached deck $deckId: ${e.message}", e)
         Toast.makeText(this@MainActivity, "Could not open deck.", Toast.LENGTH_SHORT).show()
       }
+    }
+  }
+
+  /**
+   * Overwrite the cached batch with the session's remaining cards so a reopened deck resumes where
+   * the user left off. Best-effort: a failure is logged and never shown, since the graded answer is
+   * already safely buffered. Skipped when the phone replaced the file mid-session (the fresh batch
+   * wins) and when no session/deck is active.
+   */
+  private suspend fun persistSessionProgress(session: ReviewSession) {
+    val deckId = activeDeckId ?: return
+    val expected = sessionCacheBytes ?: return
+    try {
+      val bytes =
+        withContext(Dispatchers.IO) {
+          val serialized = serializeDueBatch(session.remainingBatch())
+          val saved = DeckCache.saveSessionProgress(this@MainActivity, deckId, expected, serialized)
+          serialized.takeIf { saved }
+        }
+      if (bytes != null) {
+        sessionCacheBytes = bytes
+        // The picker's card count is read back from the cache; refresh it to match.
+        vm.loadDecks()
+      }
+    } catch (e: CancellationException) {
+      throw e
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to persist session progress for deck $deckId: ${e.message}", e)
     }
   }
 
@@ -463,8 +500,11 @@ class MainActivity : ComponentActivity() {
       try {
         Log.d(TAG, "Answering card with ease: $ease, duration: $duration")
         kotlinx.coroutines.withContext(Dispatchers.IO) { session.answerCard(ease, duration) }
+        persistSessionProgress(session)
         updateOutstandingCount()
         cardCompletedTrigger++ // Increment to force recomposition of the review screen!
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         // The core restores the card on a failed buffer write (loud-failure contract) so the user
         // can re-grade; tell them, otherwise the screen just sits on the same card looking dead.
@@ -486,8 +526,11 @@ class MainActivity : ComponentActivity() {
     scope.launch {
       try {
         withContext(Dispatchers.IO) { session.undoLastAnswer() }
+        persistSessionProgress(session)
         updateOutstandingCount()
         cardCompletedTrigger++ // recompose the review screen onto the restored card
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         Log.e(TAG, "Undo failed: ${e.message}", e)
       }

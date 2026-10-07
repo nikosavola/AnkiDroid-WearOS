@@ -6,6 +6,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import uniffi.wearos_core.DeckInfo
+import uniffi.wearos_core.ReviewSession
 import uniffi.wearos_core.WearosCard
 import uniffi.wearos_core.WearosDueBatch
 import uniffi.wearos_core.answerHtml
@@ -132,5 +133,43 @@ class CoreFfiTest {
     assertEquals("~30s to finish", formatQueueEta(3, null))
     // Real average answer time (8s/card) drives the estimate: 20 cards -> 160s -> ~3 min.
     assertEquals("~3 min to finish", formatQueueEta(20, 8000L))
+  }
+
+  @Test
+  fun `a graded card leaves the remaining batch`() {
+    val batch =
+      WearosDueBatch(
+        deckId = 5,
+        deckName = "Deck",
+        cards =
+          listOf(
+            WearosCard(
+              id = 1,
+              noteId = 10,
+              ord = 0,
+              front = "Q1",
+              back = "A1",
+              buttonCount = 4,
+              nextReviewTimes = listOf("1m", "10m", "4d", "7d"),
+            ),
+            WearosCard(
+              id = 2,
+              noteId = 20,
+              ord = 0,
+              front = "Q2",
+              back = "A2",
+              buttonCount = 4,
+              nextReviewTimes = listOf("1m", "10m", "4d", "7d"),
+            ),
+          ),
+      )
+    val session = ReviewSession(batch)
+
+    // No schedule config, so the "4d" Good label graduates card 1 out of the session.
+    session.answerCard(3, 1000L)
+
+    val remaining = session.remainingBatch()
+    assertEquals(1, remaining.cards.size)
+    assertEquals(2L, remaining.cards[0].id)
   }
 }
