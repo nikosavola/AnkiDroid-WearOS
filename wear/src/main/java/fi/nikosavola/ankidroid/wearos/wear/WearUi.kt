@@ -6,6 +6,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.graphics.CompositingStrategy
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.wear.compose.foundation.rotary.RotaryScrollableDefaults
 import androidx.wear.compose.foundation.rotary.rotaryScrollable
 import androidx.wear.compose.material3.lazy.ResponsiveTransformationSpec
@@ -45,3 +47,10 @@ fun rememberEdgeMorphSpec(): TransformationSpec {
     ResponsiveTransformationSpec.largeScreen(containerAlpha = edgeAlpha, contentAlpha = edgeAlpha),
   )
 }
+
+/**
+ * Draw static chrome (arcs, curved text) from its own offscreen GPU layer. The layer is only
+ * re-rendered when the chrome itself changes; while the content under it scrolls, each frame just
+ * composites the cached texture instead of re-rasterizing every arc and rotated glyph.
+ */
+fun Modifier.cachedLayer(): Modifier = graphicsLayer(compositingStrategy = CompositingStrategy.Offscreen)

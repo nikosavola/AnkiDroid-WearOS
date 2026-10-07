@@ -71,7 +71,7 @@ fun GradeEdgeButtons(
     // Decorative for a11y - curvedText would otherwise expose each label as its own node, duplicating
     // the accessible overlay below; the overlay is the single labelled + activatable representation.
     CurvedLayout(
-      modifier = Modifier.clearAndSetSemantics {},
+      modifier = Modifier.clearAndSetSemantics {}.cachedLayer(),
       anchor = 90f,
       anchorType = AnchorType.Center,
       angularDirection = CurvedDirection.Angular.Reversed,
