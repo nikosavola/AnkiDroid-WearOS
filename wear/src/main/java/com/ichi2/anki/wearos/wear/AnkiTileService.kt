@@ -3,26 +3,24 @@ package com.ichi2.anki.wearos.wear
 import androidx.wear.protolayout.ActionBuilders
 import androidx.wear.protolayout.LayoutElementBuilders
 import androidx.wear.protolayout.ModifiersBuilders
-import androidx.wear.protolayout.ResourceBuilders
 import androidx.wear.protolayout.TimelineBuilders
+import androidx.wear.protolayout.material3.MaterialScope
 import androidx.wear.protolayout.material3.Typography
-import androidx.wear.protolayout.material3.materialScope
 import androidx.wear.protolayout.material3.primaryLayout
 import androidx.wear.protolayout.material3.text
 import androidx.wear.protolayout.types.layoutString
-import androidx.wear.tiles.RequestBuilders.ResourcesRequest
+import androidx.wear.tiles.Material3TileService
 import androidx.wear.tiles.RequestBuilders.TileRequest
 import androidx.wear.tiles.TileBuilders.Tile
-import androidx.wear.tiles.TileService
-import com.google.common.util.concurrent.ListenableFuture
-import java.util.concurrent.Executor
 import java.util.concurrent.TimeUnit
 import uniffi.wearos_core.averageAnswerTimeMs
 import uniffi.wearos_core.formatQueueEta
 import uniffi.wearos_core.poolDeckSummaries
 
-class AnkiTileService : TileService() {
-  override fun onTileRequest(requestParams: TileRequest): ListenableFuture<Tile> {
+// Material3TileService owns the MaterialScope, dynamic theming and resource plumbing, so the layout
+// below is written directly against the scope it hands us.
+class AnkiTileService : Material3TileService() {
+  override suspend fun MaterialScope.tileResponse(requestParams: TileRequest): Tile {
     val count = getDueCount()
     val caughtUp = count == 0
 
@@ -43,68 +41,52 @@ class AnkiTileService : TileService() {
         .build()
 
     // Material 3 Expressive tile: primaryLayout with a labeled title slot and a stacked main slot.
-    // tiles 1.5 hands us ProtoLayout DeviceParameters directly (no legacy bridge), and materialScope
-    // applies the M3 theme/typography/color scheme.
     val rootLayout =
-      materialScope(this, requestParams.deviceConfiguration) {
-        primaryLayout(
-          titleSlot = {
-            text("AnkiDroid WearOS".layoutString, typography = Typography.LABEL_SMALL)
-          },
-          onClick = launchApp,
-          mainSlot = {
-            LayoutElementBuilders.Column.Builder()
-              .setWidth(androidx.wear.protolayout.DimensionBuilders.expand())
-              .addContent(
-                text(
-                  count.toString().layoutString,
-                  typography = Typography.DISPLAY_LARGE,
-                  color = if (caughtUp) colorScheme.onSurfaceVariant else colorScheme.primary,
-                )
+      primaryLayout(
+        titleSlot = { text("AnkiDroid WearOS".layoutString, typography = Typography.LABEL_SMALL) },
+        onClick = launchApp,
+        mainSlot = {
+          LayoutElementBuilders.Column.Builder()
+            .setWidth(androidx.wear.protolayout.DimensionBuilders.expand())
+            .addContent(
+              text(
+                count.toString().layoutString,
+                typography = Typography.DISPLAY_LARGE,
+                color = if (caughtUp) colorScheme.onSurfaceVariant else colorScheme.primary,
               )
-              .addContent(
-                text(
-                  (if (count == 1) "card due today" else "cards due today").layoutString,
-                  typography = Typography.BODY_MEDIUM,
-                )
+            )
+            .addContent(
+              text(
+                (if (count == 1) "card due today" else "cards due today").layoutString,
+                typography = Typography.BODY_MEDIUM,
               )
-              .addContent(
-                text(
-                  etaText(count).layoutString,
-                  typography = Typography.BODY_SMALL,
-                  color = colorScheme.onSurfaceVariant,
-                )
+            )
+            .addContent(
+              text(
+                etaText(count).layoutString,
+                typography = Typography.BODY_SMALL,
+                color = colorScheme.onSurfaceVariant,
               )
-              .build()
-          },
-        )
-      }
-
-    val tile =
-      Tile.Builder()
-        .setResourcesVersion("1")
-        // Ask the system to re-request the tile periodically so the due count/ETA don't go stale
-        // while the tile sits on the carousel (it otherwise only rebuilds on explicit refresh).
-        .setFreshnessIntervalMillis(TimeUnit.MINUTES.toMillis(30))
-        .setTileTimeline(
-          TimelineBuilders.Timeline.Builder()
-            .addTimelineEntry(
-              TimelineBuilders.TimelineEntry.Builder()
-                .setLayout(LayoutElementBuilders.Layout.Builder().setRoot(rootLayout).build())
-                .build()
             )
             .build()
-        )
-        .build()
+        },
+      )
 
-    return ImmediateFuture(tile)
-  }
-
-  override fun onTileResourcesRequest(
-    requestParams: ResourcesRequest
-  ): ListenableFuture<ResourceBuilders.Resources> {
-    val resources = ResourceBuilders.Resources.Builder().setVersion("1").build()
-    return ImmediateFuture(resources)
+    return Tile.Builder()
+      .setResourcesVersion("1")
+      // Ask the system to re-request the tile periodically so the due count/ETA don't go stale
+      // while the tile sits on the carousel (it otherwise only rebuilds on explicit refresh).
+      .setFreshnessIntervalMillis(TimeUnit.MINUTES.toMillis(30))
+      .setTileTimeline(
+        TimelineBuilders.Timeline.Builder()
+          .addTimelineEntry(
+            TimelineBuilders.TimelineEntry.Builder()
+              .setLayout(LayoutElementBuilders.Layout.Builder().setRoot(rootLayout).build())
+              .build()
+          )
+          .build()
+      )
+      .build()
   }
 
   private fun getDueCount(): Int {
@@ -129,25 +111,5 @@ class AnkiTileService : TileService() {
         null
       }
     return formatQueueEta(count, avgMs)
-  }
-
-  /**
-   * A lightweight, self-contained implementation of ImmediateFuture to avoid importing heavy Guava
-   * library.
-   */
-  private class ImmediateFuture<T>(private val value: T) : ListenableFuture<T> {
-    override fun addListener(listener: Runnable, executor: Executor) {
-      executor.execute(listener)
-    }
-
-    override fun cancel(mayInterruptIfRunning: Boolean): Boolean = false
-
-    override fun isCancelled(): Boolean = false
-
-    override fun isDone(): Boolean = true
-
-    override fun get(): T = value
-
-    override fun get(timeout: Long, unit: TimeUnit): T = value
   }
 }
