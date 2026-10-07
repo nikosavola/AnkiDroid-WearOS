@@ -1,20 +1,22 @@
 package fi.nikosavola.ankidroid.wearos.wear
 
-import android.graphics.Typeface
-import android.view.Gravity
-import android.widget.TextView
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.viewinterop.AndroidView
-import androidx.core.text.HtmlCompat
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.fromHtml
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.Text
 
 /**
- * Renders sanitized card HTML (bold, colors, line breaks, etc.) via HtmlCompat in a TextView. Wear
- * OS has no WebView, so this is the richest safe renderer available. Text color follows the active
- * theme (so it stays legible in light mode); [fontScale] and [cardFont] come from the user's
- * settings. Top-level (state passed in) so it's reusable and testable outside the Activity.
+ * Renders sanitized card HTML (bold, colors, line breaks, etc.) as Compose text. Wear OS has no
+ * WebView, and a Compose [Text] keeps the card in the same render pipeline as the rest of the
+ * screen instead of an interop View. Text color follows the active theme (so it stays legible in
+ * light mode); [fontScale] and [cardFont] come from the user's settings. Top-level (state passed
+ * in) so it's reusable and testable outside the Activity.
  */
 @Composable
 fun HtmlText(
@@ -23,20 +25,30 @@ fun HtmlText(
   cardFont: WatchSettings.CardFont,
   modifier: Modifier = Modifier,
 ) {
-  val textColor = MaterialTheme.colorScheme.onSurface.toArgb()
-  AndroidView(
+  val text = remember(html) { cardTextFromHtml(html) }
+  Text(
+    text = text,
     modifier = modifier,
-    factory = { ctx -> TextView(ctx).apply { gravity = Gravity.CENTER } },
-    update = { tv ->
-      tv.setTextColor(textColor)
-      tv.textSize = 16f * fontScale
-      tv.typeface =
-        when (cardFont) {
-          WatchSettings.CardFont.SERIF -> Typeface.SERIF
-          WatchSettings.CardFont.MONOSPACE -> Typeface.MONOSPACE
-          WatchSettings.CardFont.DEFAULT -> Typeface.DEFAULT
-        }
-      tv.text = HtmlCompat.fromHtml(html, HtmlCompat.FROM_HTML_MODE_COMPACT)
-    },
+    color = MaterialTheme.colorScheme.onSurface,
+    fontSize = 16.sp * fontScale,
+    fontFamily =
+      when (cardFont) {
+        WatchSettings.CardFont.SERIF -> FontFamily.Serif
+        WatchSettings.CardFont.MONOSPACE -> FontFamily.Monospace
+        WatchSettings.CardFont.DEFAULT -> FontFamily.Default
+      },
+    textAlign = TextAlign.Center,
   )
+}
+
+// Html.fromHtml shows a placeholder glyph for every image, and the watch has no media to show.
+private val IMG_TAG = Regex("<img\\b[^>]*>", RegexOption.IGNORE_CASE)
+
+/**
+ * The card's styled text without its links: fromHtml makes `<a href>` clickable, which on a watch
+ * with no browser would throw on tap and swallow the tap that reveals the answer.
+ */
+internal fun cardTextFromHtml(html: String): AnnotatedString {
+  val parsed = AnnotatedString.fromHtml(html.replace(IMG_TAG, ""))
+  return AnnotatedString(parsed.text, parsed.spanStyles, parsed.paragraphStyles)
 }
