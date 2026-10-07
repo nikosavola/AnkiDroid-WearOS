@@ -120,6 +120,7 @@ private fun DeckNodeRow(
     SegmentedListItem(
       onClick = { expanded[path] = !isExpanded },
       shapes = shapes,
+      colors = segmentColors(),
       modifier = Modifier.fillMaxWidth().padding(start = indent),
       leadingContent = {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -182,6 +183,7 @@ private fun DeckNodeRow(
       checked = checkedOf(id),
       onCheckedChange = { onDeckChecked(id, it) },
       shapes = shapes,
+      colors = segmentColors(),
       modifier = Modifier.fillMaxWidth().padding(start = indent + 28.dp),
       leadingContent = { Checkbox(checked = checkedOf(id), onCheckedChange = null) },
       trailingContent = { if (due != null) DuePill(due) },
@@ -243,3 +245,8 @@ private fun DeckSelectionTreePreview() {
     )
   }
 }
+
+/** Unselected segments sit on a container too, so a group reads as one connected card. */
+@Composable
+private fun segmentColors() =
+  ListItemDefaults.segmentedColors(containerColor = MaterialTheme.colorScheme.surfaceContainer)
