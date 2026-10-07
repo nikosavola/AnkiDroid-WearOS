@@ -101,6 +101,19 @@ struct GradeEvent {
     pool_undo: Option<PoolUndo>,
 }
 
+/// Anki shows a learning card ahead of its due time (inside the learn-ahead window) only once
+/// nothing else is left. Requeued learning copies sit in due order ahead of the new and review cards
+/// (`due_at_secs` is None), so when the front one isn't due yet, the first of those goes first.
+fn front_due_card(queue: &mut VecDeque<QueuedCard>, now_secs: i64) {
+    let waiting = queue.front().and_then(|qc| qc.card.due_at_secs).is_some_and(|at| at > now_secs);
+    if waiting
+        && let Some(pos) = queue.iter().position(|qc| qc.card.due_at_secs.is_none())
+        && let Some(card) = queue.remove(pos)
+    {
+        queue.push_front(card);
+    }
+}
+
 #[derive(uniffi::Object)]
 pub struct ReviewSession {
     deck_name: String,
@@ -165,6 +178,7 @@ impl ReviewSession {
         let rollover_hour = batch.rollover_hour;
         let mut session = Self::new(batch);
         session.pool = Some(PoolContext { utc_offset_secs, rollover_hour });
+        front_due_card(&mut session.queue.lock().unwrap(), now_ms.div_euclid(1_000));
         Ok(session)
     }
 
@@ -274,6 +288,9 @@ impl ReviewSession {
         };
 
         let requeued = self.requeue_or_graduate(&front, card, ease, pool_grade.as_ref());
+        if let Some(outcome) = &pool_grade {
+            front_due_card(&mut self.queue.lock().unwrap(), outcome.now_secs);
+        }
 
         self.history.lock().unwrap().push(GradeEvent {
             answer: answer.clone(),
@@ -296,7 +313,8 @@ impl ReviewSession {
     /// chosen interval is a learning step and the per-card cap hasn't been hit. In pool mode the
     /// card's freshly scheduled due time (within the learn-ahead window) drives that instead, with
     /// the same per-card cap bounding an endless Hard. A pool-mode copy is slotted by due time so it
-    /// comes back in the right order; cards with no due time (review/new) sort last.
+    /// comes back in the right order; cards with no due time (review/new) sort last, and
+    /// [`front_due_card`] lets them go first while the copy at the front isn't due yet.
     fn requeue_or_graduate(
         &self,
         front: &QueuedCard,

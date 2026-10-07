@@ -2919,6 +2919,58 @@ mod tests {
     }
 
     #[test]
+    fn a_requeued_learning_card_not_yet_due_waits_behind_the_remaining_new_cards() {
+        let _guard = db_test_guard();
+        let path = pool_db("pool_learning_waits");
+        let (now_ms, _) = pool_real_today();
+
+        let config = pool_schedule_config(&[1.0, 10.0], 20, 200);
+        let cards = vec![
+            pool_card_full(1, "N1", None, None, Some(pool_card_state(0))),
+            pool_card_full(2, "N2", None, None, Some(pool_card_state(0))),
+        ];
+        pool_store_batch(pool_config_batch(1, config, cards)).unwrap();
+
+        let session = ReviewSession::from_pool(1, now_ms, 0).unwrap();
+        session.answer_card(3, 1_000).unwrap();
+        assert_eq!(
+            session.get_current_card().unwrap().id,
+            2,
+            "card 1 is ten minutes out, so the other new card comes first"
+        );
+
+        session.answer_card(3, 1_000).unwrap();
+        assert_eq!(
+            session.get_current_card().unwrap().id,
+            1,
+            "with nothing else left, the earliest learning card is shown ahead of time"
+        );
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn undo_after_a_waiting_learning_card_gave_way_restores_the_graded_card() {
+        let _guard = db_test_guard();
+        let path = pool_db("pool_learning_waits_undo");
+        let (now_ms, _) = pool_real_today();
+
+        let config = pool_schedule_config(&[1.0, 10.0], 20, 200);
+        let cards = vec![
+            pool_card_full(1, "N1", None, None, Some(pool_card_state(0))),
+            pool_card_full(2, "N2", None, None, Some(pool_card_state(0))),
+        ];
+        pool_store_batch(pool_config_batch(1, config, cards)).unwrap();
+
+        let session = ReviewSession::from_pool(1, now_ms, 0).unwrap();
+        session.answer_card(3, 1_000).unwrap();
+        assert_eq!(session.undo_last_answer().unwrap().unwrap().id, 1);
+        assert_eq!(session.remaining_batch().cards.len(), 2, "the requeued copy is gone again");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
     fn a_learning_card_whose_next_step_is_an_hour_away_leaves_the_session_and_returns_within_the_learn_ahead_window()
      {
         let _guard = db_test_guard();
