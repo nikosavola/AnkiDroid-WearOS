@@ -43,6 +43,8 @@ class AnswerSyncE2ETest {
       every { moveToFirst() } returns true
       every { getColumnIndex("note_id") } returns 0
       every { getColumnIndex("ord") } returns 1
+      // No reps column: these tests pin the row-count fallback, not the reps confirmation.
+      every { getColumnIndex("reps") } returns -1
       every { getLong(0) } returns noteId
       every { getInt(1) } returns ord
     }

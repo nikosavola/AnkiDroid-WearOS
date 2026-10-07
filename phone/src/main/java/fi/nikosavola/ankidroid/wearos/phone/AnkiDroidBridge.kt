@@ -58,6 +58,9 @@ class AnkiDroidBridge(private val context: Context) {
     // multiplies by it, so previews need it to match.
     private const val COL_SM2_FACTOR = "sm2_factor"
     private const val COL_LAST_REVIEW_SECS = "last_review_time_secs"
+    // Review count, bumped by a real answerCard. Write-back re-reads it to confirm an answer stuck,
+    // since the provider swallows a scheduler error and still reports a row (see writeAnswersBack).
+    private const val COL_REPS = "reps"
 
     // Deck scheduling config lives in the deck's OPTIONS column as rslib's schema11 JSON.
     private const val COL_DECK_OPTIONS = "options"
@@ -220,6 +223,31 @@ class AnkiDroidBridge(private val context: Context) {
     val elapsedSeconds = System.currentTimeMillis() / 1000.0 - lastSeconds
     return (elapsedSeconds / 86_400.0).coerceAtLeast(0.0)
   }
+
+  /**
+   * The card's review count (reps) from the provider, or null when the query fails, returns no row,
+   * or the provider has no `reps` column (older AnkiDroid). Write-back uses null to fall back to the
+   * update's row count, since a scheduler error the provider swallows still counts a row but never
+   * bumps reps.
+   */
+  private fun readCardReps(contentResolver: ContentResolver, noteId: Long, ord: Int): Long? =
+    try {
+      contentResolver
+        .query(
+          Uri.parse("content://$AUTHORITY/notes/$noteId/cards/$ord"),
+          arrayOf(COL_REPS),
+          null,
+          null,
+          null,
+        )
+        ?.use { cursor ->
+          val idx = cursor.getColumnIndex(COL_REPS)
+          if (idx != -1 && cursor.moveToFirst() && !cursor.isNull(idx)) cursor.getLong(idx) else null
+        }
+    } catch (e: Exception) {
+      Log.w(TAG, "Card reps unavailable for note $noteId/$ord; falling back to the row count.", e)
+      null
+    }
 
   fun isAnkiDroidAvailable(): Boolean {
     return try {
@@ -562,6 +590,11 @@ class AnkiDroidBridge(private val context: Context) {
   /**
    * Write answers back to AnkiDroid's schedule table. Returns the ids of the answers that were
    * actually applied, so only those get cleared from the watch buffer (failed ones stay for retry).
+   *
+   * An applied answer is confirmed by re-reading the card's reps, not by the update's row count: the
+   * provider swallows a scheduler error from `col.sched.answerCard` and still reports a row, so a
+   * count of 1 can mean nothing happened. A real answer bumps reps, a swallowed one does not, and
+   * that answer stays buffered.
    */
   fun writeAnswersBack(answers: List<WearosAnswer>, readOnly: Boolean = false): List<String> {
     if (readOnly) {
@@ -623,6 +656,13 @@ class AnkiDroidBridge(private val context: Context) {
     // required for correctness: a bare update() no-ops on the rslib/v3 backend until a schedule query
     // has reset the scheduler and rebuilt its queue (query-then-update graduates the card, reps++ and
     // a revlog row; a bare update leaves it due).
+    //
+    // AnkiDroid's provider catches a scheduler error (rslib "not at top of queue", etc.) and still
+    // counts the row, so the row count alone can claim an answer applied when nothing happened. After
+    // each update we re-read the card's reps: a real answerCard bumps them, a swallowed one does not.
+    // An answer whose reps did not advance is kept buffered and stops that deck's drain, or the loop
+    // would re-prime and hit the same card forever. Providers without a reps column fall back to the
+    // old row-count rule.
     val deckOrder = remaining.map { it.deckId }.distinct().sortedBy { if (it == 0L) 0 else 1 }
     deckLoop@ for (deckId in deckOrder) {
       while (remaining.isNotEmpty()) {
@@ -648,7 +688,28 @@ class AnkiDroidBridge(private val context: Context) {
               put(COL_REVIEW_EASE, answer.ease.coerceIn(1, 4))
               put(COL_REVIEW_TIME_TAKEN, answer.timeTakenMs)
             }
+          // Reps around the update: a swallowed scheduler error still counts a row, so only a bump in
+          // reps proves the answer landed.
+          val repsBefore = readCardReps(contentResolver, answer.noteId, answer.ord)
           val rowsUpdated = contentResolver.update(SCHEDULE_URI, values, null, null)
+          val repsAfter = readCardReps(contentResolver, answer.noteId, answer.ord)
+          val appliedNow =
+            when {
+              rowsUpdated == 0 -> false
+              repsBefore != null && repsAfter != null -> repsAfter > repsBefore
+              // No reps column (older AnkiDroid): trust the row count as before.
+              else -> true
+            }
+          if (rowsUpdated > 0 && !appliedNow) {
+            // The provider swallowed a scheduler failure: reps did not advance, so this answer was
+            // NOT applied. Keep it buffered and stop this deck rather than re-priming the same card.
+            Log.w(
+              TAG,
+              "Provider reported $rowsUpdated row(s) but reps did not advance for note " +
+                "${answer.noteId}/${answer.ord}; keeping the answer buffered.",
+            )
+            break
+          }
           remaining.removeAt(idx)
           settledIds.add(answer.id)
           if (rowsUpdated > 0) {

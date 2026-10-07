@@ -153,6 +153,36 @@ class WriteBackIntegrationTest {
     assertEquals(listOf("a1"), settled)
     assertEquals(listOf(Applied(111L, 0, 3)), provider.applied)
   }
+
+  @Test
+  fun `an answer the provider swallowed stays buffered and is not marked applied`() {
+    // AnkiDroid catches the scheduler's exception and still reports a row, so the row count alone
+    // would settle a lost review. reps is the real evidence: they didn't move, so the answer must
+    // stay buffered and un-recorded, and a later success must apply it exactly once.
+    provider.seed(listOf(111L to 0))
+    provider.swallowAnswerCardFailure = true
+    val swallowed = writeBack(listOf(answer("a1", 111L, 0, 3)))
+
+    assertTrue("a swallowed answer must stay buffered", swallowed.isEmpty())
+
+    provider.swallowAnswerCardFailure = false
+    val settled = writeBack(listOf(answer("a1", 111L, 0, 3)))
+
+    assertEquals(listOf("a1"), settled)
+    assertEquals("applied exactly once", listOf(Applied(111L, 0, 3)), provider.applied)
+  }
+
+  @Test
+  fun `a provider without a reps column still settles on the row count`() {
+    // Older AnkiDroid exposes no reps column; write-back falls back to the row-count rule so those
+    // builds keep working.
+    provider.seed(listOf(111L to 0))
+    provider.exposeRepsColumn = false
+    val settled = writeBack(listOf(answer("a1", 111L, 0, 3)))
+
+    assertEquals(listOf("a1"), settled)
+    assertEquals(listOf(Applied(111L, 0, 3)), provider.applied)
+  }
 }
 
 /** An answer the fake scheduler actually applied: which card, which ease. */
@@ -171,6 +201,9 @@ data class Applied(val noteId: Long, val ord: Int, val ease: Int)
  */
 class FakeAnkiSchedulerProvider : ContentProvider() {
   private val decks = linkedMapOf<Long, ArrayDeque<Pair<Long, Int>>>()
+  // Review count per card, bumped on a real answer. write-back re-reads it to confirm the answer
+  // landed (the provider swallows a scheduler error and still counts a row).
+  private val reps = mutableMapOf<Pair<Long, Int>, Long>()
   // The collection's current deck (col.decks.current). A null-selection query reverts to it; a
   // deckID= query does not change it. Seeded to the first deck, mirroring "some deck is always current".
   private var currentDeck: Long = 0
@@ -179,12 +212,19 @@ class FakeAnkiSchedulerProvider : ContentProvider() {
   private var primedSinceAnswer = false
   val applied = mutableListOf<Applied>()
 
+  /** When true, [update] reports a row but neither answers the card nor bumps reps. */
+  var swallowAnswerCardFailure = false
+
+  /** When false, the card URI query omits the reps column (older AnkiDroid). */
+  var exposeRepsColumn = true
+
   /** Single-deck seed (deck id 0), for the tests that don't exercise deck selection. */
   fun seed(cards: List<Pair<Long, Int>>) = seedDecks(mapOf(0L to cards))
 
   fun seedDecks(deckCards: Map<Long, List<Pair<Long, Int>>>) {
     decks.clear()
     deckCards.forEach { (deckId, cards) -> decks[deckId] = ArrayDeque(cards) }
+    reps.clear()
     currentDeck = deckCards.keys.firstOrNull() ?: 0
     queriedDeck = currentDeck
     applied.clear()
@@ -204,6 +244,19 @@ class FakeAnkiSchedulerProvider : ContentProvider() {
     selectionArgs: Array<out String>?,
     sortOrder: String?,
   ): Cursor {
+    // Card URI (notes/<noteId>/cards/<ord>): serve the card's reps so write-back can confirm an
+    // answer landed. Without the column, callers fall back to the update's row count.
+    val segments = uri.pathSegments
+    if (segments.firstOrNull() == "notes" && segments.getOrNull(2) == "cards") {
+      val noteId = segments.getOrNull(1)?.toLongOrNull()
+      val ord = segments.getOrNull(3)?.toIntOrNull()
+      if (!exposeRepsColumn || noteId == null || ord == null) {
+        return MatrixCursor(arrayOf("question"))
+      }
+      val cursor = MatrixCursor(arrayOf("reps"))
+      cursor.addRow(arrayOf<Any>(reps.getOrDefault(noteId to ord, 0L)))
+      return cursor
+    }
     // A `deckID=` selection scopes this query to that deck (its id is the last selection arg, per
     // fetchDueBatch's "limit=?,deckID=?" format) WITHOUT persisting it as the current deck. A query
     // with no deckID= reverts to the current deck - the exact behaviour that made select-then-null-
@@ -233,7 +286,14 @@ class FakeAnkiSchedulerProvider : ContentProvider() {
     val queue = decks[queriedDeck] ?: return 0
     val head = queue.firstOrNull() ?: return 0
     val ease = values?.getAsInteger("answer_ease") ?: return 0
+    // AnkiDroid catches the scheduler's exception and still counts the row, so report a row without
+    // touching the queue or reps. write-back must notice the reps didn't move.
+    if (swallowAnswerCardFailure) {
+      primedSinceAnswer = false
+      return 1
+    }
     applied.add(Applied(head.first, head.second, ease))
+    reps[head.first to head.second] = reps.getOrDefault(head.first to head.second, 0L) + 1
     queue.removeFirst()
     primedSinceAnswer = false
     return 1
