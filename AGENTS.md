@@ -90,8 +90,8 @@ grade, so a card that advanced a learning step or graduated would still show pre
 
 - **Config** comes from the deck's `OPTIONS` payload (`FlashCardsContract.Deck`): `new.delays` /
   `lapse.delays` (learning steps, stored in **minutes**), `new.ints` (graduating/easy days),
-  `rev.*` factors, and the FSRS keys (`fsrs_params_6`, `desired_retention`). The dict mixes camelCase
-  and snake_case — read rslib's `deckconfig/schema11.rs` before touching the parser.
+  `rev.*` factors, and the FSRS keys (`fsrsParams6`, `desiredRetention`). AnkiDroid 2.25.1 sends
+  these in camelCase; the parser also accepts snake_case. Check a real payload before touching it.
 - **Per-card state** comes from `FlashCardsContract.Card`: `queue`, `interval`, `left`
   (`left % 1000` = reps before graduation, which gives the learning-step index), `fsrs_stability`,
   `fsrs_difficulty`, `last_review_time_secs`.

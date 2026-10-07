@@ -139,10 +139,10 @@ pub struct CardScheduleState {
 
 /// Parse AnkiDroid's deck `OPTIONS` JSON (rslib's legacy schema11 dict) into a schedule config.
 ///
-/// The dict mixes conventions — `new`/`rev`/`lapse` are camelCase, while `fsrs_params_6` and
-/// `desired_retention` are snake_case — so this reads keys individually rather than deserializing
-/// into a strict struct, and a missing or malformed key falls back to Anki's default instead of
-/// failing the whole sync.
+/// Keys are read individually rather than deserialized into a strict struct, so a missing or
+/// malformed key falls back to Anki's default instead of failing the whole sync. AnkiDroid writes
+/// the FSRS keys in camelCase (`fsrsParams6`, `desiredRetention`); the snake_case spellings are
+/// still accepted.
 #[uniffi::export]
 pub fn parse_deck_schedule_config(options_json: String) -> Result<DeckScheduleConfig, CoreError> {
     let root: Value =
@@ -200,7 +200,7 @@ fn read_per_day(obj: Option<&Value>, default: i32) -> i32 {
 
 /// FSRS weights in preference order: v6, then v5, then the v4 key (`fsrsWeights`).
 fn read_fsrs_weights(root: &Value) -> Vec<f64> {
-    for key in ["fsrs_params_6", "fsrs_params_5", "fsrsWeights"] {
+    for key in ["fsrsParams6", "fsrs_params_6", "fsrsParams5", "fsrs_params_5", "fsrsWeights"] {
         if let Some(arr) = root.get(key).and_then(Value::as_array)
             && !arr.is_empty()
         {
@@ -215,7 +215,9 @@ fn read_fsrs_weights(root: &Value) -> Vec<f64> {
 
 /// Desired retention as a fraction. Anki stores 0.9; some surfaces express it as a percentage.
 fn read_desired_retention(root: &Value) -> Option<f64> {
-    let raw = root.get("desired_retention").and_then(Value::as_f64)?;
+    let raw = ["desiredRetention", "desired_retention"]
+        .iter()
+        .find_map(|key| root.get(*key).and_then(Value::as_f64))?;
     if raw <= 0.0 {
         return None;
     }

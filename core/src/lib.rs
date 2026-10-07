@@ -1515,6 +1515,24 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_deck_options_reads_ankidroid_camel_case_fsrs_keys() {
+        // The shape AnkiDroid 2.25.1 actually sends: empty v4/v5 params, camelCase v6 and retention.
+        let json = serde_json::json!({
+            "fsrsWeights": [],
+            "fsrsParams5": [],
+            "fsrsParams6": [0.0553, 1.4417, 12.8299, 20.2538, 6.6773, 0.562, 3.1718, 0.0276,
+                1.6882, 0.2473, 0.6298, 1.5051, 0.0364, 0.2881, 1.706, 0.3724, 1.8163, 0.7713,
+                0.0184, 0.0456, 0.2128],
+            "desiredRetention": 0.85,
+        })
+        .to_string();
+        let config = parse_deck_schedule_config(json).unwrap();
+        assert_eq!(config.fsrs_weights.len(), 21);
+        assert!(config.fsrs_enabled());
+        assert!((config.desired_retention - 0.85).abs() < 1e-9);
+    }
+
+    #[test]
     fn test_format_interval_label_matches_anki_units() {
         assert_eq!(format_interval_label(30.0), "30s");
         assert_eq!(format_interval_label(60.0), "1m");
