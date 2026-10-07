@@ -81,7 +81,7 @@ dependencies {
 
   implementation(libs.play.services.wearable)
   implementation(libs.androidx.work.runtime)
-  implementation("net.java.dev.jna:jna:5.14.0@aar")
+  implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.play.services)
 
