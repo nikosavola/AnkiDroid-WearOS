@@ -40,7 +40,6 @@ import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.TransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.curvedText
-import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import java.io.File
 import java.util.Locale
@@ -60,8 +59,6 @@ class MainActivity : ComponentActivity() {
     private const val TAG = "WatchMainActivity"
     // How long to keep the sync-progress arc up waiting for the phone's batch before giving up.
     private const val DOWNLOAD_TIMEOUT_MS = 20_000L
-    private const val PATH_ANSWERS = "/answers"
-    private const val KEY_ANSWERS_BYTES = "answers_bytes"
   }
 
   internal var reviewSession by mutableStateOf<ReviewSession?>(null)
@@ -184,9 +181,9 @@ class MainActivity : ComponentActivity() {
 
     // Catch-up flush: grades from a previous session that never got an explicit sync (backed out of
     // a review, or the send failed with the phone out of range) would otherwise sit buffered until
-    // the user notices the nudge. Quiet: no-ops silently when the buffer is empty, and once the
+    // the user notices the nudge. The worker no-ops when the buffer is empty, and once the
     // putDataItem succeeds the Data Layer guarantees delivery to the phone.
-    triggerAnswersSync(quiet = true)
+    AnswerUploadWorker.scheduleNow(this)
 
     // 5. Register Receiver
     val filter =
@@ -215,6 +212,13 @@ class MainActivity : ComponentActivity() {
     // ReviewSession is a UniFFI Object backed by a Rust handle the JVM GC can't size; free it
     // explicitly rather than leaking the native allocation until a GC eventually runs.
     clearSession()
+  }
+
+  override fun onStop() {
+    super.onStop()
+    // Leaving the app mid-session still hands the buffered grades over, rather than waiting for the
+    // next launch.
+    AnswerUploadWorker.scheduleNow(this)
   }
 
   /** Free the native [ReviewSession] before dropping the reference (see onDestroy). */
@@ -436,50 +440,27 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * Send every buffered answer to the phone over the Data Layer. [quiet] suppresses the toasts for
-   * automatic flushes (launch-time catch-up), where "No reviews to sync!" would be noise; failures
-   * are still logged and the answers stay buffered for the next manual or automatic attempt.
+   * Send every buffered answer to the phone over the Data Layer, with user-facing toasts. [quiet]
+   * suppresses them for background flushes where "No reviews to sync!" would be noise; failures are
+   * still logged and the answers stay buffered for the next attempt.
    */
   internal fun triggerAnswersSync(quiet: Boolean = false) {
-    scope.launch(Dispatchers.IO) {
+    scope.launch {
       try {
-        val answers = getBufferedAnswers()
-        if (answers.isEmpty()) {
-          if (!quiet) {
-            launch(Dispatchers.Main) {
-              Toast.makeText(this@MainActivity, "No reviews to sync!", Toast.LENGTH_SHORT).show()
-            }
+        val message =
+          when (uploadBufferedAnswers(this@MainActivity)) {
+            UploadResult.Empty -> "No reviews to sync!"
+            is UploadResult.Sent -> "Syncing reviews..."
           }
-          return@launch
-        }
-
         if (!quiet) {
-          launch(Dispatchers.Main) {
-            Toast.makeText(this@MainActivity, "Syncing reviews...", Toast.LENGTH_SHORT).show()
-          }
+          Toast.makeText(this@MainActivity, message, Toast.LENGTH_SHORT).show()
         }
-
-        val bytes = serializeAnswers(answers)
-        val dataClient = Wearable.getDataClient(this@MainActivity)
-        val putDataReq =
-          PutDataMapRequest.create(PATH_ANSWERS)
-            .apply {
-              dataMap.putByteArray(KEY_ANSWERS_BYTES, bytes)
-              // Vary the item every send so re-sending the same buffered answers (e.g. after a
-              // failed write-back) isn't dropped by DataClient's dedup and can be retried.
-              dataMap.putLong("synced_at", System.currentTimeMillis())
-              setUrgent()
-            }
-            .asPutDataRequest()
-
-        dataClient.putDataItem(putDataReq).await()
-        Log.i(TAG, "Broadcasted ${answers.size} answers to Phone Companion.")
+      } catch (e: CancellationException) {
+        throw e
       } catch (e: Exception) {
         Log.e(TAG, "Sync back failed: ${e.message}", e)
         if (!quiet) {
-          launch(Dispatchers.Main) {
-            Toast.makeText(this@MainActivity, "Sync failed: ${e.message}", Toast.LENGTH_LONG).show()
-          }
+          Toast.makeText(this@MainActivity, "Sync failed: ${e.message}", Toast.LENGTH_LONG).show()
         }
       }
     }
@@ -492,6 +473,9 @@ class MainActivity : ComponentActivity() {
         kotlinx.coroutines.withContext(Dispatchers.IO) { session.answerCard(ease, duration) }
         persistSessionProgress(session)
         updateOutstandingCount()
+        // Hand the grade over soon without putting on every single answer (each put triggers a full
+        // write-back pass on the phone).
+        AnswerUploadWorker.scheduleDebounced(this@MainActivity)
         cardCompletedTrigger++ // Increment to force recomposition of the review screen!
       } catch (e: CancellationException) {
         throw e

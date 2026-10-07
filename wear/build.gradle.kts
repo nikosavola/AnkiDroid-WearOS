@@ -80,6 +80,7 @@ dependencies {
   implementation(libs.wear.watchface.complications.data.source)
 
   implementation(libs.play.services.wearable)
+  implementation(libs.androidx.work.runtime)
   implementation("net.java.dev.jna:jna:5.14.0@aar")
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.play.services)
@@ -89,6 +90,7 @@ dependencies {
   testImplementation(libs.mockk)
   testImplementation(libs.androidx.test.core)
   testImplementation(libs.androidx.test.ext.junit)
+  testImplementation(libs.androidx.work.testing)
   // Plain desktop JNA jar so uniffi's Native.load works under the host test JVM.
   testImplementation(libs.jna.jvm)
   // Compose UI testing (runs under Robolectric).
