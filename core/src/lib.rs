@@ -1869,6 +1869,35 @@ mod tests {
     }
 
     #[test]
+    fn test_previews_are_unchanged_by_computing_fsrs_once_per_card() {
+        // Computing all four ratings in one `next_states` call must give byte-for-byte the same
+        // previews as the previous per-grade computation. These values were recorded from the
+        // pre-refactor build and are exact, not rounded.
+        let config = parse_deck_schedule_config(fsrs_options_with(&W21, 0.9)).unwrap();
+
+        // Review card: Again the relearn step, then Hard 23d, Good 32d, Easy 51d.
+        assert_eq!(
+            preview_interval_secs(&config, &review_state(), 0),
+            vec![600.0, 1_987_200.0, 2_764_800.0, 4_406_400.0],
+        );
+
+        // Learning card on its only step: Again 1m, Hard 1m30s, Good graduates 1d, Easy 2d.
+        let learning = CardScheduleState {
+            queue: 1,
+            card_type: 1,
+            learning_step: 0,
+            stability: 0.0203,
+            difficulty: 9.2,
+            elapsed_days: 1.0,
+            ..Default::default()
+        };
+        assert_eq!(
+            preview_interval_secs(&config, &learning, 0),
+            vec![60.0, 90.0, 86_400.0, 172_800.0],
+        );
+    }
+
+    #[test]
     fn test_advance_state_clears_elapsed_days_after_a_grade() {
         // The card was just reviewed, so its requeued copy must not compute the next preview as if
         // days had passed.
