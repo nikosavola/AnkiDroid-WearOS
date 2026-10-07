@@ -14,6 +14,17 @@ import uniffi.wearos_core.WearosDueBatch
 import uniffi.wearos_core.parseDeckScheduleConfig
 import uniffi.wearos_core.parseReviewTimes
 
+/**
+ * Result of a write-back pass. [settled] are the ids safe to clear from the watch buffer (applied, or
+ * terminally unmatched); [unplaced] are ids the phone examined but could not place this pass, reported
+ * so the watch counts a real failed placement rather than every push.
+ */
+data class WriteBackOutcome(val settled: List<String>, val unplaced: List<String>) {
+  companion object {
+    val NONE = WriteBackOutcome(emptyList(), emptyList())
+  }
+}
+
 class AnkiDroidBridge(private val context: Context) {
   companion object {
     private const val TAG = "AnkiDroidBridge"
@@ -588,15 +599,16 @@ class AnkiDroidBridge(private val context: Context) {
   }
 
   /**
-   * Write answers back to AnkiDroid's schedule table. Returns the ids of the answers that were
-   * actually applied, so only those get cleared from the watch buffer (failed ones stay for retry).
+   * Write answers back to AnkiDroid's schedule table. Returns a [WriteBackOutcome] whose `settled`
+   * ids are safe to clear from the watch buffer (applied, or terminally unmatched) and whose
+   * `unplaced` ids were examined but could not be placed this pass (kept buffered for retry).
    *
    * An applied answer is confirmed by re-reading the card's reps, not by the update's row count: the
    * provider swallows a scheduler error from `col.sched.answerCard` and still reports a row, so a
    * count of 1 can mean nothing happened. A real answer bumps reps, a swallowed one does not, and
    * that answer stays buffered.
    */
-  fun writeAnswersBack(answers: List<WearosAnswer>, readOnly: Boolean = false): List<String> {
+  fun writeAnswersBack(answers: List<WearosAnswer>, readOnly: Boolean = false): WriteBackOutcome {
     if (readOnly) {
       // Safe/read-only test mode: exercise the full sync round-trip (including the clear_answers
       // handshake, which clears the watch buffer) without ever touching the real collection. The
@@ -606,7 +618,7 @@ class AnkiDroidBridge(private val context: Context) {
         "Read-only mode ON: NOT writing ${answers.size} answers to AnkiDroid; reporting them " +
           "settled so the watch buffer clears.",
       )
-      return answers.map { it.id }
+      return WriteBackOutcome(settled = answers.map { it.id }, unplaced = emptyList())
     }
     if (!isAnkiDroidAvailable()) {
       // Provider unreachable (not installed, disabled, mid-update, or the read/write permission
@@ -614,7 +626,7 @@ class AnkiDroidBridge(private val context: Context) {
       // settling here would send clear_answers and permanently drop the user's buffered reviews.
       // Keep everything buffered for a later retry.
       Log.w(TAG, "AnkiDroid unavailable; keeping ${answers.size} answers buffered for retry.")
-      return emptyList()
+      return WriteBackOutcome.NONE
     }
 
     // IDs to clear from the watch buffer = terminal outcomes: either applied (rows > 0) or the card
@@ -623,6 +635,7 @@ class AnkiDroidBridge(private val context: Context) {
     // treated as transient and kept buffered for a later retry, so orphaned answers can't pile up.
     val settledIds = mutableListOf<String>()
     var applied = 0
+    var transientFailure = false
     val contentResolver: ContentResolver = context.contentResolver
 
     // Dedupe defense-in-depth: an answer id we've already applied must never be applied again, even
@@ -730,13 +743,17 @@ class AnkiDroidBridge(private val context: Context) {
               "${e.message}",
             e,
           )
+          transientFailure = true
           break@deckLoop
         }
       }
     }
 
     Log.i(TAG, "Write-back: $applied applied, ${remaining.size} kept for retry/later.")
-    return settledIds
+    // A transient exception says nothing about whether the leftovers are placeable, so report them
+    // unplaced only when the drain finished normally.
+    val unplaced = if (transientFailure) emptyList() else remaining.map { it.id }
+    return WriteBackOutcome(settledIds, unplaced)
   }
 
   /** Ids of answers already applied to the collection, most-recent last. See [DEDUPE_PREFS]. */

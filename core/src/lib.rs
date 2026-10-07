@@ -23,8 +23,8 @@ mod util;
 // stay unexported (reached via `crate::db::...`) — that keeps them plain `pub` in a private module
 // without tripping `redundant_pub_crate`.
 pub use db::{
-    BufferStats, average_answer_time_ms, buffered_answer_stats, bump_send_attempts_and_prune,
-    get_buffered_answers, init_database, remove_buffered_answers, reviews_since, save_answer,
+    BufferStats, average_answer_time_ms, buffered_answer_stats, get_buffered_answers,
+    init_database, record_unplaced_answers, remove_buffered_answers, reviews_since, save_answer,
 };
 pub use decks::*;
 pub use html::*;
@@ -1141,10 +1141,10 @@ mod tests {
     }
 
     #[test]
-    fn test_send_attempts_prune_discards_only_unsettled_orphans() {
+    fn test_record_unplaced_only_touches_reported_ids() {
         let _guard = db_test_guard();
         let db_path =
-            std::env::temp_dir().join("test_wearos_attempts.db").to_string_lossy().to_string();
+            std::env::temp_dir().join("test_wearos_unplaced_ids.db").to_string_lossy().to_string();
         cleanup_db(&db_path);
         init_database(db_path.clone()).unwrap();
 
@@ -1156,21 +1156,93 @@ mod tests {
             time_taken_ms: 100,
             deck_id: 1,
         };
-        save_answer(mk("orphan")).unwrap();
+        save_answer(mk("reported")).unwrap();
+        save_answer(mk("untouched")).unwrap();
 
-        // An answer that never settles is pruned only after MAX_SEND_ATTEMPTS (8) sends; every send
-        // before that keeps it buffered and reports 0 discarded.
-        for _ in 0..8 {
-            assert_eq!(bump_send_attempts_and_prune().unwrap(), 0);
-            assert_eq!(get_buffered_answers().unwrap().len(), 1);
+        // Even well past the cap, only the reported id is touched: the other buffered answer keeps
+        // zero attempts and is never pruned.
+        for _ in 0..(crate::db::MAX_SEND_ATTEMPTS + 2) {
+            assert_eq!(record_unplaced_answers(vec!["reported".to_string()]).unwrap(), 0);
         }
-        assert_eq!(bump_send_attempts_and_prune().unwrap(), 1, "9th send exceeds the cap");
-        assert_eq!(get_buffered_answers().unwrap().len(), 0);
 
-        // A fresh answer added later starts its own count from zero (it isn't collateral).
-        save_answer(mk("fresh")).unwrap();
-        assert_eq!(bump_send_attempts_and_prune().unwrap(), 0);
+        let conn = crate::db::get_db_connection().unwrap();
+        let reported: i64 = conn
+            .query_row(
+                "SELECT send_attempts FROM buffered_answers WHERE id = 'reported'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let untouched: i64 = conn
+            .query_row(
+                "SELECT send_attempts FROM buffered_answers WHERE id = 'untouched'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        drop(conn);
+        assert_eq!(reported, crate::db::MAX_SEND_ATTEMPTS + 2);
+        assert_eq!(untouched, 0, "an unreported answer must never accrue attempts");
+        assert_eq!(get_buffered_answers().unwrap().len(), 2, "both stay buffered while young");
+
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn test_recent_answer_is_not_pruned_even_past_the_attempt_cap() {
+        let _guard = db_test_guard();
+        let db_path = std::env::temp_dir()
+            .join("test_wearos_recent_unplaced.db")
+            .to_string_lossy()
+            .to_string();
+        cleanup_db(&db_path);
+        init_database(db_path.clone()).unwrap();
+
+        save_answer(WearosAnswer {
+            id: "young".to_string(),
+            note_id: 1,
+            ord: 0,
+            ease: 3,
+            time_taken_ms: 100,
+            deck_id: 1,
+        })
+        .unwrap();
+
+        // A learning step can leave an answer unplaceable for a while, so repeated syncs past the cap
+        // must not prune it while it is younger than the minimum orphan age.
+        for _ in 0..(crate::db::MAX_SEND_ATTEMPTS + 5) {
+            assert_eq!(record_unplaced_answers(vec!["young".to_string()]).unwrap(), 0);
+        }
         assert_eq!(get_buffered_answers().unwrap().len(), 1);
+
+        cleanup_db(&db_path);
+    }
+
+    #[test]
+    fn test_old_answer_past_the_cap_is_pruned_and_counted() {
+        let _guard = db_test_guard();
+        let db_path =
+            std::env::temp_dir().join("test_wearos_old_unplaced.db").to_string_lossy().to_string();
+        cleanup_db(&db_path);
+        init_database(db_path.clone()).unwrap();
+
+        // Age the row directly so it is past the minimum orphan age; it starts one below the cap.
+        let conn = crate::db::get_db_connection().unwrap();
+        conn.execute(
+            "INSERT INTO buffered_answers
+                 (id, note_id, card_ord, ease, time_taken_ms, created_at, deck_id, send_attempts)
+             VALUES ('orphan', 1, 0, 3, 100, ?1, 1, ?2)",
+            rusqlite::params![
+                crate::util::unix_secs() - crate::db::MIN_ORPHAN_AGE_SECS - 60,
+                crate::db::MAX_SEND_ATTEMPTS
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        // One more failed placement takes it over the cap; old enough now, so it is pruned and counted.
+        assert_eq!(record_unplaced_answers(vec!["orphan".to_string()]).unwrap(), 1);
+        assert_eq!(get_buffered_answers().unwrap().len(), 0);
 
         cleanup_db(&db_path);
     }

@@ -21,10 +21,16 @@ const BUSY_TIMEOUT: Duration = Duration::from_secs(5);
 /// weekly/monthly stat wants it later.
 const REVIEW_LOG_RETENTION_SECS: i64 = 30 * 24 * 60 * 60;
 
-/// How many times a buffered answer may be sent to the phone without settling before it is
-/// discarded. A genuinely applicable answer clears within a sync or two; one that keeps coming back
-/// (card deleted / suspended / never reaching the deck head) would otherwise be re-sent forever.
-const MAX_SEND_ATTEMPTS: i64 = 8;
+/// How many times the phone may report a buffered answer as examined-but-unplaceable before it is
+/// discarded. A genuinely applicable answer clears within a sync or two; one the phone keeps failing
+/// to place (card deleted / suspended / never reaching the deck head) would otherwise be re-sent
+/// forever. Crate-internal `pub` (like [`DB_CONN`]) so the DB tests can reference it.
+pub const MAX_SEND_ATTEMPTS: i64 = 8;
+
+/// How long an unplaced answer must have been buffered before it is eligible for the orphan prune. A
+/// card behind a learning step can be legitimately unplaceable for a while (its step isn't due on the
+/// phone yet), and quick repeated syncs could otherwise burn through the attempt count in minutes.
+pub const MIN_ORPHAN_AGE_SECS: i64 = 3 * 24 * 60 * 60;
 
 /// Open a connection with the crate's shared settings applied (see [`BUSY_TIMEOUT`]).
 fn open_configured(path: &str) -> Result<Connection, CoreError> {
@@ -67,7 +73,7 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
     )?;
 
     // Migrate older buffers by adding any missing columns (defaults keep already-queued rows valid).
-    // deck_id: 0 = unknown deck. send_attempts: the H4 orphan cap (see bump_send_attempts_and_prune).
+    // deck_id: 0 = unknown deck. send_attempts: the H4 orphan cap (see record_unplaced_answers).
     if !column_exists(&conn, "buffered_answers", "deck_id")? {
         conn.execute(
             "ALTER TABLE buffered_answers ADD COLUMN deck_id INTEGER NOT NULL DEFAULT 0",
@@ -215,21 +221,34 @@ pub fn average_answer_time_ms() -> Result<Option<i64>, CoreError> {
     Ok(avg.map(|a| a.round() as i64))
 }
 
-/// Count one send attempt against every buffered answer and drop those sent too many times.
+/// Count one failed placement against exactly the ids the phone reported unplaced, then drop those
+/// that have now exceeded [`MAX_SEND_ATTEMPTS`] and are older than [`MIN_ORPHAN_AGE_SECS`].
 ///
-/// Call once per sync, right before sending: an answer that reaches the phone and applies is cleared
-/// via `/clear_answers` before the next sync, so only genuinely unplaceable answers (orphans) ever
-/// accumulate [`MAX_SEND_ATTEMPTS`] attempts and get pruned. Returns how many were discarded so the
-/// caller can surface it.
+/// The phone only reports ids it actually examined and could not place, so an attempt here means a
+/// real failed placement rather than merely pushing while the phone was away. Returns how many were
+/// discarded.
 #[uniffi::export]
-pub fn bump_send_attempts_and_prune() -> Result<u32, CoreError> {
+pub fn record_unplaced_answers(ids: Vec<String>) -> Result<u32, CoreError> {
     let mut conn = get_db_connection()?;
     let tx = conn.transaction()?;
-    tx.execute("UPDATE buffered_answers SET send_attempts = send_attempts + 1", [])?;
-    let discarded = tx.execute(
-        "DELETE FROM buffered_answers WHERE send_attempts > ?1",
-        params![MAX_SEND_ATTEMPTS],
-    )?;
+    let prune_before = unix_secs() - MIN_ORPHAN_AGE_SECS;
+
+    for id in &ids {
+        tx.execute(
+            "UPDATE buffered_answers SET send_attempts = send_attempts + 1 WHERE id = ?1",
+            params![id],
+        )?;
+    }
+
+    let mut discarded = 0usize;
+    for id in &ids {
+        discarded += tx.execute(
+            "DELETE FROM buffered_answers
+             WHERE id = ?1 AND send_attempts > ?2 AND created_at <= ?3",
+            params![id, MAX_SEND_ATTEMPTS, prune_before],
+        )?;
+    }
+
     tx.commit()?;
     Ok(discarded as u32)
 }
