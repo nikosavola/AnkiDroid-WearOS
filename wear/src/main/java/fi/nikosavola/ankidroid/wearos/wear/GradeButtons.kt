@@ -1,6 +1,8 @@
 package fi.nikosavola.ankidroid.wearos.wear
 
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -12,7 +14,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputEventHandler
+import androidx.compose.ui.input.pointer.SuspendingPointerInputModifierNode
+import androidx.compose.ui.node.DelegatingNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.PointerInputModifierNode
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
@@ -33,16 +43,17 @@ import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.curvedText
 import uniffi.wearos_core.WearosCard
 
-// Angular gap (degrees) between adjacent pills. Sized to clear the StrokeCap.Round caps, which
-// extend ~half the pill thickness past each end, so a smaller gap lets adjacent caps overlap.
-private const val GAP_SWEEP_DEG = 14f
+// Angular gap (degrees) between adjacent segments. Round caps would stick out half the two-line
+// pill's thickness past each end, more than any gap that still fits four pills on the bottom arc,
+// so the segments are square-ended and the gap alone separates them.
+private const val GAP_SWEEP_DEG = 3f
 // The tap strip covers the bottom this fraction of the screen (where the arc sits), so it doesn't
 // swallow taps meant for the card text / reveal above it.
 private const val TAP_STRIP_FRACTION = 0.42f
 
 /**
- * Grade buttons as real curved pills hugging the bottom bezel: a rounded-cap arc background
- * ([CurvedModifier.background] + StrokeCap.Round) with centered [curvedText], one per grade.
+ * Grade buttons as curved segments hugging the bottom bezel: an arc background
+ * ([CurvedModifier.background]) with centered [curvedText], one per grade.
  *
  * wear-compose has no clickable curved modifier, so taps are handled by a single pointerInput strip
  * over the bottom arc that maps the tap's x-position to a button (the pills are ordered left->right
@@ -67,7 +78,29 @@ fun GradeEdgeButtons(
   val labels = card.nextReviewTimes.takeIf { it.size == grades.size }.orEmpty()
   // Neutral color for the uncolored mode; read here (a @Composable context), not inside CurvedScope.
   val neutral = MaterialTheme.colorScheme.onSurfaceVariant
-  Box(modifier = Modifier.fillMaxSize()) {
+  // Segments are opaque (the tint blended over the background) so the answer scrolling underneath
+  // never shows through the labels.
+  val background = MaterialTheme.colorScheme.background
+  // Taps on the bottom strip map x -> button (grades.size is 3 or 4, Anki's ease scheme). The
+  // handler sits on this root Box because Compose only shares a gesture with the node's direct
+  // siblings, here the scrolling answer. It never consumes the down, so everything else on the
+  // screen sees the gesture as before; a drag that scrolls consumes the moves and cancels the tap.
+  val tapStrip =
+    if (!enabled) {
+      Modifier
+    } else {
+      Modifier.pointerInputSharedWithSiblings(grades) {
+        awaitEachGesture {
+          val down = awaitFirstDown()
+          if (down.position.y < size.height * (1f - TAP_STRIP_FRACTION)) return@awaitEachGesture
+          val up = waitForUpOrCancellation() ?: return@awaitEachGesture
+          up.consume()
+          val zone = (up.position.x / size.width * grades.size).toInt().coerceIn(0, grades.size - 1)
+          onGrade(grades[zone].ease)
+        }
+      }
+    }
+  Box(modifier = Modifier.fillMaxSize().then(tapStrip)) {
     // Visual layer: the caller's [chrome] (progress ring etc.) and the pills, cached as one GPU layer
     // so the arcs and rotated glyphs aren't re-rasterized while the card scrolls underneath. Pills
     // are sized to their text (so the label is centered inside each pill) and decorative for a11y:
@@ -89,8 +122,11 @@ fun GradeEdgeButtons(
           curvedColumn(
             angularAlignment = CurvedAlignment.Angular.Center,
             modifier =
-              CurvedModifier.background(color = pill.copy(alpha = 0.32f), cap = StrokeCap.Round)
-                .padding(angular = 6.dp, radial = 4.dp),
+              CurvedModifier.background(
+                color = pill.copy(alpha = 0.32f).compositeOver(background),
+                cap = StrokeCap.Butt,
+              )
+                .padding(angular = 10.dp, radial = 4.dp),
           ) {
             curvedText(text = g.text, color = pill, fontSize = 13.sp)
             labels.getOrNull(i)?.let { label ->
@@ -100,24 +136,10 @@ fun GradeEdgeButtons(
         }
       }
     }
-    // Tap layer: bottom strip mapping x -> button. grades.size is 3 or 4 (Anki's ease scheme).
     if (enabled) {
-      Box(
-        modifier =
-          Modifier.align(Alignment.BottomCenter)
-            .fillMaxWidth()
-            .fillMaxHeight(TAP_STRIP_FRACTION)
-            .pointerInput(grades) {
-              detectTapGestures { offset ->
-                val zone =
-                  (offset.x / size.width * grades.size).toInt().coerceIn(0, grades.size - 1)
-                onGrade(grades[zone].ease)
-              }
-            }
-      )
       // Accessibility: the pointerInput strip is invisible to TalkBack, so overlay one focusable,
       // activatable element per grade zone (same left->right order + equal widths as the tap
-      // mapping). They carry no pointer input, so sighted taps still fall through to the strip above.
+      // mapping). They carry no pointer input, so sighted taps still reach the handler on the root.
       Row(
         modifier =
           Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(TAP_STRIP_FRACTION)
@@ -138,4 +160,41 @@ fun GradeEdgeButtons(
       }
     }
   }
+}
+
+/**
+ * Like `pointerInput(key)`, but the gesture also reaches the siblings underneath. The grade strip
+ * sits over the bottom of the scrolling answer, and a plain pointerInput would swallow every swipe
+ * that starts there; shared, a drag scrolls the answer (whose consumption cancels the tap) while a
+ * tap still grades.
+ */
+private fun Modifier.pointerInputSharedWithSiblings(key: Any?, handler: PointerInputEventHandler) =
+  this then SharedPointerInputElement(key, handler)
+
+private class SharedPointerInputElement(val key: Any?, val handler: PointerInputEventHandler) :
+  ModifierNodeElement<SharedPointerInputNode>() {
+  override fun create() = SharedPointerInputNode(handler)
+
+  override fun update(node: SharedPointerInputNode) = node.update(handler)
+
+  // Keyed like pointerInput: an unchanged key keeps the running gesture detector.
+  override fun equals(other: Any?) = other is SharedPointerInputElement && other.key == key
+
+  override fun hashCode() = key.hashCode()
+}
+
+private class SharedPointerInputNode(handler: PointerInputEventHandler) :
+  DelegatingNode(), PointerInputModifierNode {
+  private val input = delegate(SuspendingPointerInputModifierNode(handler))
+
+  fun update(handler: PointerInputEventHandler) {
+    input.pointerInputEventHandler = handler
+  }
+
+  override fun onPointerEvent(pointerEvent: PointerEvent, pass: PointerEventPass, bounds: IntSize) =
+    input.onPointerEvent(pointerEvent, pass, bounds)
+
+  override fun onCancelPointerInput() = input.onCancelPointerInput()
+
+  override fun sharePointerInputWithSiblings() = true
 }

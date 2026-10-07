@@ -1,7 +1,13 @@
 package fi.nikosavola.ankidroid.wearos.wear
 
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.testTag
@@ -12,10 +18,12 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeUp
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.material3.MaterialTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -158,5 +166,29 @@ class GradeEdgeButtonsTest {
     tapAtFraction(0.1f)
     tapAtFraction(0.9f)
     assertNull("no grade should fire while answering is disabled", graded)
+  }
+
+  @Test
+  fun swipeStartingOverTheStrip_scrollsTheCardUnderneathWithoutGrading() {
+    var graded: Int? = null
+    val scroll = ScrollState(0)
+    composeRule.setContent {
+      MaterialTheme {
+        Box(Modifier.size(200.dp).testTag("host")) {
+          Column(Modifier.fillMaxSize().verticalScroll(scroll)) { Spacer(Modifier.height(1000.dp)) }
+          GradeEdgeButtons(card(4), enabled = true, colored = true) { graded = it }
+        }
+      }
+    }
+    composeRule.onNodeWithTag("host").performTouchInput {
+      swipeUp(startY = height * 0.85f, endY = height * 0.2f)
+    }
+    composeRule.waitForIdle()
+    assertTrue("the answer scrolled", scroll.value > 0)
+    assertNull("a drag is not a grade", graded)
+
+    // A plain tap on the strip still grades with the scrollable sibling underneath.
+    tapAtFraction(0.6f)
+    assertEquals(3, graded)
   }
 }
