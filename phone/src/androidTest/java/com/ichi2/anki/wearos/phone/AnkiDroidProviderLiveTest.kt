@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import kotlin.math.pow
+import kotlin.math.roundToLong
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -358,52 +360,58 @@ class AnkiDroidProviderLiveTest {
     Log.i(TAG, "shadow-compared $compared button labels against AnkiDroid")
   }
 
-  /**
-   * Anki's fuzz band for an interval (rslib `scheduler/states/fuzz.rs`): no fuzz below 2.5 days,
-   * then +-15% up to 7 days, +-10% up to 20, +-5% beyond. Anki picks a value inside that band from a
-   * card-and-day seeded PRNG; our previews are the unfuzzed value, so this is the only slack the
-   * comparison should grant.
-   */
-  private fun fuzzFactor(days: Double): Double =
-    when {
-      days < 2.5 -> 0.0
-      days < 7.0 -> 0.15
-      days < 20.0 -> 0.10
-      else -> 0.05
+  /** rslib `fuzz_delta`: whole days Anki may move an interval either way, built up per band. */
+  private fun fuzzDeltaDays(days: Double): Double =
+    if (days < 2.5) {
+      0.0
+    } else {
+      1.0 +
+        0.15 * (days.coerceAtMost(7.0) - 2.5).coerceAtLeast(0.0) +
+        0.10 * (days.coerceAtMost(20.0) - 7.0).coerceAtLeast(0.0) +
+        0.05 * (days - 20.0).coerceAtLeast(0.0)
     }
 
   /**
-   * Assert AnkiDroid's displayed label is consistent with our computed interval.
-   *
-   * Two conversions sit between the scheduler's number and the label we compare against: Anki may
-   * have fuzzed it into its band, and the label is rounded to whole units ("5.5m" as "6m"). So the
-   * shipped value must lie within our value +- (fuzz band + half a display unit).
+   * The range AnkiDroid's label may show for our interval: rslib's `fuzz_bounds` (the load balancer
+   * picks anywhere inside it), widened by the label's own rounding ("5.5m" shown as "6m").
    */
+  private fun allowedRange(oursSecs: Double, shipped: String): ClosedFloatingPointRange<Double> {
+    val days = oursSecs / SECS_PER_DAY
+    val delta = fuzzDeltaDays(days)
+    val slack = labelSlackSeconds(shipped)
+    if (delta == 0.0) return (oursSecs - slack)..(oursSecs + slack)
+    val lower = (days - delta).roundToLong() * SECS_PER_DAY
+    val upper = (days + delta).roundToLong() * SECS_PER_DAY
+    return (lower - slack)..(upper + slack)
+  }
+
+  /** Assert AnkiDroid's displayed label is consistent with our computed interval. */
   private fun assertLabelMatches(stage: String, button: Int, shipped: String, oursSecs: Double) {
     val shippedSecs = parseLabelToSeconds(shipped) ?: return
-    val oursDays = oursSecs / SECS_PER_DAY
-    val fuzz = fuzzFactor(oursDays)
-    val unitSecs = unitSeconds(shipped)
-    val lower = oursSecs * (1.0 - fuzz) - unitSecs / 2.0
-    val upper = oursSecs * (1.0 + fuzz) + unitSecs / 2.0
+    val allowed = allowedRange(oursSecs, shipped)
     assertTrue(
       "$stage button $button: AnkiDroid says '$shipped' (${shippedSecs.toLong()}s) but we computed " +
-        "${oursSecs.toLong()}s; allowed ${lower.toLong()}..${upper.toLong()}s " +
-        "(fuzz ${(fuzz * 100).toInt()}%, display unit ${unitSecs.toLong()}s)",
-      shippedSecs in lower..upper,
+        "${oursSecs.toLong()}s; allowed ${allowed.start.toLong()}..${allowed.endInclusive.toLong()}s",
+      shippedSecs in allowed,
     )
   }
 
-  /** Seconds in the unit a label is expressed in ("6m" -> 60), for its rounding slack. */
-  private fun unitSeconds(label: String): Double =
-    when (label.takeLastWhile { it.isLetter() }) {
-      "s" -> 1.0
-      "m" -> 60.0
-      "h" -> 3600.0
-      "mo" -> 30 * SECS_PER_DAY
-      "y" -> 365 * SECS_PER_DAY
-      else -> SECS_PER_DAY
-    }
+  /** Half the last shown digit of a label, in seconds: "6m" -> 30, "2.2mo" -> 1.5 days. */
+  private fun labelSlackSeconds(label: String): Double {
+    val unit = label.takeLastWhile { it.isLetter() }
+    val number = label.dropLast(unit.length)
+    val decimals = number.substringAfter('.', "").length
+    val unitSecs =
+      when (unit) {
+        "s" -> 1.0
+        "m" -> 60.0
+        "h" -> 3600.0
+        "mo" -> 30 * SECS_PER_DAY
+        "y" -> 365 * SECS_PER_DAY
+        else -> SECS_PER_DAY
+      }
+    return unitSecs / 10.0.pow(decimals) / 2.0
+  }
 
   private fun parseLabelToSeconds(label: String): Double? {
     val unit = label.takeLastWhile { it.isLetter() }
@@ -571,12 +579,9 @@ class AnkiDroidProviderLiveTest {
   /** A comparison rendered for logging, with the allowed window, so a mismatch is diagnosable. */
   private fun examined(oursSecs: Double, shipped: String): String {
     val shippedSecs = parseLabelToSeconds(shipped) ?: return "unparseable label"
-    val fuzz = fuzzFactor(oursSecs / SECS_PER_DAY)
-    val unit = unitSeconds(shipped)
-    val lower = oursSecs * (1.0 - fuzz) - unit / 2.0
-    val upper = oursSecs * (1.0 + fuzz) + unit / 2.0
+    val allowed = allowedRange(oursSecs, shipped)
     return "${oursSecs.toLong()}s (theirs ${shippedSecs.toLong()}s, allowed " +
-      "${lower.toLong()}..${upper.toLong()}s)"
+      "${allowed.start.toLong()}..${allowed.endInclusive.toLong()}s)"
   }
 
   /** Whether this note is one of ours, so a real collection is never graded by the fixture path. */

@@ -14,6 +14,7 @@ import uniffi.wearos_core.WearosCard
 import uniffi.wearos_core.WearosDueBatch
 import uniffi.wearos_core.dayIndex
 import uniffi.wearos_core.defaultRolloverHour
+import uniffi.wearos_core.elapsedDaysBetween
 import uniffi.wearos_core.parseDeckScheduleConfig
 import uniffi.wearos_core.parseReviewTimes
 
@@ -314,12 +315,13 @@ class AnkiDroidBridge(
     return cursor.getLong(idx).coerceAtLeast(0L)
   }
 
-  /** Days since the card's last review, from the provider's epoch-seconds column. */
+  /** Anki days since the card's last review, counted across day rollovers like rslib does. */
   private fun elapsedDaysFor(cursor: Cursor): Double {
     val lastSeconds = lastReviewSecsFor(cursor)
     if (lastSeconds <= 0) return 0.0
-    val elapsedSeconds = clock() / 1000.0 - lastSeconds
-    return (elapsedSeconds / 86_400.0).coerceAtLeast(0.0)
+    val now = clock()
+    return elapsedDaysBetween(lastSeconds, now, timeZone.getOffset(now) / 1000, defaultRolloverHour())
+      .toDouble()
   }
 
   /**

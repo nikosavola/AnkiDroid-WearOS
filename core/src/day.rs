@@ -26,6 +26,7 @@ pub fn day_index(unix_ms: i64, utc_offset_secs: i32, rollover_hour: i32) -> i64 
 
 /// Whole Anki days between the card's last review and now, counted in the same rollover-based day
 /// numbers. Never negative: a clock that is behind the last review reads as zero elapsed days.
+#[uniffi::export]
 pub fn elapsed_days_between(
     last_review_secs: i64,
     now_ms: i64,
