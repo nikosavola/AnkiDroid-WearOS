@@ -625,17 +625,23 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * Determinate progress ring hugging the round edge, filling clockwise from the top in proportion to
-   * cards graduated this session (matching the N/M label from [TopCurvedProgress]). Drawn first in the
-   * review Box so the scrolling card body sits inside it; the theme primary keeps it consistent with
-   * the indeterminate download ring on the deck screen.
+   * Session progress: a determinate ring hugging the round edge, filling clockwise in proportion to
+   * cards graduated this session, with the N/M label curved along the top. Drawn above the card body
+   * so an opaque card image can't cover it, from one cached layer so scrolling the card doesn't
+   * re-rasterize the arcs and glyphs every frame.
    */
   @Composable
-  private fun ReviewProgressRing(session: ReviewSession) {
-    androidx.wear.compose.material3.CircularProgressIndicator(
-      progress = { session.getProgressFraction() },
-      modifier = Modifier.fillMaxSize().padding(2.dp),
-    )
+  private fun ReviewProgress(session: ReviewSession, style: CurvedTextStyle) {
+    // Native calls once per grade rather than on every draw of the ring.
+    val fraction = remember(session, cardCompletedTrigger) { session.getProgressFraction() }
+    val label = remember(session, cardCompletedTrigger) { session.getProgressString() }
+    Box(modifier = Modifier.fillMaxSize().cachedLayer()) {
+      androidx.wear.compose.material3.CircularProgressIndicator(
+        progress = { fraction },
+        modifier = Modifier.fillMaxSize().padding(2.dp),
+      )
+      TopCurvedProgress(label, style)
+    }
   }
 
   /**
@@ -667,10 +673,6 @@ class MainActivity : ComponentActivity() {
     scrollState: androidx.compose.foundation.ScrollState,
     onReveal: () -> Unit,
   ) {
-    if (!hideProgress) {
-      ReviewProgressRing(session)
-      TopCurvedProgress(session.getProgressString(), curvedStyle)
-    }
     Column(
       modifier =
         Modifier.fillMaxSize()
@@ -693,9 +695,10 @@ class MainActivity : ComponentActivity() {
         modifier = Modifier.fillMaxWidth(),
       )
     }
+    if (!hideProgress) ReviewProgress(session, curvedStyle)
     val hintColor = MaterialTheme.colorScheme.onSurfaceVariant
     CurvedLayout(
-      modifier = Modifier.fillMaxSize(),
+      modifier = Modifier.fillMaxSize().cachedLayer(),
       anchor = 90f,
       anchorType = AnchorType.Center,
       angularDirection = CurvedDirection.Angular.Reversed,
@@ -739,10 +742,6 @@ class MainActivity : ComponentActivity() {
     onGrade: (ease: Int, durationMs: Long) -> Unit,
   ) {
     val duration = System.currentTimeMillis() - cardStartTime
-    if (!hideProgress) {
-      ReviewProgressRing(session)
-      TopCurvedProgress(session.getProgressString(), curvedStyle)
-    }
     Column(
       modifier =
         Modifier.fillMaxSize()
@@ -774,6 +773,7 @@ class MainActivity : ComponentActivity() {
         modifier = Modifier.fillMaxWidth(),
       )
     }
+    if (!hideProgress) ReviewProgress(session, curvedStyle)
     GradeEdgeButtons(card = card, enabled = gradeEnabled, colored = coloredGradeButtons) { ease ->
       onGrade(ease, duration)
     }
