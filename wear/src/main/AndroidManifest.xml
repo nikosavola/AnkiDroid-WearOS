@@ -15,6 +15,9 @@
         android:supportsRtl="true"
         android:theme="@android:style/Theme.DeviceDefault">
 
+        <!-- Lets perfetto and gfxinfo trace release builds. -->
+        <profileable android:shell="true" />
+
         <!-- Requires the phone app for sync; not usable standalone. -->
         <meta-data
             android:name="com.google.android.wearable.standalone"
