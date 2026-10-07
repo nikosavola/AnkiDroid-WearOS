@@ -680,17 +680,14 @@ class MainActivity : ComponentActivity() {
         modifier = Modifier.fillMaxWidth(),
       )
     }
+    val hintColor = MaterialTheme.colorScheme.onSurfaceVariant
     CurvedLayout(
       modifier = Modifier.fillMaxSize(),
       anchor = 90f,
       anchorType = AnchorType.Center,
       angularDirection = CurvedDirection.Angular.Reversed,
     ) {
-      curvedText(
-        text = "Tap to show answer",
-        style = curvedStyle,
-        color = Color.LightGray.copy(alpha = 0.7f),
-      )
+      curvedText(text = "Tap to show answer", style = curvedStyle, color = hintColor)
     }
     // Undo the previous grade (steps back a card and drops its buffered answer). A bare glyph with
     // no background, tucked just left of the progress text at the top. Drawn LAST so it sits above
