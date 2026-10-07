@@ -1,6 +1,8 @@
 package com.ichi2.anki.wearos.wear
 
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -13,7 +15,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.compositeOver
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.PointerEvent
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerInputEventHandler
+import androidx.compose.ui.input.pointer.SuspendingPointerInputModifierNode
+import androidx.compose.ui.node.DelegatingNode
+import androidx.compose.ui.node.ModifierNodeElement
+import androidx.compose.ui.node.PointerInputModifierNode
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.onClick
@@ -72,7 +81,26 @@ fun GradeEdgeButtons(
   // Segments are opaque (the tint blended over the background) so the answer scrolling underneath
   // never shows through the labels.
   val background = MaterialTheme.colorScheme.background
-  Box(modifier = Modifier.fillMaxSize()) {
+  // Taps on the bottom strip map x -> button (grades.size is 3 or 4, Anki's ease scheme). The
+  // handler sits on this root Box because Compose only shares a gesture with the node's direct
+  // siblings, here the scrolling answer. It never consumes the down, so everything else on the
+  // screen sees the gesture as before; a drag that scrolls consumes the moves and cancels the tap.
+  val tapStrip =
+    if (!enabled) {
+      Modifier
+    } else {
+      Modifier.pointerInputSharedWithSiblings(grades) {
+        awaitEachGesture {
+          val down = awaitFirstDown()
+          if (down.position.y < size.height * (1f - TAP_STRIP_FRACTION)) return@awaitEachGesture
+          val up = waitForUpOrCancellation() ?: return@awaitEachGesture
+          up.consume()
+          val zone = (up.position.x / size.width * grades.size).toInt().coerceIn(0, grades.size - 1)
+          onGrade(grades[zone].ease)
+        }
+      }
+    }
+  Box(modifier = Modifier.fillMaxSize().then(tapStrip)) {
     // Visual layer: the caller's [chrome] (progress ring etc.) and the pills, cached as one GPU layer
     // so the arcs and rotated glyphs aren't re-rasterized while the card scrolls underneath. Pills
     // are sized to their text (so the label is centered inside each pill) and decorative for a11y:
@@ -108,24 +136,10 @@ fun GradeEdgeButtons(
         }
       }
     }
-    // Tap layer: bottom strip mapping x -> button. grades.size is 3 or 4 (Anki's ease scheme).
     if (enabled) {
-      Box(
-        modifier =
-          Modifier.align(Alignment.BottomCenter)
-            .fillMaxWidth()
-            .fillMaxHeight(TAP_STRIP_FRACTION)
-            .pointerInput(grades) {
-              detectTapGestures { offset ->
-                val zone =
-                  (offset.x / size.width * grades.size).toInt().coerceIn(0, grades.size - 1)
-                onGrade(grades[zone].ease)
-              }
-            }
-      )
       // Accessibility: the pointerInput strip is invisible to TalkBack, so overlay one focusable,
       // activatable element per grade zone (same left->right order + equal widths as the tap
-      // mapping). They carry no pointer input, so sighted taps still fall through to the strip above.
+      // mapping). They carry no pointer input, so sighted taps still reach the handler on the root.
       Row(
         modifier =
           Modifier.align(Alignment.BottomCenter).fillMaxWidth().fillMaxHeight(TAP_STRIP_FRACTION)
@@ -146,4 +160,41 @@ fun GradeEdgeButtons(
       }
     }
   }
+}
+
+/**
+ * Like `pointerInput(key)`, but the gesture also reaches the siblings underneath. The grade strip
+ * sits over the bottom of the scrolling answer, and a plain pointerInput would swallow every swipe
+ * that starts there; shared, a drag scrolls the answer (whose consumption cancels the tap) while a
+ * tap still grades.
+ */
+private fun Modifier.pointerInputSharedWithSiblings(key: Any?, handler: PointerInputEventHandler) =
+  this then SharedPointerInputElement(key, handler)
+
+private class SharedPointerInputElement(val key: Any?, val handler: PointerInputEventHandler) :
+  ModifierNodeElement<SharedPointerInputNode>() {
+  override fun create() = SharedPointerInputNode(handler)
+
+  override fun update(node: SharedPointerInputNode) = node.update(handler)
+
+  // Keyed like pointerInput: an unchanged key keeps the running gesture detector.
+  override fun equals(other: Any?) = other is SharedPointerInputElement && other.key == key
+
+  override fun hashCode() = key.hashCode()
+}
+
+private class SharedPointerInputNode(handler: PointerInputEventHandler) :
+  DelegatingNode(), PointerInputModifierNode {
+  private val input = delegate(SuspendingPointerInputModifierNode(handler))
+
+  fun update(handler: PointerInputEventHandler) {
+    input.pointerInputEventHandler = handler
+  }
+
+  override fun onPointerEvent(pointerEvent: PointerEvent, pass: PointerEventPass, bounds: IntSize) =
+    input.onPointerEvent(pointerEvent, pass, bounds)
+
+  override fun onCancelPointerInput() = input.onCancelPointerInput()
+
+  override fun sharePointerInputWithSiblings() = true
 }
