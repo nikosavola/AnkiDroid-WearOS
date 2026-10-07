@@ -294,7 +294,7 @@ mod tests {
             vec!["1m", "10m", "4d", "7d"]
         );
 
-        assert!(parse_review_times(String::new()).is_empty());
+        assert_eq!(parse_review_times(String::new()), Vec::<String>::new());
     }
 
     #[test]
