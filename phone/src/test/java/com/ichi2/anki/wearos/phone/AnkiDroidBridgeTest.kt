@@ -134,6 +134,8 @@ class AnkiDroidBridgeTest {
       every { moveToFirst() } returns true
       every { getColumnIndex("note_id") } returns 0
       every { getColumnIndex("ord") } returns 1
+      // No reps column: these tests pin the row-count fallback, not the reps confirmation.
+      every { getColumnIndex("reps") } returns -1
       every { getLong(0) } returns noteId
       every { getInt(1) } returns ord
     }
@@ -153,6 +155,34 @@ class AnkiDroidBridgeTest {
   private fun bridge(resolver: ContentResolver): AnkiDroidBridge {
     val context = mockk<Context>(relaxed = true) { every { contentResolver } returns resolver }
     return AnkiDroidBridge(context)
+  }
+
+  /**
+   * Resolver for the multi-step write-back tests: schedule queries come from [scheduleCursors] in
+   * order (a no-card cursor once exhausted), and the card-reps probes return a cursor without a reps
+   * column so the loop uses the row-count fallback. Updates are captured into [capture] when given.
+   */
+  private fun writeBackResolver(
+    scheduleCursors: List<Cursor>,
+    capture: MutableList<ContentValues>? = null,
+  ): ContentResolver {
+    val schedule = ArrayDeque(scheduleCursors)
+    val noRepsCursor = mockk<Cursor>(relaxed = true) { every { getColumnIndex("reps") } returns -1 }
+    return availableResolver {
+      every { query(any(), any(), any(), any(), any()) } answers
+        {
+          if (firstArg<Uri>().toString().endsWith("/schedule")) {
+            schedule.removeFirstOrNull() ?: noCardCursor()
+          } else {
+            noRepsCursor
+          }
+        }
+      if (capture != null) {
+        every { update(any(), capture(capture), any(), any()) } returns 1
+      } else {
+        every { update(any(), any(), any(), any()) } returns 1
+      }
+    }
   }
 
   @Test
@@ -231,11 +261,11 @@ class AnkiDroidBridgeTest {
     // Buffer order is [222, 111] but the scheduler presents 111 then 222; answers must follow the
     // scheduler, so 111 is answered first.
     val applied = mutableListOf<ContentValues>()
-    val resolver = availableResolver {
-      every { query(any(), any(), any(), any(), any()) } returnsMany
-        listOf(scheduleCursor(111L, 0), scheduleCursor(222L, 0), noCardCursor())
-      every { update(any(), capture(applied), any(), any()) } returns 1
-    }
+    val resolver =
+      writeBackResolver(
+        scheduleCursors = listOf(scheduleCursor(111L, 0), scheduleCursor(222L, 0), noCardCursor()),
+        capture = applied,
+      )
 
     val settled =
       bridge(resolver)
@@ -253,11 +283,11 @@ class AnkiDroidBridgeTest {
     // A card graded Again-then-Good in one session: two buffered answers for note 111. The scheduler
     // presents 111, then re-presents it (relearn step), so both land - no grade is dropped.
     val eases = mutableListOf<ContentValues>()
-    val resolver = availableResolver {
-      every { query(any(), any(), any(), any(), any()) } returnsMany
-        listOf(scheduleCursor(111L, 0), scheduleCursor(111L, 0), noCardCursor())
-      every { update(any(), capture(eases), any(), any()) } returns 1
-    }
+    val resolver =
+      writeBackResolver(
+        scheduleCursors = listOf(scheduleCursor(111L, 0), scheduleCursor(111L, 0), noCardCursor()),
+        capture = eases,
+      )
 
     val settled =
       bridge(resolver)
