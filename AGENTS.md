@@ -98,10 +98,10 @@ grade, so a card that advanced a learning step or graduated would still show pre
 - **Math**: learning/relearning steps are Anki's ladder (Again restarts it, Hard is Anki's hard
   delay — the average of the first two steps on step 1, otherwise a repeat — Good advances and
   graduates from the last step, Easy graduates immediately). Day-or-longer intervals come from
-  FSRS-6 via an in-crate port of fsrs-rs `model_v6.rs` (`core/src/fsrs6.rs`: 21 weights with the
-  trainable decay `w[20]`; 17/19-weight presets are filled the way fsrs-rs does). The `fsrs` crate
-  itself is avoided because it pulls ndarray/rayon/Burn into the watch `.so`; reference values in
-  the tests come from py-fsrs 6. Decks without weights follow Anki's SM-2 review
+  FSRS-6 through the `fsrs` crate, the same one rslib uses (6.x dropped Burn, so it adds only a
+  few KB to the watch `.so`), with rslib's floors on top: each passing button at least a day above
+  the previous one, and a grown interval never fuzzed back below the current one. Reference values
+  in the tests come from py-fsrs 6. Decks without weights follow Anki's SM-2 review
   rules ported from rslib `review.rs`: the card's own ease factor (fetched from `sm2_factor`) and
   its days-late drive Hard/Good/Easy, each floored above the previous button and bounded by the
   deck's maximum interval, with Anki's separate early-review branch when a card is answered ahead

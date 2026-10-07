@@ -7,7 +7,6 @@ uniffi::setup_scaffolding!();
 mod day;
 mod db;
 mod decks;
-mod fsrs6;
 mod html;
 mod models;
 mod pool;
@@ -1468,6 +1467,40 @@ mod tests {
         .to_string()
     }
 
+    /// Stock FSRS-6 default weights, as py-fsrs 6 ships them.
+    const W21: [f64; 21] = [
+        0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001, 1.8722, 0.1666, 0.796,
+        1.4835, 0.0614, 0.2629, 1.6483, 0.6014, 1.8729, 0.5425, 0.0912, 0.0658, 0.1542,
+    ];
+
+    /// FSRS-5 (19-weight) preset; the `fsrs` crate upgrades it to 21.
+    const W19: [f64; 19] = [
+        0.40255, 1.18385, 3.173, 15.69105, 7.1949, 0.5345, 1.4604, 0.0046, 1.54575, 0.1192,
+        1.01925, 1.9395, 0.11, 0.29605, 2.2698, 0.2315, 2.9898, 0.51655, 0.6621,
+    ];
+
+    /// A minimal `OPTIONS` dict carrying just an FSRS weight list and desired retention, with a
+    /// single learning step so a Good grade graduates a learning card.
+    fn fsrs_options_with(weights: &[f64], desired_retention: f64) -> String {
+        serde_json::json!({
+            "new": { "delays": [1.0], "ints": [1, 4] },
+            "fsrsParams6": weights,
+            "desiredRetention": desired_retention,
+        })
+        .to_string()
+    }
+
+    /// The stability the `fsrs` crate reports after answering with `ease`.
+    fn assert_fsrs_stability(
+        config: &DeckScheduleConfig,
+        state: &CardScheduleState,
+        ease: i32,
+        expected: f64,
+    ) {
+        let actual = advance_state(config, state, ease, 0).stability;
+        assert!((actual - expected).abs() < 1e-4, "ease {ease}: got {actual}, want {expected}");
+    }
+
     /// A review card with a tiny FSRS stability; AnkiDroid floors its buttons to 1d / 2d / 3d.
     fn tiny_stability_review_state() -> CardScheduleState {
         CardScheduleState {
@@ -1718,6 +1751,121 @@ mod tests {
         let secs = preview_interval_secs(&config, &state, 0);
         let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
         assert!(days(1) < 30 && days(2) < 30 && days(3) < 30, "shrinking intervals stay shrunk");
+    }
+
+    #[test]
+    fn test_fsrs_initial_state_matches_reference() {
+        // py-fsrs 6 reference: a card's first answer fixes (stability, difficulty) from its rating.
+        let config = parse_deck_schedule_config(fsrs_options_with(&W21, 0.9)).unwrap();
+        let new_card = CardScheduleState { queue: 0, card_type: 0, ..Default::default() };
+
+        assert_fsrs_stability(&config, &new_card, 1, 0.212);
+        assert_fsrs_stability(&config, &new_card, 2, 1.2931);
+        assert_fsrs_stability(&config, &new_card, 3, 2.3065);
+        assert_fsrs_stability(&config, &new_card, 4, 8.2956);
+
+        let difficulty = |ease: i32| advance_state(&config, &new_card, ease, 0).difficulty;
+        assert!((difficulty(1) - 6.4133).abs() < 1e-4);
+        assert!((difficulty(2) - 5.112_171).abs() < 1e-4);
+        assert!((difficulty(3) - 2.118_104).abs() < 1e-4);
+        assert!((difficulty(4) - 1.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_fsrs_review_after_ten_days_matches_reference() {
+        // S=10, D=5, elapsed 10d, R=0.9.
+        let config = parse_deck_schedule_config(fsrs_options_with(&W21, 0.9)).unwrap();
+        let state = review_state();
+        assert_fsrs_stability(&config, &state, 1, 1.391_987);
+        assert_fsrs_stability(&config, &state, 2, 23.246_875);
+        assert_fsrs_stability(&config, &state, 3, 32.026_729);
+        assert_fsrs_stability(&config, &state, 4, 51.253_862);
+
+        let secs = preview_interval_secs(&config, &state, 0);
+        let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
+        assert_eq!(days(1), 23, "Hard");
+        assert_eq!(days(2), 32, "Good");
+        assert_eq!(days(3), 51, "Easy");
+    }
+
+    #[test]
+    fn test_fsrs_review_after_thirteen_days_matches_reference() {
+        // Elapsed 13d, R=0.880987.
+        let config = parse_deck_schedule_config(fsrs_options_with(&W21, 0.9)).unwrap();
+        let state = CardScheduleState { elapsed_days: 13.0, ..review_state() };
+        assert_fsrs_stability(&config, &state, 2, 25.886_961);
+        assert_fsrs_stability(&config, &state, 3, 36.416_629);
+        assert_fsrs_stability(&config, &state, 4, 59.475_705);
+
+        let secs = preview_interval_secs(&config, &state, 0);
+        let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
+        assert_eq!(days(1), 26, "Hard");
+        assert_eq!(days(2), 36, "Good");
+        assert_eq!(days(3), 59, "Easy");
+    }
+
+    #[test]
+    fn test_fsrs_same_day_review_matches_reference() {
+        // No elapsed time: the w[19] same-day term applies.
+        let config = parse_deck_schedule_config(fsrs_options_with(&W21, 0.9)).unwrap();
+        let state = CardScheduleState { elapsed_days: 0.0, ..review_state() };
+        assert_fsrs_stability(&config, &state, 1, 3.051_249);
+        assert_fsrs_stability(&config, &state, 2, 10.0);
+        assert_fsrs_stability(&config, &state, 3, 10.0);
+        assert_fsrs_stability(&config, &state, 4, 15.534_308);
+    }
+
+    #[test]
+    fn test_fsrs_next_interval_tracks_desired_retention() {
+        // A learning card with S=10, D=5 whose Good grade lands back on stability 10, so its
+        // graduation interval is `next_interval(10, retention)`.
+        let graduated_good_days = |retention: f64| {
+            let config = parse_deck_schedule_config(fsrs_options_with(&W21, retention)).unwrap();
+            let learning = CardScheduleState {
+                queue: 1,
+                card_type: 1,
+                learning_step: 0,
+                stability: 10.0,
+                difficulty: 5.0,
+                elapsed_days: 0.0,
+                ..Default::default()
+            };
+            (preview_interval_secs(&config, &learning, 0)[2] / 86_400.0).round() as i64
+        };
+        assert_eq!(graduated_good_days(0.9), 10);
+        assert_eq!(graduated_good_days(0.85), 19);
+        assert_eq!(graduated_good_days(0.95), 4);
+    }
+
+    #[test]
+    fn test_fsrs_filled_fsrs5_weights_match_reference() {
+        // S=10, D=5, elapsed 10d, Good: the crate upgrades a 19-weight FSRS-5 preset to FSRS-6.
+        let config = parse_deck_schedule_config(fsrs_options_with(&W19, 0.9)).unwrap();
+        assert!(config.fsrs_enabled());
+        let state = review_state();
+        assert_fsrs_stability(&config, &state, 3, 32.954_264);
+        assert_eq!(
+            (preview_interval_secs(&config, &state, 0)[2] / 86_400.0).round() as i64,
+            33,
+            "Good graduates to the filled FSRS-5 interval"
+        );
+    }
+
+    #[test]
+    fn test_fsrs_accepts_17_19_and_21_weight_presets() {
+        for len in [17, 19, 21] {
+            let weights: Vec<f64> = W21[..len].to_vec();
+            let config = parse_deck_schedule_config(fsrs_options_with(&weights, 0.9)).unwrap();
+            assert!(config.fsrs_enabled(), "{len} weights must leave FSRS on");
+        }
+    }
+
+    #[test]
+    fn test_fsrs_unsupported_weight_count_leaves_fsrs_off() {
+        // The crate (like Anki) only understands 17/19/21; anything else must not silently fall
+        // back to the crate's default parameters.
+        let config = parse_deck_schedule_config(fsrs_options_with(&[0.4, 1.2], 0.9)).unwrap();
+        assert!(!config.fsrs_enabled());
     }
 
     #[test]
