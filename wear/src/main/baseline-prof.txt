@@ -1,0 +1,8 @@
+# Compile the app's own code ahead of time on install. Compose and wear-compose ship their own
+# rules; this covers our screens, the UniFFI bindings and JNA, which otherwise start interpreted.
+HSPLfi/nikosavola/ankidroid/wearos/wear/**;->**(**)**
+HSPLuniffi/wearos_core/**;->**(**)**
+HSPLcom/sun/jna/**;->**(**)**
+Lfi/nikosavola/ankidroid/wearos/wear/**;
+Luniffi/wearos_core/**;
+Lcom/sun/jna/**;
