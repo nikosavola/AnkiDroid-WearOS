@@ -82,6 +82,12 @@ pub struct ReviewSession {
     /// The deck's scheduling config, when the phone shipped it: drives the local recompute of a
     /// requeued card's previews. `None` leaves the fetched labels alone.
     schedule_config: Option<DeckScheduleConfig>,
+    /// Anki's "next day starts at" hour from the batch, so a reopened deck keeps the same day
+    /// boundary the phone used.
+    rollover_hour: i32,
+    /// When the phone fetched the batch, epoch ms; 0 = unknown. Carried so a persisted session keeps
+    /// the pool's age.
+    fetched_at_ms: i64,
     /// Remaining cards, front = current. Learning-step grades push the card to the back.
     queue: Mutex<VecDeque<QueuedCard>>,
     is_revealed: Mutex<bool>,
@@ -105,6 +111,8 @@ impl ReviewSession {
             deck_name: batch.deck_name,
             deck_id: batch.deck_id,
             schedule_config: batch.schedule_config,
+            rollover_hour: batch.rollover_hour,
+            fetched_at_ms: batch.fetched_at_ms,
             initial_total: queue.len(),
             queue: Mutex::new(queue),
             is_revealed: Mutex::new(false),
@@ -141,6 +149,8 @@ impl ReviewSession {
             deck_name: self.deck_name.clone(),
             cards,
             schedule_config: self.schedule_config.clone(),
+            rollover_hour: self.rollover_hour,
+            fetched_at_ms: self.fetched_at_ms,
         }
     }
 

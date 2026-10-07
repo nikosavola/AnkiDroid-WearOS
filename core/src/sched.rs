@@ -69,6 +69,12 @@ pub struct DeckScheduleConfig {
     pub fsrs_weights: Vec<f64>,
     /// Desired retention as a fraction (0.9). 0.0 means unset; Anki's default applies.
     pub desired_retention: f64,
+    /// New cards per day (`new.perDay`). Clamped to >= 0; Anki's default 20 when absent.
+    #[uniffi(default = 20)]
+    pub new_per_day: i32,
+    /// Maximum reviews per day (`rev.perDay`). Clamped to >= 0; Anki's default 200 when absent.
+    #[uniffi(default = 200)]
+    pub reviews_per_day: i32,
 }
 
 impl Default for DeckScheduleConfig {
@@ -87,6 +93,8 @@ impl Default for DeckScheduleConfig {
             lapse_min_interval_days: 1,
             fsrs_weights: Vec::new(),
             desired_retention: 0.9,
+            new_per_day: 20,
+            reviews_per_day: 200,
         }
     }
 }
@@ -123,6 +131,10 @@ pub struct CardScheduleState {
     pub difficulty: f64,
     /// Days since the card was last reviewed.
     pub elapsed_days: f64,
+    /// Epoch seconds of the last review; 0 = unknown, in which case [`elapsed_days`] is what the
+    /// phone sent.
+    #[uniffi(default = 0)]
+    pub last_review_secs: i64,
 }
 
 /// Parse AnkiDroid's deck `OPTIONS` JSON (rslib's legacy schema11 dict) into a schedule config.
@@ -175,7 +187,15 @@ pub fn parse_deck_schedule_config(options_json: String) -> Result<DeckScheduleCo
             .unwrap_or(defaults.lapse_min_interval_days),
         fsrs_weights: read_fsrs_weights(&root),
         desired_retention: read_desired_retention(&root).unwrap_or(defaults.desired_retention),
+        new_per_day: read_per_day(new, defaults.new_per_day),
+        reviews_per_day: read_per_day(rev, defaults.reviews_per_day),
     })
+}
+
+/// Read a per-day limit from a schema11 `new`/`rev` object (`perDay`), clamped to >= 0. A missing or
+/// negative value falls back to the default rather than dropping the whole sync.
+fn read_per_day(obj: Option<&Value>, default: i32) -> i32 {
+    obj.and_then(|v| v.get("perDay")).and_then(number_as_i32).filter(|v| *v >= 0).unwrap_or(default)
 }
 
 /// FSRS weights in preference order: v6, then v5, then the v4 key (`fsrsWeights`).

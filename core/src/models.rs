@@ -12,6 +12,13 @@ pub struct WearosCard {
     pub back: String,
     pub button_count: i32,
     pub next_review_times: Vec<String>,
+    /// Absolute Anki day number (`day_index`) this card is due. `None` means today's batch from the
+    /// phone's scheduler, or a new card.
+    #[uniffi(default = None)]
+    pub due_day: Option<i64>,
+    /// Epoch seconds the card is due within its day, for intraday learning cards only.
+    #[uniffi(default = None)]
+    pub due_at_secs: Option<i64>,
     /// The card's scheduler state, used to recompute interval previews offline once the labels
     /// above go stale (a card graded and requeued within the session). `None` on older phone
     /// builds and for the mock fallback, where the shipped labels are all there is.
@@ -24,6 +31,13 @@ pub struct WearosDueBatch {
     pub deck_id: i64,
     pub deck_name: String,
     pub cards: Vec<WearosCard>,
+    /// Anki's "next day starts at" hour for this batch (default 4am local time), so the watch can
+    /// decide what is due each day offline with the same boundary the phone used.
+    #[uniffi(default = 4)]
+    pub rollover_hour: i32,
+    /// When the phone fetched this batch, epoch milliseconds; 0 = unknown.
+    #[uniffi(default = 0)]
+    pub fetched_at_ms: i64,
     /// The deck's scheduling config (learning steps, graduation intervals, FSRS weights) from
     /// AnkiDroid's deck `OPTIONS`. `None` when the phone could not read it, in which case previews
     /// stay as AnkiDroid shipped them.

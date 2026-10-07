@@ -26,12 +26,16 @@ fn main() {
             back: back.to_string(),
             button_count: 4,
             next_review_times: vec!["1m".into(), "6m".into(), "10m".into(), "4d".into()],
+            due_day: None,
+            due_at_secs: None,
             state: None,
         };
         WearosDueBatch {
             deck_id: 9001,
             deck_name: "Emulator Smoke".to_string(),
             cards: vec![card(101, "犬 (いぬ)", "dog"), card(102, "猫 (ねこ)", "cat")],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         }
     } else {
@@ -49,11 +53,20 @@ fn main() {
                     back: p[3].to_string(),
                     button_count: 4,
                     next_review_times: vec!["1m".into(), "6m".into(), "10m".into(), "4d".into()],
+                    due_day: None,
+                    due_at_secs: None,
                     state: None,
                 }
             })
             .collect();
-        WearosDueBatch { deck_id, deck_name, cards, schedule_config: None }
+        WearosDueBatch {
+            deck_id,
+            deck_name,
+            cards,
+            rollover_hour: 4,
+            fetched_at_ms: 0,
+            schedule_config: None,
+        }
     };
 
     let bytes = serialize_due_batch(batch).expect("serialize");

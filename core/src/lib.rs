@@ -4,6 +4,7 @@
 
 uniffi::setup_scaffolding!();
 
+mod day;
 mod db;
 mod decks;
 mod fsrs6;
@@ -22,6 +23,7 @@ mod util;
 // db is re-exported by name rather than with `*` so its crate-internal DB_CONN/get_db_connection
 // stay unexported (reached via `crate::db::...`) — that keeps them plain `pub` in a private module
 // without tripping `redundant_pub_crate`.
+pub use day::*;
 pub use db::{
     BufferStats, average_answer_time_ms, buffered_answer_stats, get_buffered_answers,
     init_database, record_unplaced_answers, remove_buffered_answers, reviews_since, save_answer,
@@ -321,12 +323,16 @@ mod tests {
                 "4d".to_string(),
                 "7d".to_string(),
             ],
+            due_day: None,
+            due_at_secs: None,
             state: None,
         };
         let batch = WearosDueBatch {
             deck_id: 123,
             deck_name: "Test Deck".to_string(),
             cards: vec![card],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         };
 
@@ -349,6 +355,8 @@ mod tests {
             back: "A".to_string(),
             button_count: 4,
             next_review_times: vec!["1m".to_string()],
+            due_day: None,
+            due_at_secs: None,
             state: None,
         }
     }
@@ -362,6 +370,8 @@ mod tests {
             deck_id: 1,
             deck_name: "D".to_string(),
             cards: vec![card_with_front(&front)],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         };
         let bytes = serialize_due_batch(batch).unwrap();
@@ -380,6 +390,8 @@ mod tests {
             deck_id: 55,
             deck_name: "文法".to_string(),
             cards: vec![card_with_front("<b>Q</b>"), card_with_front("Q2")],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         };
         let restored = deserialize_due_batch(serialize_due_batch(batch).unwrap()).unwrap();
@@ -483,6 +495,8 @@ mod tests {
                 "4d".to_string(),
                 "7d".to_string(),
             ],
+            due_day: None,
+            due_at_secs: None,
             state: None,
         };
         let card2 = WearosCard {
@@ -493,12 +507,16 @@ mod tests {
             back: "A2".to_string(),
             button_count: 3,
             next_review_times: vec!["1m".to_string(), "10m".to_string(), "4d".to_string()],
+            due_day: None,
+            due_at_secs: None,
             state: None,
         };
         let batch = WearosDueBatch {
             deck_id: 123,
             deck_name: "Test".to_string(),
             cards: vec![card1, card2],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         };
 
@@ -553,12 +571,16 @@ mod tests {
                 "4d".to_string(),
                 "7d".to_string(),
             ],
+            due_day: None,
+            due_at_secs: None,
             state: None,
         };
         let batch = WearosDueBatch {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![mk(1, "Q1"), mk(2, "Q2")],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         };
         let session = ReviewSession::new(batch);
@@ -605,6 +627,8 @@ mod tests {
                 "4d".to_string(),  // Good
                 "7d".to_string(),  // Easy
             ],
+            due_day: None,
+            due_at_secs: None,
             state: None,
         }
     }
@@ -614,6 +638,8 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![card],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         })
     }
@@ -625,6 +651,8 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![learning_card(1), learning_card(2), learning_card(3), learning_card(4)],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         });
         assert!(session.get_progress_fraction().abs() < f32::EPSILON);
@@ -638,6 +666,8 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         });
         assert!(empty.get_progress_fraction().abs() < f32::EPSILON);
@@ -678,6 +708,8 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![learning_card(1), learning_card(2)],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         });
 
@@ -697,6 +729,8 @@ mod tests {
             deck_id: 42,
             deck_name: "Japani".to_string(),
             cards: vec![learning_card(1)],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: Some(sm2_deck_config()),
         });
 
@@ -723,6 +757,8 @@ mod tests {
             back: "A".to_string(),
             button_count: 3,
             next_review_times: vec!["1m".to_string(), "4d".to_string(), "10m".to_string()],
+            due_day: None,
+            due_at_secs: None,
             state: None,
         };
         let s3 = single_card_session(three.clone());
@@ -802,12 +838,16 @@ mod tests {
             back: "A".to_string(),
             button_count: 4,
             next_review_times: vec!["1m".to_string()],
+            due_day: None,
+            due_at_secs: None,
             state: None,
         };
         let batch = WearosDueBatch {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![mk(1), mk(2), mk(3)],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         };
         let session = ReviewSession::new(batch);
@@ -1425,6 +1465,7 @@ mod tests {
             stability: 10.0,
             difficulty: 5.0,
             elapsed_days: 10.0,
+            last_review_secs: 0,
         }
     }
 
@@ -1698,12 +1739,16 @@ mod tests {
             back: "A".to_string(),
             button_count: 4,
             next_review_times: vec!["1m".to_string()],
+            due_day: None,
+            due_at_secs: None,
             state: Some(review_state()),
         };
         let batch = WearosDueBatch {
             deck_id: 1,
             deck_name: "D".to_string(),
             cards: vec![card],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: Some(config),
         };
 
@@ -1732,8 +1777,12 @@ mod tests {
                 back: "A".to_string(),
                 button_count: 4,
                 next_review_times: vec!["1m".to_string()],
+                due_day: None,
+                due_at_secs: None,
                 state: None,
             }],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         };
 
@@ -1773,6 +1822,8 @@ mod tests {
                 "10m".to_string(),
                 "4d".to_string(),
             ],
+            due_day: None,
+            due_at_secs: None,
             state: Some(CardScheduleState { queue: 1, learning_step: 0, ..Default::default() }),
         }
     }
@@ -1785,6 +1836,8 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![card],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: Some(sm2_deck_config()),
         });
 
@@ -1814,6 +1867,8 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![card],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: Some(sm2_deck_config()),
         });
 
@@ -1831,6 +1886,8 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![learning_card_with_state(1)],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: None,
         });
 
@@ -1858,6 +1915,8 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![card],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: Some(config),
         });
 
@@ -1884,6 +1943,8 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![card],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: Some(sm2_deck_config()),
         });
 
@@ -1907,6 +1968,8 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![card],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: Some(sm2_deck_config()),
         });
 
@@ -1928,6 +1991,8 @@ mod tests {
             deck_id: 1,
             deck_name: "T".to_string(),
             cards: vec![card],
+            rollover_hour: 4,
+            fetched_at_ms: 0,
             schedule_config: Some(sm2_deck_config()),
         });
 
@@ -1985,5 +2050,102 @@ mod tests {
         assert_eq!(days(1), 2, "Hard is interval * hardFactor, floored above the interval");
         assert_eq!(days(2), 3, "Good is (interval + daysLate/2) * ease");
         assert_eq!(days(3), 4, "Easy at least a day above Good");
+    }
+
+    // ---- Multi-day pool wire fields (due dates, last review, rollover, daily limits) ----
+
+    #[test]
+    fn test_due_batch_round_trips_new_pool_fields() {
+        let card = WearosCard {
+            id: 7,
+            note_id: 70,
+            ord: 0,
+            front: "Q".to_string(),
+            back: "A".to_string(),
+            button_count: 4,
+            next_review_times: vec!["1m".to_string()],
+            due_day: Some(20_733),
+            due_at_secs: Some(1_791_331_200),
+            state: Some(CardScheduleState {
+                last_review_secs: 1_700_000_000,
+                ..Default::default()
+            }),
+        };
+        let batch = WearosDueBatch {
+            deck_id: 1,
+            deck_name: "D".to_string(),
+            cards: vec![card],
+            schedule_config: Some(DeckScheduleConfig {
+                new_per_day: 15,
+                reviews_per_day: 150,
+                ..Default::default()
+            }),
+            rollover_hour: 5,
+            fetched_at_ms: 1_791_331_200_000,
+        };
+
+        let decoded = deserialize_due_batch(serialize_due_batch(batch).unwrap()).unwrap();
+        assert_eq!(decoded.rollover_hour, 5);
+        assert_eq!(decoded.fetched_at_ms, 1_791_331_200_000);
+        assert_eq!(decoded.cards[0].due_day, Some(20_733));
+        assert_eq!(decoded.cards[0].due_at_secs, Some(1_791_331_200));
+        assert_eq!(decoded.cards[0].state.as_ref().unwrap().last_review_secs, 1_700_000_000);
+        let config = decoded.schedule_config.unwrap();
+        assert_eq!(config.new_per_day, 15);
+        assert_eq!(config.reviews_per_day, 150);
+    }
+
+    #[test]
+    fn test_zero_limits_and_midnight_rollover_survive_the_wire() {
+        // A deck with new cards switched off and a midnight rollover are real settings, not "absent".
+        let card = WearosCard {
+            id: 1,
+            note_id: 10,
+            ord: 0,
+            front: "Q".to_string(),
+            back: "A".to_string(),
+            button_count: 4,
+            next_review_times: vec!["1m".to_string()],
+            due_day: None,
+            due_at_secs: None,
+            state: Some(CardScheduleState { last_review_secs: 0, ..Default::default() }),
+        };
+        let batch = WearosDueBatch {
+            deck_id: 1,
+            deck_name: "D".to_string(),
+            cards: vec![card],
+            schedule_config: Some(DeckScheduleConfig {
+                new_per_day: 0,
+                reviews_per_day: 0,
+                ..Default::default()
+            }),
+            rollover_hour: 0,
+            fetched_at_ms: 0,
+        };
+
+        let decoded = deserialize_due_batch(serialize_due_batch(batch).unwrap()).unwrap();
+        assert!(decoded.cards[0].due_day.is_none(), "absent due_day must stay None");
+        assert!(decoded.cards[0].due_at_secs.is_none(), "absent due_at_secs must stay None");
+        assert_eq!(decoded.cards[0].state.as_ref().unwrap().last_review_secs, 0);
+        assert_eq!(decoded.fetched_at_ms, 0);
+        assert_eq!(decoded.rollover_hour, 0, "a midnight rollover stays midnight");
+        let config = decoded.schedule_config.unwrap();
+        assert_eq!(config.new_per_day, 0, "a deck with new cards off stays off");
+        assert_eq!(config.reviews_per_day, 0);
+    }
+
+    #[test]
+    fn test_parse_deck_options_reads_per_day_limits() {
+        let config = parse_deck_schedule_config(
+            serde_json::json!({ "new": { "perDay": 15 }, "rev": { "perDay": 150 } }).to_string(),
+        )
+        .unwrap();
+        assert_eq!(config.new_per_day, 15);
+        assert_eq!(config.reviews_per_day, 150);
+
+        // Absent keys fall back to Anki's stock 20/200.
+        let defaults = parse_deck_schedule_config("{}".to_string()).unwrap();
+        assert_eq!(defaults.new_per_day, 20);
+        assert_eq!(defaults.reviews_per_day, 200);
     }
 }
