@@ -10,6 +10,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import uniffi.wearos_core.WearosAnswer
 import uniffi.wearos_core.previewIntervalSecs
 
 /**
@@ -145,6 +146,144 @@ class AnkiDroidProviderLiveTest {
     } finally {
       context.contentResolver.delete(noteUri, null, null)
     }
+  }
+
+  /**
+   * Out-of-order write-back against the real provider: answers for cards that are not the queue head,
+   * plus a learning chain on one card, must all apply. Uses its own deck so the deck toggle always has
+   * a second deck to flip to. The notes are deleted afterwards; the provider can't delete decks, so
+   * the empty deck is reused on the next run.
+   */
+  @Test
+  fun writeBackAppliesAnswersOutOfQueueOrder() {
+    assumeAnkiDroid()
+    val resolver = context.contentResolver
+    val deckId = liveDeckId(WRITE_BACK_DECK)
+    assumeTrue("AnkiDroid refused the test deck", deckId != null)
+    val notes = List(3) { createTestNote(deckId ?: return) }
+    assumeTrue("AnkiDroid refused a test note", notes.all { it != null })
+    val (a, b, c) = notes.map { it?.second ?: error("checked above") }
+
+    fun reps(noteId: Long): Long =
+      resolver
+        .query(
+          android.net.Uri.parse("content://com.ichi2.anki.flashcards/notes/$noteId/cards/0"),
+          arrayOf("reps"),
+          null,
+          null,
+          null,
+        )
+        ?.use { if (it.moveToFirst()) it.getLong(0) else -1L } ?: -1L
+
+    try {
+      val before = listOf(a, b, c).associateWith { reps(it) }
+      val stamp = System.currentTimeMillis()
+      // c is graded first and twice (a learning chain), a and b in reverse of the queue order.
+      val answers =
+        listOf(c, b, c, a).mapIndexed { i, noteId ->
+          WearosAnswer(
+            id = "live-$stamp-$i",
+            noteId = noteId,
+            ord = 0,
+            ease = 3,
+            timeTakenMs = 1_000L,
+            deckId = deckId ?: 0L,
+          )
+        }
+
+      val outcome = bridge.writeAnswersBack(answers)
+
+      assertEquals("every answer settles", answers.map { it.id }.toSet(), outcome.settled.toSet())
+      assertTrue("nothing is left unplaced", outcome.unplaced.isEmpty())
+      assertEquals("the chain applied twice", (before[c] ?: 0) + 2, reps(c))
+      assertEquals((before[b] ?: 0) + 1, reps(b))
+      assertEquals((before[a] ?: 0) + 1, reps(a))
+    } finally {
+      notes.forEach { note -> note?.let { resolver.delete(it.first, null, null) } }
+    }
+  }
+
+  /** The id of the deck named [name], created on first use (the provider can't delete decks). */
+  private fun liveDeckId(name: String): Long? =
+    bridge.fetchAllDecks().firstOrNull { it.second == name }?.first?.value
+      ?: context.contentResolver
+        .insert(
+          android.net.Uri.parse("content://com.ichi2.anki.flashcards/decks"),
+          android.content.ContentValues().apply { put("deck_name", name) },
+        )
+        ?.lastPathSegment
+        ?.toLongOrNull()
+
+  /**
+   * A card graduated into the review queue must reach the pool from the cards search with its
+   * due day, text and scheduler state, not as a stateless placeholder, and a subdeck's cards come
+   * with the parent deck as they do in today's scheduler batch.
+   */
+  @Test
+  fun poolShipsGraduatedCardsWithDueDayAndState() {
+    assumeAnkiDroid()
+    val deckId = liveDeckId(WRITE_BACK_DECK)
+    val subDeckId = liveDeckId("$WRITE_BACK_DECK::sub")
+    assumeTrue("AnkiDroid refused the test decks", deckId != null && subDeckId != null)
+    val note = createTestNote(deckId ?: return)
+    val subNote = createTestNote(subDeckId ?: return)
+    assumeTrue("AnkiDroid refused a test note", note != null && subNote != null)
+    val noteId = note?.second ?: return
+    val subNoteId = subNote?.second ?: return
+    // The notes insert ignores its deckId parameter, so place the cards explicitly.
+    moveCardToDeck(noteId, deckId)
+    moveCardToDeck(subNoteId, subDeckId)
+    try {
+      val stamp = System.currentTimeMillis()
+      // Easy on a new card graduates it straight to the review queue, days out.
+      val outcome =
+        bridge.writeAnswersBack(
+          listOf(noteId to deckId, subNoteId to subDeckId).mapIndexed { i, (nid, did) ->
+            WearosAnswer(
+              id = "live-pool-$stamp-$i",
+              noteId = nid,
+              ord = 0,
+              ease = 4,
+              timeTakenMs = 1_000L,
+              deckId = did,
+            )
+          }
+        )
+      assertTrue("both test cards graduate", outcome.unplaced.isEmpty())
+
+      val today = bridge.todayDayIndex()
+      val pool = bridge.fetchDuePool(DeckId(deckId), todayLimit = 50)
+      assertEquals("no duplicate ids", pool.cards.size, pool.cards.map { it.id }.toSet().size)
+      val card = pool.cards.firstOrNull { it.noteId == noteId }
+      assertNotNull("the graduated card is in the pool", card)
+      card!!
+      val dueDay = card.dueDay
+      assertNotNull("a future card carries its due day", dueDay)
+      // Answered today, so AnkiDroid's due day is today plus the interval it just set.
+      assertEquals(
+        "due day matches the card's interval",
+        card.state?.intervalDays?.toLong(),
+        dueDay!! - today,
+      )
+      assertEquals(0, card.ord)
+      assertTrue("real card text, not a placeholder", card.front.contains("ANKIDROID-WEAROS TEST"))
+      assertEquals("scheduler state rides along", 2, card.state?.queue)
+      assertTrue(
+        "a subdeck's cards ride with the parent, like today's batch",
+        pool.cards.any { it.noteId == subNoteId },
+      )
+    } finally {
+      listOfNotNull(note, subNote).forEach { context.contentResolver.delete(it.first, null, null) }
+    }
+  }
+
+  private fun moveCardToDeck(noteId: Long, deckId: Long) {
+    context.contentResolver.update(
+      android.net.Uri.parse("content://com.ichi2.anki.flashcards/notes/$noteId/cards/0"),
+      android.content.ContentValues().apply { put("deck_id", deckId) },
+      null,
+      null,
+    )
   }
 
   /** Insert a two-field note into [deckId]; returns its URI and id, or null if unsupported. */
@@ -286,6 +425,7 @@ class AnkiDroidProviderLiveTest {
 
     /** Tag on the fixture notes this suite creates, so cleanup never touches a real card. */
     private const val TEST_TAG = "wearos-live-test"
+    private const val WRITE_BACK_DECK = "zz WearOS live write-back"
   }
 
   /**
