@@ -16,12 +16,13 @@ use std::cmp::Ordering;
 
 /// Anki's learn-ahead window: a learning card due within this many seconds of `now` joins today's
 /// queue so the user can start it early rather than waiting for the exact step time.
-const LEARN_AHEAD_SECS: i64 = 1_200;
+pub const LEARN_AHEAD_SECS: i64 = 1_200;
 
 /// `grade_log.kind` values: the kind of card *before* the grade. 1 (learning/relearning) is written
 /// by the grading task; the queue only counts new (0) and review (2) against the daily limits.
-const GRADE_KIND_NEW: i64 = 0;
-const GRADE_KIND_REVIEW: i64 = 2;
+pub const GRADE_KIND_NEW: i64 = 0;
+pub const GRADE_KIND_LEARNING: i64 = 1;
+pub const GRADE_KIND_REVIEW: i64 = 2;
 
 /// A deck's stored pool summary for the watch's deck list.
 #[derive(uniffi::Record)]
@@ -140,6 +141,15 @@ pub fn pool_has_deck(deck_id: i64) -> Result<bool, CoreError> {
         |r| r.get(0),
     )?;
     Ok(count > 0)
+}
+
+/// Every card id stored in the pool, so the watch can prune its cached card images against it.
+#[uniffi::export]
+pub fn pool_card_ids() -> Result<Vec<i64>, CoreError> {
+    let conn = get_db_connection()?;
+    let mut stmt = conn.prepare("SELECT card_id FROM pool_cards")?;
+    let ids = stmt.query_map([], |r| r.get::<_, i64>(0))?.collect::<Result<Vec<_>, _>>()?;
+    Ok(ids)
 }
 
 /// Summaries for the watch's deck list: how much is due now, how much learning arrives later today,
@@ -436,8 +446,41 @@ pub fn pool_card(card_id: i64) -> Result<Option<WearosCard>, CoreError> {
     blob.map(|b| decode_card(&b)).transpose()
 }
 
-/// Write a card's new local state and due placement back to the pool (crate-internal). `graded`
-/// marks it as locally changed so its shipped interval labels are not trusted again.
+/// A pooled card's full stored row, for the session's pool-mode undo (crate-internal).
+pub struct PoolCardSnapshot {
+    pub card: WearosCard,
+    pub due_day: Option<i64>,
+    pub due_at_secs: Option<i64>,
+    pub graded: bool,
+}
+
+/// Read a card's stored row exactly as it is, so a grade can be reversed (crate-internal).
+pub fn pool_card_snapshot(card_id: i64) -> Result<Option<PoolCardSnapshot>, CoreError> {
+    let conn = get_db_connection()?;
+    let row = conn
+        .query_row(
+            "SELECT card, due_day, due_at_secs, graded FROM pool_cards WHERE card_id = ?1",
+            params![card_id],
+            |r| {
+                Ok((
+                    r.get::<_, Vec<u8>>(0)?,
+                    r.get::<_, Option<i64>>(1)?,
+                    r.get::<_, Option<i64>>(2)?,
+                    r.get::<_, i64>(3)? != 0,
+                ))
+            },
+        )
+        .optional()?;
+    row.map(|(blob, due_day, due_at_secs, graded)| {
+        Ok(PoolCardSnapshot { card: decode_card(&blob)?, due_day, due_at_secs, graded })
+    })
+    .transpose()
+}
+
+/// Write a card's new local state and due placement back to the pool (crate-internal).
+///
+/// `graded` marks it as locally changed so its shipped interval labels are not trusted again; a
+/// graded card is never new, even if its new state still sits in the new queue.
 pub fn pool_update_card(
     card: WearosCard,
     due_day: Option<i64>,
@@ -446,7 +489,7 @@ pub fn pool_update_card(
 ) -> Result<(), CoreError> {
     let conn = get_db_connection()?;
     let card_id = card.id;
-    let is_new = card.state.as_ref().is_some_and(|s| s.queue == 0);
+    let is_new = !graded && card.state.as_ref().is_some_and(|s| s.queue == 0);
     let blob = encode_card(card);
     conn.execute(
         "UPDATE pool_cards
