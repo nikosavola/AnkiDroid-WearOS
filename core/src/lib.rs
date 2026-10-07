@@ -6,6 +6,7 @@ uniffi::setup_scaffolding!();
 
 mod db;
 mod decks;
+mod fsrs6;
 mod html;
 mod models;
 mod proto;
@@ -1246,6 +1247,20 @@ mod tests {
         .to_string()
     }
 
+    /// The same dict shape but with the stock FSRS-6 21 weights a real deck stores.
+    fn fsrs6_deck_options() -> String {
+        serde_json::json!({
+            "new": { "delays": [1.0, 10.0], "ints": [1, 4] },
+            "rev": { "ease4": 1.3, "ivlFct": 1.0, "maxIvl": 36500, "hardFactor": 1.2 },
+            "lapse": { "delays": [10.0], "mult": 0.0, "minInt": 1 },
+            "fsrs_params_6": vec![0.212, 1.2931, 2.3065, 8.2956, 6.4133, 0.8334, 3.0194, 0.001,
+                                  1.8722, 0.1666, 0.796, 1.4835, 0.0614, 0.2629, 1.6483, 0.6014,
+                                  1.8729, 0.5425, 0.0912, 0.0658, 0.1542],
+            "desired_retention": 0.9
+        })
+        .to_string()
+    }
+
     /// Preview intervals are floats; pedantic clippy forbids direct float equality.
     fn assert_secs(actual: f64, expected: f64, msg: &str) {
         assert!((actual - expected).abs() < 0.5, "{msg}: got {actual}, want {expected}");
@@ -1340,8 +1355,8 @@ mod tests {
         assert_secs(secs[1], 600.0, "Hard repeats the current step");
         assert_secs(
             secs[2],
-            86_400.0,
-            "Good graduates: a card with no memory state yet falls back to the configured interval",
+            3.0 * 86_400.0,
+            "Good graduates to FSRS's initial stability for a card with no memory state yet",
         );
         assert!((secs[2] - secs[1]).abs() > 1.0, "graduating is not the learning step it replaced");
     }
@@ -1374,6 +1389,31 @@ mod tests {
         assert_eq!(days(2), 34, "Good");
         assert_eq!(days(3), 81, "Easy");
         assert_secs(secs[0], 600.0, "Again drops into the relearning step");
+    }
+
+    #[test]
+    fn test_fsrs6_weights_enable_fsrs_and_schedule_review_cards() {
+        // A real FSRS-6 deck stores 21 weights; before this they were refused and every passing
+        // button showed the 1d fallback.
+        let config = parse_deck_schedule_config(fsrs6_deck_options()).unwrap();
+        assert!(config.fsrs_enabled(), "21 FSRS-6 weights must enable FSRS");
+        assert_eq!(config.fsrs_weights.len(), 21);
+
+        let secs = preview_interval_secs(&config, &review_state(), 0);
+        let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
+        assert_eq!(days(1), 23, "Hard");
+        assert_eq!(days(2), 32, "Good");
+        assert_eq!(days(3), 51, "Easy");
+    }
+
+    #[test]
+    fn test_advance_state_clears_elapsed_days_after_a_grade() {
+        // The card was just reviewed, so its requeued copy must not compute the next preview as if
+        // days had passed.
+        let config = parse_deck_schedule_config(fsrs6_deck_options()).unwrap();
+        let next = advance_state(&config, &review_state(), 3, 0);
+        assert!(next.elapsed_days.abs() < f64::EPSILON, "elapsed_days must be cleared");
+        assert_eq!(next.queue, 2, "a passing grade keeps the card in the review queue");
     }
 
     #[test]
@@ -1481,7 +1521,7 @@ mod tests {
                 .to_string(),
         )
         .unwrap();
-        assert!(config.fsrs_enabled());
+        assert!(!config.fsrs_enabled(), "an unsupported length means SM-2, not 1d previews");
         assert_eq!(config.fsrs_weights.len(), 2);
 
         let state = CardScheduleState { queue: 1, learning_step: 1, ..Default::default() };
