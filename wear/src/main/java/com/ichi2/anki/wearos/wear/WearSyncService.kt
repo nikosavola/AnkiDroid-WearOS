@@ -15,6 +15,7 @@ import kotlinx.coroutines.tasks.await
 import uniffi.wearos_core.deserializeDecks
 import uniffi.wearos_core.deserializeDueBatch
 import uniffi.wearos_core.initDatabase
+import uniffi.wearos_core.recordUnplacedAnswers
 import uniffi.wearos_core.removeBufferedAnswers
 
 class WearSyncService : WearableListenerService() {
@@ -26,6 +27,7 @@ class WearSyncService : WearableListenerService() {
     private const val KEY_BATCH_ASSET = "batch_asset"
     private const val KEY_BATCH_BYTES = "batch_bytes"
     private const val PATH_CLEAR_ANSWERS = "/clear_answers"
+    private const val PATH_UNPLACED_ANSWERS = "/unplaced_answers"
     private const val PATH_DECKS = "/decks"
     // Legacy "id:name" text key. A phone built from this commit onward only sends
     // KEY_DECKS_PROTO_BYTES (dual-writing both roughly doubles the DataMap size, and this codebase
@@ -112,6 +114,32 @@ class WearSyncService : WearableListenerService() {
 
   override fun onMessageReceived(messageEvent: MessageEvent) {
     Log.d(TAG, "onMessageReceived on watch: ${messageEvent.path}")
+
+    if (messageEvent.path == PATH_UNPLACED_ANSWERS) {
+      val idsString = String(messageEvent.data)
+      val ids = idsString.split(",").filter { it.isNotEmpty() }
+      Log.d(TAG, "Phone reported ${ids.size} unplaced answer(s).")
+
+      if (ids.isNotEmpty()) {
+        runBlocking {
+          try {
+            // Count one failed placement against exactly these ids; the phone only reports answers it
+            // examined and couldn't place, so a watch pushing while the phone is away no longer
+            // counts against the orphan cap.
+            val discarded = recordUnplacedAnswers(ids)
+            if (discarded > 0u) {
+              Log.w(TAG, "Discarded $discarded stuck review(s) that never settled.")
+            }
+
+            // Notify the UI that outstanding answers may have changed.
+            val intent = Intent(ACTION_ANSWERS_CLEARED).apply { setPackage(packageName) }
+            sendBroadcast(intent)
+          } catch (e: Exception) {
+            Log.e(TAG, "Failed to record unplaced answers: ${e.message}", e)
+          }
+        }
+      }
+    }
 
     if (messageEvent.path == PATH_CLEAR_ANSWERS) {
       val idsString = String(messageEvent.data)

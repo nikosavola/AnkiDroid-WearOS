@@ -444,8 +444,8 @@ class AnkiDroidProviderLiveTest {
 
   /**
    * Answer the test note's card through the app's own write-back path (prime-then-answer).
-   * [AnkiDroidBridge.writeAnswersBack] returns the ids it settled, so a missing id means the grade
-   * never reached the collection.
+   * [AnkiDroidBridge.writeAnswersBack] returns the ids it settled in `settled`, so a missing id means
+   * the grade never reached the collection.
    */
   private fun answerFirstCard(noteId: Long, ease: Int, assumeSettle: Boolean = false) {
     val answer =
@@ -457,7 +457,7 @@ class AnkiDroidProviderLiveTest {
         timeTakenMs = 2_000,
         deckId = 1,
       )
-    val settled = bridge.writeAnswersBack(listOf(answer))
+    val settled = bridge.writeAnswersBack(listOf(answer)).settled
     if (assumeSettle) {
       // Anki's write-back only answers the card the scheduler currently presents, so another due card
       // in the deck can legitimately block ours. Callers that can wait for a quiet collection ask for

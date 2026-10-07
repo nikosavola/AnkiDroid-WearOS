@@ -56,7 +56,7 @@ class WriteBackIntegrationTest {
     deserializeAnswers(serializeAnswers(answers))
 
   /** Run [answers] through the wire and the real write-back against the fake provider. */
-  private fun writeBack(answers: List<WearosAnswer>, readOnly: Boolean = false): List<String> =
+  private fun writeBack(answers: List<WearosAnswer>, readOnly: Boolean = false): WriteBackOutcome =
     AnkiDroidBridge(context).writeAnswersBack(overTheWire(answers), readOnly)
 
   private val scheduleUri: Uri = Uri.parse("content://com.ichi2.anki.flashcards/schedule")
@@ -67,7 +67,7 @@ class WriteBackIntegrationTest {
 
     val settled = writeBack(listOf(answer("a1", 111L, 0, 3), answer("a2", 222L, 1, 4)))
 
-    assertEquals(listOf("a1", "a2"), settled)
+    assertEquals(listOf("a1", "a2"), settled.settled)
     assertEquals(
       "both cards answered, in scheduler order, with the right ease",
       listOf(Applied(111L, 0, 3), Applied(222L, 1, 4)),
@@ -84,7 +84,7 @@ class WriteBackIntegrationTest {
     provider.seed(listOf(111L to 0))
     val settled = writeBack(listOf(answer("a1", 111L, 0, 2)))
 
-    assertEquals(listOf("a1"), settled)
+    assertEquals(listOf("a1"), settled.settled)
     assertEquals(listOf(Applied(111L, 0, 2)), provider.applied)
   }
 
@@ -106,13 +106,25 @@ class WriteBackIntegrationTest {
   @Test
   fun stopsWhenSchedulerPresentsAnUnbufferedCard_noMisgrade() {
     // Scheduler head is 999, but we only have a buffered answer for 111. writeAnswersBack must NOT
-    // answer 999 (that'd be a mis-grade); it stops and keeps 111 buffered.
+    // answer 999 (that'd be a mis-grade); it reports 111 unplaced and leaves it buffered.
     provider.seed(listOf(999L to 0))
-    val settled = writeBack(listOf(answer("a1", 111L, 0, 3)))
+    val outcome = writeBack(listOf(answer("a1", 111L, 0, 3)))
 
-    assertTrue("unplaceable answer stays buffered", settled.isEmpty())
+    assertTrue("unplaceable answer stays buffered", outcome.settled.isEmpty())
+    assertEquals("the buffered answer comes back unplaced", listOf("a1"), outcome.unplaced)
     assertTrue("nothing answered", provider.applied.isEmpty())
     assertEquals("head card untouched", 999L, provider.headNoteId())
+  }
+
+  @Test
+  fun `unplaced answers are reported separately from the settled ones`() {
+    // The scheduler presents 111 only: 111 settles and is cleared, while 222 has no presented card
+    // and comes back unplaced so the watch counts it against the orphan cap.
+    provider.seed(listOf(111L to 0))
+    val outcome = writeBack(listOf(answer("a1", 111L, 0, 3), answer("a2", 222L, 0, 4)))
+
+    assertEquals(listOf("a1"), outcome.settled)
+    assertEquals(listOf("a2"), outcome.unplaced)
   }
 
   @Test
@@ -120,7 +132,7 @@ class WriteBackIntegrationTest {
     provider.seed(listOf(111L to 0))
     val settled = writeBack(listOf(answer("a1", 111L, 0, 3)), readOnly = true)
 
-    assertEquals(listOf("a1"), settled)
+    assertEquals(listOf("a1"), settled.settled)
     assertTrue("read-only must not touch the collection", provider.applied.isEmpty())
     assertEquals("head card still due", 111L, provider.headNoteId())
   }
@@ -138,7 +150,7 @@ class WriteBackIntegrationTest {
     val settled =
       writeBack(listOf(answer("a1", 111L, 0, 3, deckId = 1783L), answer("a2", 222L, 0, 4, deckId = 1784L)))
 
-    assertEquals(listOf("a1", "a2"), settled)
+    assertEquals(listOf("a1", "a2"), settled.settled)
     assertEquals(listOf(Applied(111L, 0, 3), Applied(222L, 0, 4)), provider.applied)
     assertTrue("both decks fully drained", provider.isEmpty())
   }
@@ -150,7 +162,7 @@ class WriteBackIntegrationTest {
     provider.seedDecks(mapOf(1783L to listOf(111L to 0)))
     val settled = writeBack(listOf(answer("a1", 111L, 0, 3, deckId = 0L)))
 
-    assertEquals(listOf("a1"), settled)
+    assertEquals(listOf("a1"), settled.settled)
     assertEquals(listOf(Applied(111L, 0, 3)), provider.applied)
   }
 
@@ -163,12 +175,12 @@ class WriteBackIntegrationTest {
     provider.swallowAnswerCardFailure = true
     val swallowed = writeBack(listOf(answer("a1", 111L, 0, 3)))
 
-    assertTrue("a swallowed answer must stay buffered", swallowed.isEmpty())
+    assertTrue("a swallowed answer must stay buffered", swallowed.settled.isEmpty())
 
     provider.swallowAnswerCardFailure = false
     val settled = writeBack(listOf(answer("a1", 111L, 0, 3)))
 
-    assertEquals(listOf("a1"), settled)
+    assertEquals(listOf("a1"), settled.settled)
     assertEquals("applied exactly once", listOf(Applied(111L, 0, 3)), provider.applied)
   }
 
@@ -180,7 +192,7 @@ class WriteBackIntegrationTest {
     provider.exposeRepsColumn = false
     val settled = writeBack(listOf(answer("a1", 111L, 0, 3)))
 
-    assertEquals(listOf("a1"), settled)
+    assertEquals(listOf("a1"), settled.settled)
     assertEquals(listOf(Applied(111L, 0, 3)), provider.applied)
   }
 }

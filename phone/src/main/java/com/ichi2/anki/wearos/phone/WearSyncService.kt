@@ -17,18 +17,20 @@ import uniffi.wearos_core.deserializeAnswers
 import uniffi.wearos_core.serializeDueBatch
 
 /**
- * Decide which answer ids to clear from the watch buffer for a received batch. Empty batch -> clear
- * nothing. Otherwise the settled ids from [writeBack] (applied, or terminally unmatched). A transient
- * write failure returns fewer/no ids so those stay buffered for a retry; crucially, when nothing
- * settles the result is empty, so the caller sends NO clear_answers - clearing a grade that wasn't
- * applied would silently drop the user's review. Extracted from [WearSyncService.processAnswers] so
- * this guard is unit-testable without the GMS node/message clients.
+ * Decide the outcome of a received batch. Empty batch -> [WriteBackOutcome.NONE] without calling
+ * [writeBack]. Otherwise the outcome from [writeBack]: `settled` ids (applied, or terminally
+ * unmatched) are cleared from the watch buffer, and `unplaced` ids are reported back so the watch
+ * counts a real failed placement. A transient write failure reports nothing settled, so the caller
+ * sends NO clear_answers - clearing a grade that wasn't applied would silently drop the user's
+ * review. Extracted from [WearSyncService.processAnswers] so this guard is unit-testable without the
+ * GMS node/message clients.
  */
-internal fun settledIdsToClear(
+internal fun writeBackOutcome(
   answers: List<WearosAnswer>,
   readOnly: Boolean,
-  writeBack: (List<WearosAnswer>, Boolean) -> List<String>,
-): List<String> = if (answers.isEmpty()) emptyList() else writeBack(answers, readOnly)
+  writeBack: (List<WearosAnswer>, Boolean) -> WriteBackOutcome,
+): WriteBackOutcome =
+  if (answers.isEmpty()) WriteBackOutcome.NONE else writeBack(answers, readOnly)
 
 class WearSyncService : WearableListenerService() {
   companion object {
@@ -36,6 +38,7 @@ class WearSyncService : WearableListenerService() {
     private const val PATH_ANSWERS = "/answers"
     private const val KEY_ANSWERS_BYTES = "answers_bytes"
     private const val PATH_CLEAR_ANSWERS = "/clear_answers"
+    private const val PATH_UNPLACED_ANSWERS = "/unplaced_answers"
     private const val PATH_REQUEST_DECK = "/request_deck"
     private const val PATH_REQUEST_DECKS = "/request_decks"
     private const val PATH_REQUEST_NEW = "/request_new"
@@ -224,28 +227,35 @@ class WearSyncService : WearableListenerService() {
 
       val readOnly =
         getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE).getBoolean(KEY_READ_ONLY, false)
-      val settledIds = settledIdsToClear(answers, readOnly) { a, r -> bridge.writeAnswersBack(a, r) }
+      val outcome = writeBackOutcome(answers, readOnly) { a, r -> bridge.writeAnswersBack(a, r) }
 
-      if (settledIds.isNotEmpty()) {
-        val idsString = settledIds.joinToString(",")
-        val nodeClient = Wearable.getNodeClient(this@WearSyncService)
-        val messageClient = Wearable.getMessageClient(this@WearSyncService)
-
-        val nodes = nodeClient.connectedNodes.await()
-        Log.d(TAG, "Broadcasting clear_answers to ${nodes.size} nodes.")
-        for (node in nodes) {
-          try {
-            messageClient
-              .sendMessage(node.id, PATH_CLEAR_ANSWERS, idsString.toByteArray())
-              .await()
-            Log.d(TAG, "Sent clear_answers confirmation to node: ${node.displayName}")
-          } catch (e: Exception) {
-            Log.e(TAG, "Failed to send clear_answers to node ${node.id}: ${e.message}")
-          }
-        }
+      if (outcome.settled.isNotEmpty()) {
+        sendToConnectedNodes(PATH_CLEAR_ANSWERS, outcome.settled.joinToString(","))
+      }
+      if (outcome.unplaced.isNotEmpty()) {
+        // Report the ids the phone examined but couldn't place, so the watch counts these (and only
+        // these) against the orphan cap instead of every push.
+        sendToConnectedNodes(PATH_UNPLACED_ANSWERS, outcome.unplaced.joinToString(","))
       }
     } catch (e: Exception) {
       Log.e(TAG, "Failed to process answers: ${e.message}", e)
+    }
+  }
+
+  /** Send [payload] on [path] to every connected node, one failed node not stopping the rest. */
+  private suspend fun sendToConnectedNodes(path: String, payload: String) {
+    val nodeClient = Wearable.getNodeClient(this@WearSyncService)
+    val messageClient = Wearable.getMessageClient(this@WearSyncService)
+
+    val nodes = nodeClient.connectedNodes.await()
+    Log.d(TAG, "Broadcasting $path to ${nodes.size} nodes.")
+    for (node in nodes) {
+      try {
+        messageClient.sendMessage(node.id, path, payload.toByteArray()).await()
+        Log.d(TAG, "Sent $path confirmation to node: ${node.displayName}")
+      } catch (e: Exception) {
+        Log.e(TAG, "Failed to send $path to node ${node.id}: ${e.message}")
+      }
     }
   }
 }

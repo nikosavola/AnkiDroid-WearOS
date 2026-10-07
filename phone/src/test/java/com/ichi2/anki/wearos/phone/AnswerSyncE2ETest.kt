@@ -95,9 +95,9 @@ class AnswerSyncE2ETest {
       }
 
     val received = overTheWire(listOf(answer("a2", noteId = 222L, ord = 3, ease = 4)))
-    val settled = bridge(resolver).writeAnswersBack(received, readOnly = false)
+    val outcome = bridge(resolver).writeAnswersBack(received, readOnly = false)
 
-    assertEquals(listOf("a2"), settled)
+    assertEquals(listOf("a2"), outcome.settled)
     val v = values.captured
     assertEquals(222L, v.getAsLong("note_id"))
     assertEquals(3, v.getAsInteger("ord"))
@@ -121,7 +121,7 @@ class AnswerSyncE2ETest {
     val settled = bridge(resolver).writeAnswersBack(received, readOnly = true)
 
     verify(exactly = 0) { resolver.update(any(), any(), any(), any()) }
-    assertEquals(listOf("a1", "a2"), settled)
+    assertEquals(listOf("a1", "a2"), settled.settled)
   }
 
   @Test
@@ -146,13 +146,14 @@ class AnswerSyncE2ETest {
           answer("a3", noteId = 333L, ord = 1, ease = 3),
         )
       )
-    val settled = bridge(resolver).writeAnswersBack(received, readOnly = false)
+    val outcome = bridge(resolver).writeAnswersBack(received, readOnly = false)
 
-    assertEquals(listOf("a2"), settled)
+    assertEquals(listOf("a2"), outcome.settled)
+    assertEquals("unpresented grades are reported unplaced", listOf("a1", "a3"), outcome.unplaced)
     assertEquals(222L, update.captured.getAsLong("note_id"))
     verify(exactly = 1) { resolver.update(any(), any(), any(), any()) }
-    assertTrue("unpresented grades must stay buffered", !settled.contains("a1"))
-    assertTrue("unpresented grades must stay buffered", !settled.contains("a3"))
+    assertTrue("unpresented grades must stay buffered", !outcome.settled.contains("a1"))
+    assertTrue("unpresented grades must stay buffered", !outcome.settled.contains("a3"))
   }
 
   @Test
@@ -170,7 +171,7 @@ class AnswerSyncE2ETest {
         every { update(any(), any(), any(), any()) } returns 1
       }
     val firstSettled = bridge(firstResolver).writeAnswersBack(overTheWire(listOf(a1)), false)
-    assertEquals(listOf("a1"), firstSettled)
+    assertEquals(listOf("a1"), firstSettled.settled)
     verify(exactly = 1) { firstResolver.update(any(), any(), any(), any()) }
 
     // Re-send of the identical buffered answer; scheduler is now presenting a different card.
@@ -182,7 +183,10 @@ class AnswerSyncE2ETest {
     val resendSettled = bridge(resendResolver).writeAnswersBack(overTheWire(listOf(a1)), false)
 
     verify(exactly = 0) { resendResolver.update(any(), any(), any(), any()) }
-    assertTrue("a re-sent grade for a card no longer presented must not re-apply", resendSettled.isEmpty())
+    assertTrue(
+      "a re-sent grade for a card no longer presented must not re-apply",
+      resendSettled.settled.isEmpty(),
+    )
   }
 
   @Test
@@ -202,7 +206,7 @@ class AnswerSyncE2ETest {
       }
     val ctx1 = spyk(realCtx) { every { contentResolver } returns resolver1 }
     val first = AnkiDroidBridge(ctx1).writeAnswersBack(overTheWire(listOf(answer("a1", 111L, 0, 3))), false)
-    assertEquals(listOf("a1"), first)
+    assertEquals(listOf("a1"), first.settled)
     verify(exactly = 1) { resolver1.update(any(), any(), any(), any()) }
 
     // Same card still presented; re-send of the identical answer id.
@@ -215,7 +219,11 @@ class AnswerSyncE2ETest {
     val second = AnkiDroidBridge(ctx2).writeAnswersBack(overTheWire(listOf(answer("a1", 111L, 0, 3))), false)
 
     verify(exactly = 0) { resolver2.update(any(), any(), any(), any()) }
-    assertEquals("re-sent already-applied grade is settled, not re-applied", listOf("a1"), second)
+    assertEquals(
+      "re-sent already-applied grade is settled, not re-applied",
+      listOf("a1"),
+      second.settled,
+    )
   }
 
   @Test
@@ -223,6 +231,6 @@ class AnswerSyncE2ETest {
     val resolver = availableResolver {}
     val settled = bridge(resolver).writeAnswersBack(overTheWire(emptyList()), readOnly = false)
     verify(exactly = 0) { resolver.update(any(), any(), any(), any()) }
-    assertTrue(settled.isEmpty())
+    assertTrue(settled.settled.isEmpty())
   }
 }

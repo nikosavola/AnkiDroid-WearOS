@@ -188,11 +188,11 @@ class AnkiDroidBridgeTest {
   @Test
   fun writeAnswersBack_readOnly_neverTouchesProviderButSettlesAll() {
     val resolver = availableResolver {}
-    val settled =
+    val outcome =
       bridge(resolver).writeAnswersBack(listOf(answer("a1", 3), answer("a2", 1)), readOnly = true)
 
     verify(exactly = 0) { resolver.update(any(), any(), any(), any()) }
-    assertEquals(listOf("a1", "a2"), settled)
+    assertEquals(listOf("a1", "a2"), outcome.settled)
   }
 
   @Test
@@ -203,14 +203,14 @@ class AnkiDroidBridgeTest {
       every { update(any(), capture(values), any(), any()) } returns 1
     }
 
-    val settled =
+    val outcome =
       bridge(resolver)
         .writeAnswersBack(
           listOf(WearosAnswer(id = "a1", noteId = 111L, ord = 2, ease = 3, timeTakenMs = 4200L, deckId = 0L)),
           readOnly = false,
         )
 
-    assertEquals(listOf("a1"), settled)
+    assertEquals(listOf("a1"), outcome.settled)
     val v = values.captured
     assertEquals(111L, v.getAsLong("note_id"))
     assertEquals(2, v.getAsInteger("ord"))
@@ -226,8 +226,8 @@ class AnkiDroidBridgeTest {
       every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
       every { update(any(), any(), any(), any()) } returns 0
     }
-    val settled = bridge(resolver).writeAnswersBack(listOf(answer("a1", 3)), readOnly = false)
-    assertEquals(listOf("a1"), settled)
+    val outcome = bridge(resolver).writeAnswersBack(listOf(answer("a1", 3)), readOnly = false)
+    assertEquals(listOf("a1"), outcome.settled)
   }
 
   @Test
@@ -236,24 +236,44 @@ class AnkiDroidBridgeTest {
       every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(111L, 0)
       every { update(any(), any(), any(), any()) } throws RuntimeException("boom")
     }
-    val settled = bridge(resolver).writeAnswersBack(listOf(answer("a1", 3)), readOnly = false)
-    assertTrue("a thrown write must NOT be settled (kept for retry)", settled.isEmpty())
+    val outcome = bridge(resolver).writeAnswersBack(listOf(answer("a1", 3)), readOnly = false)
+    assertTrue("a thrown write must NOT be settled (kept for retry)", outcome.settled.isEmpty())
+    assertTrue("a transient failure says nothing about placement", outcome.unplaced.isEmpty())
   }
 
   @Test
   fun writeAnswersBack_neverAnswersACardTheSchedulerIsntPresenting() {
     // The scheduler is on note 999 (nothing buffered for it). Answering the current card with a
     // buffered answer for a DIFFERENT card would mis-grade note 999, so update must never be called
-    // and the buffered answer stays for a later sync.
+    // and the buffered answer is reported unplaced for the watch to count.
     val resolver = availableResolver {
       every { query(any(), any(), any(), any(), any()) } returns scheduleCursor(999L, 0)
       every { update(any(), any(), any(), any()) } returns 1
     }
-    val settled =
+    val outcome =
       bridge(resolver).writeAnswersBack(listOf(answer("a1", 3, noteId = 111L)), readOnly = false)
 
     verify(exactly = 0) { resolver.update(any(), any(), any(), any()) }
-    assertTrue("unmatched answer is kept for retry, not mis-applied", settled.isEmpty())
+    assertTrue("unmatched answer is kept for retry, not mis-applied", outcome.settled.isEmpty())
+    assertEquals(listOf("a1"), outcome.unplaced)
+  }
+
+  @Test
+  fun writeAnswersBack_reportsUnplacedSeparatelyFromSettled() {
+    // The scheduler presents 111 (buffered) and applies it, then has nothing more this pass; the
+    // buffered 222 has no presented card, so it comes back unplaced rather than silently settled.
+    val resolver =
+      writeBackResolver(scheduleCursors = listOf(scheduleCursor(111L, 0), noCardCursor()))
+
+    val outcome =
+      bridge(resolver)
+        .writeAnswersBack(
+          listOf(answer("a1", 3, noteId = 111L), answer("a2", 3, noteId = 222L)),
+          readOnly = false,
+        )
+
+    assertEquals(listOf("a1"), outcome.settled)
+    assertEquals(listOf("a2"), outcome.unplaced)
   }
 
   @Test
@@ -267,7 +287,7 @@ class AnkiDroidBridgeTest {
         capture = applied,
       )
 
-    val settled =
+    val outcome =
       bridge(resolver)
         .writeAnswersBack(
           listOf(answer("a2", 1, noteId = 222L), answer("a1", 3, noteId = 111L)),
@@ -275,7 +295,7 @@ class AnkiDroidBridgeTest {
         )
 
     assertEquals(listOf(111L, 222L), applied.map { it.getAsLong("note_id") })
-    assertEquals(listOf("a1", "a2"), settled)
+    assertEquals(listOf("a1", "a2"), outcome.settled)
   }
 
   @Test
@@ -289,12 +309,12 @@ class AnkiDroidBridgeTest {
         capture = eases,
       )
 
-    val settled =
+    val outcome =
       bridge(resolver)
         .writeAnswersBack(listOf(answer("again", 1), answer("good", 3)), readOnly = false)
 
     assertEquals(listOf(1, 3), eases.map { it.getAsInteger("answer_ease") })
-    assertEquals(listOf("again", "good"), settled)
+    assertEquals(listOf("again", "good"), outcome.settled)
   }
 
   @Test
