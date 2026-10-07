@@ -119,9 +119,10 @@ class WearSyncService : WearableListenerService() {
         // watch. Mirrors the /answers handshake fix in onDataChanged.
         runBlocking {
           try {
-            // 1. Fetch due cards for this specific deck (no mock forced, respect local available)
-            val batch = bridge.fetchDueBatch(deckId = DeckId(deckId), limit = 20)
-            Log.d(TAG, "Fetched ${batch.cards.size} due cards dynamically.")
+            // 1. Fetch a multi-day pool for this specific deck (no mock forced, respect local
+            // available), so the watch can keep reviewing offline for days.
+            val batch = bridge.fetchDuePool(deckId = DeckId(deckId), todayLimit = 20)
+            Log.d(TAG, "Fetched ${batch.cards.size} pooled cards dynamically.")
 
             // 2. Serialize via Rust using lightweight metadata
             val bytes = serializeDueBatch(AnkiDroidBridge.stripBase64Batch(batch))
@@ -139,8 +140,10 @@ class WearSyncService : WearableListenerService() {
             dataClient.putDataItem(putDataReq).await()
             Log.i(TAG, "Successfully synced requested deck $deckId back to watch!")
 
-            // Sync card bitmaps independently, path-separated, asynchronously
-            renderer.syncBitmapsForBatch(batch)
+            // Sync card bitmaps independently, path-separated, asynchronously. Only the near horizon
+            // is worth rendering: bitmaps are the expensive leg over Bluetooth, so a whole week up
+            // front would flood the Data Layer for cards the watch won't reach for days.
+            renderer.syncBitmapsForBatch(bitmapHorizonBatch(batch, bridge.todayDayIndex()))
           } catch (e: Exception) {
             Log.e(TAG, "Failed to compile and sync requested deck $deckId: ${e.message}", e)
           }

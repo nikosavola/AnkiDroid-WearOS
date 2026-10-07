@@ -92,6 +92,22 @@ class AnkiDroidProviderLiveTest {
   }
 
   /**
+   * Logs the day spread of the multi-day pool for the first deck. No assertion beyond "no exception,
+   * no duplicate ids": a real collection's schedule is whatever the user's is, so there is no
+   * expected per-day count to pin here.
+   */
+  @Test
+  fun poolCarriesDueDaysForUpcomingCards() {
+    val deckId = assumeAnkiDroid()
+    val pool = bridge.fetchDuePool(deckId = DeckId(deckId), todayLimit = 20)
+
+    val ids = pool.cards.map { it.id }
+    assertEquals("pool must not repeat card ids", ids.size, ids.toSet().size)
+    val countsByDay = pool.cards.groupingBy { it.dueDay }.eachCount()
+    Log.i(TAG, "pool deck $deckId: ${pool.cards.size} cards, dueDay counts=$countsByDay")
+  }
+
+  /**
    * Shadow validation (issue #24) on a card this test creates itself.
    *
    * Answering needs a card, and a fresh collection has none, so this inserts a note into the deck,

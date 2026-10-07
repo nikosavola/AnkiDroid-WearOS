@@ -100,7 +100,7 @@ object DeckSync {
       if (pushed >= prePushCap || scanned >= MAX_SCAN_DECKS) break
       scanned++
       val batch =
-        bridge.fetchDueBatch(deckId = deckId, limit = CARDS_PER_DECK, forceMock = isForced)
+        bridge.fetchDuePool(deckId = deckId, todayLimit = CARDS_PER_DECK, forceMock = isForced)
       if (batch.cards.isEmpty()) continue
 
       val bytes = serializeDueBatch(AnkiDroidBridge.stripBase64Batch(batch))
@@ -117,8 +117,10 @@ object DeckSync {
         )
         .await()
 
-      // render() switches to the main thread internally, so this is safe from any coroutine.
-      renderer.syncBitmapsForBatch(batch)
+      // render() switches to the main thread internally, so this is safe from any coroutine. Only the
+      // near horizon gets bitmaps: they're the expensive leg over Bluetooth, so rendering the whole
+      // week up front would flood the Data Layer for cards the watch won't reach for days.
+      renderer.syncBitmapsForBatch(bitmapHorizonBatch(batch, bridge.todayDayIndex()))
 
       pushed++
       totalCards += batch.cards.size
