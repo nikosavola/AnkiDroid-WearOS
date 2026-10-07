@@ -113,14 +113,17 @@ grade, so a card that advanced a learning step or graduated would still show pre
 
 AnkiDroid remains the authority: previews are advisory and every grade is reconciled by AnkiDroid
 on write-back. The one deliberate difference is **fuzz**: Anki fuzzes intervals of 2.5 days and up
-from a card-and-day seeded PRNG, while these previews are deterministic, so the two can differ by a
-few percent on longer intervals (observed on Easy: 3d/4d/5d across runs where we compute 4d).
+into a window and its load balancer picks a day inside it, while these previews are deterministic.
+The window is rslib's `fuzz_delta`: one day plus 15% of the days between 2.5 and 7, 10% of those
+between 7 and 20 and 5% beyond, so a 25d Good can show anywhere from 22d to 28d.
 
 Agreement is checked on-device by `AnkiDroidProviderLiveTest` (shadow mode): it inserts a real card
 and compares every button label against AnkiDroid's own, which is what caught the new-card step
 bug and Hard's first-step rule. Only due cards expose labels, so the graduated/relearning states
 are covered by unit tests rather than that walk. Nothing in the modelled subset is knowingly
-unmatched today; issue #24 tracks tightening the comparison tolerance so drift fails loudly.
+unmatched today. The live test allows exactly that fuzz window plus the label's rounding, and
+counts elapsed time in Anki day numbers (a card reviewed late yesterday is one day old), which is
+what a late SM-2 review's Good and Easy depend on.
 
 ## 6. Card Rendering (native, no WebView)
 AnkiDroid's `CardContentProvider` compiles flashcard templates and outputs HTML. Wear OS devices

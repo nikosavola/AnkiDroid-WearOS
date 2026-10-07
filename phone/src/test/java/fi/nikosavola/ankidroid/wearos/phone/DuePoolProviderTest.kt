@@ -63,6 +63,20 @@ class DuePoolProviderTest {
   }
 
   @Test
+  fun `elapsed days count Anki day rollovers, not wall-clock time`() {
+    // A minute before the rollover 19 Anki days ago: barely 18 days of wall clock, 19 for Anki.
+    val todayStartSecs = todayIndex() * 86_400L + defaultRolloverHour() * 3_600L
+    val lastReview = todayStartSecs - 18 * 86_400L - 60L
+    provider.dueCardsByOffset =
+      mapOf(1L to listOf(FakeCardRow(31L, 1031L, 0, lastReviewSecs = lastReview)))
+
+    val card =
+      bridge().fetchDuePool(DeckId(DECK_ID), todayLimit = 20).cards.single { it.id == 31L }
+
+    assertEquals(19.0, card.state!!.elapsedDays, 0.0)
+  }
+
+  @Test
   fun `intraday learning cards carry their due time`() {
     provider.learningCards = listOf(FakeCardRow(21L, 1021L, 0, due = 1_700_000_600L, queue = 1))
 
@@ -124,6 +138,7 @@ data class FakeCardRow(
   val due: Long = 0L,
   val queue: Int = 2,
   val cardType: Int = 2,
+  val lastReviewSecs: Long = 0L,
   val front: String = "front $id",
   val back: String = "back $id",
 )
@@ -227,7 +242,7 @@ class FakeCardsProvider : ContentProvider() {
             0.0,
             0.0,
             2500L,
-            0L,
+            it.lastReviewSecs,
             it.due,
           )
         )

@@ -521,9 +521,8 @@ fn sm2_passing_intervals(config: &DeckScheduleConfig, state: &CardScheduleState)
 /// Anki's `constrain_passing_interval`: the deck's interval modifier, then rounding into the deck's
 /// bounds.
 ///
-/// Anki fuzzes passing intervals (±5% once they reach 2.5 days) from a card-and-day seeded PRNG;
-/// our previews stay deterministic and unfuzzed, which is why a comparison against AnkiDroid's own
-/// labels has to allow a few percent.
+/// Anki then fuzzes intervals of 2.5 days and up into rslib's `fuzz_bounds` window (and its load
+/// balancer picks a day inside it); our previews stay deterministic and unfuzzed.
 fn constrain_passing_interval(
     config: &DeckScheduleConfig,
     interval_days: f64,
@@ -541,18 +540,13 @@ fn review_interval_bounds(config: &DeckScheduleConfig, minimum: f64) -> (f64, f6
     (minimum.clamp(1.0, maximum), maximum)
 }
 
-/// How many whole days have passed since the card was last reviewed.
+/// How many whole Anki days have passed since the card was last reviewed.
 ///
-/// Anki counts elapsed time in *collection days*, not wall-clock fractions: a card reviewed
-/// yesterday is one day elapsed whether that was at 8am or 11pm. Our value comes from a timestamp, so
-/// the fraction is rounded away here - otherwise a card reviewed 23h59m ago reads as "not yet
-/// elapsed", days_late goes negative, and Anki's early-review branch produces a shorter interval than
-/// Anki itself would (found on-device: Hard 1d where AnkiDroid said 2d).
-///
-/// Rounding up to the next day within an hour absorbs clock skew, so a nominal day reads as one.
+/// Callers fill `elapsed_days` from day numbers ([`crate::day::elapsed_days_between`]), so this is
+/// already whole. Rounding only matters for an older phone build that still sends a wall-clock
+/// fraction.
 fn elapsed_days(state: &CardScheduleState) -> i64 {
-    let days = state.elapsed_days.max(0.0);
-    (days + 1.0 / 24.0).floor() as i64
+    state.elapsed_days.max(0.0).round() as i64
 }
 
 /// The card's SM-2 ease factor, or Anki's initial 2.5 when the card carries none.
