@@ -91,7 +91,7 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
       }
       item {
         Button(
-          onClick = { isReviewing = true },
+          onClick = { pushScreen(WatchScreen.Review) },
           transformation = SurfaceTransformation(transformSpec),
           modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
         ) {

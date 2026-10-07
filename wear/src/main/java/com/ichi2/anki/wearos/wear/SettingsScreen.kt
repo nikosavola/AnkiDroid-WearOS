@@ -27,7 +27,7 @@ internal fun MainActivity.SettingsScreen() {
   ScreenScaffold(
     scrollState = listState,
     edgeButton = {
-      EdgeButton(onClick = { showSettings = false }, buttonSize = EdgeButtonSize.Medium) {
+      EdgeButton(onClick = { popBackStackAndRunSideEffects() }, buttonSize = EdgeButtonSize.Medium) {
         Icon(painter = painterResource(id = R.drawable.ic_check), contentDescription = "Done")
       }
     },

@@ -22,6 +22,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.dp
+import androidx.navigation3.runtime.entryProvider
+import androidx.navigation3.ui.NavDisplay
 import androidx.wear.compose.foundation.AnchorType
 import androidx.wear.compose.foundation.CurvedDirection
 import androidx.wear.compose.foundation.CurvedLayout
@@ -43,6 +45,7 @@ import androidx.wear.compose.material3.TextToggleButtonDefaults
 import androidx.wear.compose.material3.lazy.TransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.curvedText
+import androidx.wear.compose.navigation3.rememberSwipeDismissableSceneStrategy
 import com.google.android.gms.wearable.Wearable
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
@@ -55,6 +58,22 @@ import uniffi.wearos_core.*
 
 /** A deck shown in the picker; [dueNow] is null when the deck has not been pooled on the watch yet. */
 data class DeckEntry(val id: Long, val name: String, val dueNow: Int?)
+
+/**
+ * A screen on the wear back stack. [Decks] carries the `::` folder being browsed, so descending into
+ * a folder pushes another [Decks] and the up row / back gesture pops it.
+ */
+internal sealed interface WatchScreen {
+  data class Decks(val folderPath: String) : WatchScreen
+
+  data object Settings : WatchScreen
+
+  /** Deck overview; shows the finished recap once the session has no current card. */
+  data object Session : WatchScreen
+
+  /** The card in front of the user; falls back to the finished recap if the queue empties. */
+  data object Review : WatchScreen
+}
 
 class MainActivity : ComponentActivity() {
   companion object {
@@ -70,7 +89,6 @@ class MainActivity : ComponentActivity() {
   internal var outstandingOldestSecs by mutableLongStateOf(0L)
   // Reviews completed since local midnight (motivational counter).
   internal var reviewedToday by mutableStateOf(0)
-  internal var isReviewing by mutableStateOf(false)
   internal var ttsEnabled by mutableStateOf(false)
 
   // User settings mirrored into Compose state (persisted via WatchSettings). Changing any of these
@@ -83,11 +101,10 @@ class MainActivity : ComponentActivity() {
   internal var hideClock by mutableStateOf(false)
   internal var hideProgress by mutableStateOf(false)
   internal var coloredGradeButtons by mutableStateOf(true)
-  internal var showSettings by mutableStateOf(false)
 
-  // Current folder in the deck picker's `::` hierarchy ("" = root). Descending sets it to a child
-  // path; the physical back button and the up row pop it one level.
-  internal var deckFolderPath by mutableStateOf("")
+  // Navigation state: the back stack of screens. Always starts on the root deck picker; descending
+  // into folders, opening settings, entering a review and its card screen each push an entry.
+  internal val backStack = mutableStateListOf<WatchScreen>(WatchScreen.Decks(""))
 
   // Deck-list + settings state lives in the ViewModel (survives config changes); this Activity stays
   // the review/sync controller (live session, TTS, Data Layer, receiver).
@@ -222,14 +239,30 @@ class MainActivity : ComponentActivity() {
     AnswerUploadWorker.scheduleNow(this)
   }
 
-  /** Free the native [ReviewSession] before dropping the reference (see onDestroy). */
+  /** Push a screen onto the back stack (folders, settings, session, review). */
+  internal fun pushScreen(screen: WatchScreen) {
+    backStack.add(screen)
+  }
+
+  /**
+   * Pop the top entry and run the side effects a system back would: leaving the deck overview ends
+   * the session. Pop and clear live together here so the two can't drift at the call sites.
+   */
+  internal fun popBackStackAndRunSideEffects() {
+    if (backStack.size <= 1) return
+    if (backStack.last() == WatchScreen.Session) {
+      clearSession()
+    } else {
+      backStack.removeAt(backStack.lastIndex)
+    }
+  }
+
+  /** Free the native [ReviewSession] and drop its [WatchScreen.Session]/[WatchScreen.Review] entries. */
   internal fun clearSession() {
     reviewSession?.destroy()
     reviewSession = null
+    backStack.removeAll { it == WatchScreen.Session || it == WatchScreen.Review }
   }
-
-  /** Parent of a `::` deck path; "" when already at a top-level segment. */
-  internal fun parentFolder(path: String): String = path.substringBeforeLast("::", "")
 
   /**
    * Build a review session from the deck's pooled cards, entirely offline. When [toastIfEmptyNew]
@@ -248,7 +281,10 @@ class MainActivity : ComponentActivity() {
         reviewSession?.destroy()
         reviewSession = session
         activeDeckId = deckId
-        isReviewing = false
+        // A fresh session lands on the deck overview: drop any Review entry left from the previous
+        // one, then push Session unless it is already on top (a learn-new-cards reload).
+        backStack.removeAll { it == WatchScreen.Review }
+        if (backStack.lastOrNull() != WatchScreen.Session) backStack.add(WatchScreen.Session)
         Log.i(
           TAG,
           "Loaded deck '${session.getDeckName()}' with ${session.getTotalCards()} cards from pool.",
@@ -519,38 +555,23 @@ class MainActivity : ComponentActivity() {
   @Composable
   fun WearAppScreen() {
     AnkiWearTheme(themeMode) {
-      // Safe, native physical Back Button navigation logic
-      val session = reviewSession
-      if (showSettings) {
-        androidx.activity.compose.BackHandler { showSettings = false }
-      } else if (isReviewing) {
-        androidx.activity.compose.BackHandler { isReviewing = false }
-      } else if (session != null) {
-        androidx.activity.compose.BackHandler { clearSession() }
-      } else if (deckFolderPath.isNotEmpty()) {
-        // On the deck picker, back goes up one folder instead of leaving the app.
-        androidx.activity.compose.BackHandler { deckFolderPath = parentFolder(deckFolderPath) }
-      }
-
       Box(modifier = Modifier.fillMaxSize()) {
         AppScaffold {
-          if (showSettings) {
-            SettingsScreen()
-          } else if (session == null) {
-            WelcomeScreen()
-          } else {
-            // Keying on cardCompletedTrigger subscribes this scope, so answering/undoing a card
-            // recomposes it onto the next card (and switches to the finished screen when the queue
-            // empties) without a throwaway "unused variable" read.
-            val currentCard = remember(session, cardCompletedTrigger) { session.getCurrentCard() }
-            if (currentCard == null) {
-              FinishedScreen(session)
-            } else if (!isReviewing) {
-              DeckScreen(session)
-            } else {
-              ReviewCardScreen(session, currentCard)
-            }
-          }
+          // Swipe-right-to-dismiss + predictive back come from the Wear scene strategy; hardware and
+          // gesture back both route through onBack, which pops the stack (and clears the session
+          // when leaving the deck overview). At the root entry back is disabled and the system exits.
+          NavDisplay(
+            backStack = backStack,
+            onBack = { popBackStackAndRunSideEffects() },
+            sceneStrategy = rememberSwipeDismissableSceneStrategy(),
+            entryProvider =
+              entryProvider<WatchScreen> {
+                entry<WatchScreen.Decks> { WelcomeScreen(it.folderPath) }
+                entry<WatchScreen.Settings> { SettingsScreen() }
+                entry<WatchScreen.Session> { SessionScreen() }
+                entry<WatchScreen.Review> { ReviewScreen() }
+              },
+          )
         }
         // While a deck/new-card batch is downloading from the phone, sweep an indeterminate arc
         // around the round edge (the Data Layer transfer exposes no fraction). Cleared when the
@@ -561,6 +582,32 @@ class MainActivity : ComponentActivity() {
           )
         }
       }
+    }
+  }
+
+  /** Deck overview reached from the picker; shows the finished recap once the queue has emptied. */
+  @Composable
+  private fun SessionScreen() {
+    val session = reviewSession ?: return
+    // Keying on cardCompletedTrigger subscribes this scope, so answering/undoing a card recomposes
+    // it onto the next card (or the finished screen when the queue empties).
+    val currentCard = remember(session, cardCompletedTrigger) { session.getCurrentCard() }
+    if (currentCard == null) {
+      FinishedScreen(session)
+    } else {
+      DeckScreen(session)
+    }
+  }
+
+  /** The card in front of the user; falls back to the finished recap if the queue empties. */
+  @Composable
+  private fun ReviewScreen() {
+    val session = reviewSession ?: return
+    val currentCard = remember(session, cardCompletedTrigger) { session.getCurrentCard() }
+    if (currentCard == null) {
+      FinishedScreen(session)
+    } else {
+      ReviewCardScreen(session, currentCard)
     }
   }
 
@@ -839,8 +886,7 @@ class MainActivity : ComponentActivity() {
       transformSpec = transformSpec,
       onSyncAndBack = {
         triggerAnswersSync()
-        isReviewing = false
-        clearSession() // return to decks selector list
+        clearSession() // pops Session/Review back to the deck selector list
       },
       // Learn new cards right after finishing the due queue (needs the new-card request plumbing).
       // Present only when a deck is active; null hides the controls.

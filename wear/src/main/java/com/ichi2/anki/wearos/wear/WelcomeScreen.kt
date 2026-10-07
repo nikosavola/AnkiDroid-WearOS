@@ -23,8 +23,9 @@ import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.Text
 import uniffi.wearos_core.*
 
+/** The deck picker for one level of the `::` hierarchy; [folderPath] is "" at the root. */
 @Composable
-internal fun MainActivity.WelcomeScreen() {
+internal fun MainActivity.WelcomeScreen(folderPath: String) {
   val listState = rememberTransformingLazyColumnState()
   val transformSpec = rememberEdgeMorphSpec()
   // Memoize on the underlying deck state, not on a freshly-built list: vm.deckEntries() returns a new
@@ -34,14 +35,14 @@ internal fun MainActivity.WelcomeScreen() {
   val countById = remember(entries) { entries.associate { it.id to it.dueNow } }
   // Resolve one folder level from the flat deck list in Rust; card counts stay a UI concern here.
   val level =
-    remember(entries, deckFolderPath) {
-      deckChildren(entries.map { DeckInfo(it.id, it.name) }, deckFolderPath)
+    remember(entries, folderPath) {
+      deckChildren(entries.map { DeckInfo(it.id, it.name) }, folderPath)
     }
   // Reset scroll to the top whenever we descend into or pop out of a folder.
-  LaunchedEffect(deckFolderPath) { listState.scrollToItem(0) }
+  LaunchedEffect(folderPath) { listState.scrollToItem(0) }
 
   val title =
-    if (deckFolderPath.isEmpty()) "AnkiDroid WearOS" else deckFolderPath.substringAfterLast("::")
+    if (folderPath.isEmpty()) "AnkiDroid WearOS" else folderPath.substringAfterLast("::")
 
   ScreenScaffold(
     scrollState = listState,
@@ -92,10 +93,10 @@ internal fun MainActivity.WelcomeScreen() {
         }
       } else {
         // Up one folder. Only shown when we've descended below the root.
-        if (deckFolderPath.isNotEmpty()) {
+        if (folderPath.isNotEmpty()) {
           item {
             CompactButton(
-              onClick = { deckFolderPath = parentFolder(deckFolderPath) },
+              onClick = { popBackStackAndRunSideEffects() },
               colors = ButtonDefaults.filledTonalButtonColors(),
               icon = {
                 Icon(
@@ -132,7 +133,7 @@ internal fun MainActivity.WelcomeScreen() {
               name = node.name,
               transformation = transformation,
               modifier = cardModifier,
-              onClick = { deckFolderPath = node.path },
+              onClick = { pushScreen(WatchScreen.Decks(node.path)) },
             )
           } else {
             DeckCard(
@@ -148,7 +149,7 @@ internal fun MainActivity.WelcomeScreen() {
 
       item {
         CompactButton(
-          onClick = { showSettings = true },
+          onClick = { pushScreen(WatchScreen.Settings) },
           colors = ButtonDefaults.filledTonalButtonColors(),
           modifier = Modifier.fillMaxWidth(0.7f),
         ) {
