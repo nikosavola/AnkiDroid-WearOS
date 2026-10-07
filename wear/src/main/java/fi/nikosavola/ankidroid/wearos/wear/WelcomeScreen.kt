@@ -151,6 +151,7 @@ internal fun MainActivity.WelcomeScreen(folderPath: String) {
         CompactButton(
           onClick = { pushScreen(WatchScreen.Settings) },
           colors = ButtonDefaults.filledTonalButtonColors(),
+          icon = { Icon(painterResource(R.drawable.ic_settings), contentDescription = null) },
           modifier = Modifier.fillMaxWidth(0.7f),
         ) {
           Text("Settings")

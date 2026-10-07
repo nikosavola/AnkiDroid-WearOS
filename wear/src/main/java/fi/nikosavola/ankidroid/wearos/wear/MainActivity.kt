@@ -117,6 +117,8 @@ class MainActivity : ComponentActivity() {
   internal var activeDeckId by mutableStateOf<Long?>(null)
   // Whether the pending request was for new cards, so we can report when none came back.
   internal var pendingIsNew = false
+  // Phone-communication failure to surface as a transient M3 dialog; null means no failure showing.
+  internal var phoneFailure by mutableStateOf<String?>(null)
 
   internal var tts: TextToSpeech? = null
   internal val scope = CoroutineScope(Dispatchers.Main)
@@ -396,15 +398,15 @@ class MainActivity : ComponentActivity() {
       deckId.toString().toByteArray(),
       onNotConnected = {
         pendingDeckId = null // stop the sync arc; nothing is coming
-        toast("Phone not connected! Check Bluetooth.")
+        phoneFailure = "Phone not connected"
       },
       onSent = {
         toast("Syncing deck from phone...")
         startDownloadTimeout(deckId)
       },
-      onError = { e ->
+      onError = {
         pendingDeckId = null
-        toast("Failed to contact phone: ${e.message}")
+        phoneFailure = "Couldn't reach phone"
       },
     )
   }
@@ -416,7 +418,7 @@ class MainActivity : ComponentActivity() {
       if (pendingDeckId == deckId) {
         pendingDeckId = null
         pendingIsNew = false
-        toast("Phone didn't respond — try again.")
+        phoneFailure = "Phone didn't respond"
       }
     }
   }
@@ -430,7 +432,7 @@ class MainActivity : ComponentActivity() {
       "$deckId:$count".toByteArray(),
       onNotConnected = {
         pendingDeckId = null
-        toast("Phone not connected!")
+        phoneFailure = "Phone not connected"
       },
       onSent = {
         toast("Fetching $count new cards...")
@@ -438,7 +440,7 @@ class MainActivity : ComponentActivity() {
       },
       onError = {
         pendingDeckId = null
-        toast("Failed to contact phone.")
+        phoneFailure = "Couldn't reach phone"
       },
     )
   }
@@ -446,9 +448,9 @@ class MainActivity : ComponentActivity() {
   internal fun requestDecksFromPhone() {
     sendToPhone(
       "/request_decks",
-      onNotConnected = { toast("Phone not connected! Check Bluetooth.") },
+      onNotConnected = { phoneFailure = "Phone not connected" },
       onSent = { toast("Refreshing decks list...") },
-      onError = { e -> toast("Failed to contact phone: ${e.message}") },
+      onError = { phoneFailure = "Couldn't reach phone" },
     )
   }
 
@@ -572,6 +574,9 @@ class MainActivity : ComponentActivity() {
                 entry<WatchScreen.Review> { ReviewScreen() }
               },
           )
+          // Drawn after the navigation host so a phone-communication failure overlays whichever
+          // screen is on top.
+          PhoneFailureDialog(phoneFailure) { phoneFailure = null }
         }
         // While a deck/new-card batch is downloading from the phone, sweep an indeterminate arc
         // around the round edge (the Data Layer transfer exposes no fraction). Cleared when the
