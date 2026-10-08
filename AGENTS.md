@@ -95,30 +95,29 @@ grade, so a card that advanced a learning step or graduated would still show pre
 - **Per-card state** comes from `FlashCardsContract.Card`: `queue`, `interval`, `left`
   (`left % 1000` = reps before graduation, which gives the learning-step index), `fsrs_stability`,
   `fsrs_difficulty`, `last_review_time_secs`.
-- **Math**: learning/relearning steps are Anki's ladder (Again restarts it, Hard is Anki's hard
-  delay — the average of the first two steps on step 1, otherwise a repeat — Good advances and
-  graduates from the last step, Easy graduates immediately). Day-or-longer intervals come from
-  FSRS-6 through the `fsrs` crate, the same one rslib uses (6.x dropped Burn, so it adds only a
-  few KB to the watch `.so`), with rslib's floors on top: each passing button at least a day above
-  the previous one, and a grown interval never fuzzed back below the current one. Reference values
-  in the tests come from py-fsrs 6. Decks without weights follow Anki's SM-2 review
-  rules ported from rslib `review.rs`: the card's own ease factor (fetched from `sm2_factor`) and
-  its days-late drive Hard/Good/Easy, each floored above the previous button and bounded by the
-  deck's maximum interval, with Anki's separate early-review branch when a card is answered ahead
-  of schedule. A lapsed card returns to Anki's failing review interval (its old interval reduced by
-  the lapse multiplier, never below the minimum lapse interval), not the graduating interval.
+- **Math is Anki's own code**: rslib's `scheduler/states` (all 13 files) and `scheduler/timespan.rs`
+  are vendored **verbatim** from Anki 26.05 (`e64c6b1`, the rslib AnkiDroid 2.25.1 bundles) under
+  `core/vendor/anki`, with Anki's AGPL `LICENSE` and an `UPSTREAM.toml` of sha256s. Never edit them;
+  CI runs `scripts/vendor-rslib.sh --check`, and bumping Anki is `scripts/vendor-rslib.sh --update
+  <commit> <tag>` plus a review of the diff. The `core/anki-states` crate (a path dependency, not a
+  workspace member, so the vendored `#[cfg(test)]` modules never build) compiles them against
+  type-check-only stand-ins for the rest of rslib; its collection/load-balancer stubs are
+  `unreachable!()`. `sched.rs` is the adapter, ported from rslib `scheduler/answering`: card fields
+  to `CardState` (`current.rs`), FSRS outcomes, short-term flag and fuzz factor (`mod.rs`), and the
+  chosen state back to card fields (`learning.rs`/`review.rs`/`relearning.rs`). Labels come from
+  `timespan.rs` (a month is 365/12 days; hours, months and years keep one decimal). FSRS uses the
+  `fsrs` crate 6.6.2 (Burn-free; Anki 26.05 pins 5.2.0, same `NextStates` API).
 - **Session use**: `ReviewSession` advances the card's state on each grade and recomputes the
   requeued copy's labels, so a card worked through its ladder shows the numbers for the state it is
   actually in. Without a config (older phone build, mock cards) the shipped labels are left alone.
 
 AnkiDroid remains the authority: previews are advisory and every grade is reconciled by AnkiDroid
-on write-back. **Fuzz** is reproduced: Anki fuzzes intervals of 2.5 days and up into rslib's
-`fuzz_delta` window (one day plus 15% of the days between 2.5 and 7, 10% of those between 7 and 20
-and 5% beyond) using a `StdRng` seeded with card id + reps. The phone ships that seed
-(`fuzz_seed`), and `sched.rs` makes the same draw with the same `rand` 0.9, so day+ labels land on
-Anki's day. The remaining gap is the **load balancer** (on by default): for intervals up to 90 days
-it picks the least busy day in that window from other cards' due dates, which the watch doesn't
-have, so those labels can be a day or two off.
+on write-back. **Fuzz** is reproduced: the phone ships rslib's seed (`fuzz_seed`, card id + reps)
+and `sched.rs` makes rslib's `get_fuzz_factor` draw with the same `rand` 0.9. Known gaps: the
+**load balancer** (on by default; for intervals up to 90 days it picks the least busy day in the
+fuzz window from other cards' due dates, which the watch doesn't have), the rollover conversion of
+day-long learning steps, a memory state Anki would rebuild from the revlog, and `left`, which the
+phone ships as a step index (`sched.rs` turns it back into steps remaining).
 
 Agreement is checked on-device by `AnkiDroidProviderLiveTest` (shadow mode): it inserts a real card
 and compares every button label against AnkiDroid's own, which is what caught the new-card step

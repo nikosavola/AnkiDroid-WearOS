@@ -1641,7 +1641,11 @@ mod tests {
         assert_eq!(format_interval_label(600.0), "10m");
         assert_eq!(format_interval_label(7200.0), "2h");
         assert_eq!(format_interval_label(345_600.0), "4d");
-        assert_eq!(format_interval_label(30.0 * 86_400.0), "1mo");
+        // rslib timespan.rs: a month is 365/12 days, and hours/months/years keep one decimal.
+        assert_eq!(format_interval_label(30.0 * 86_400.0), "30d");
+        assert_eq!(format_interval_label(31.0 * 86_400.0), "1mo");
+        assert_eq!(format_interval_label(5_400.0), "1.5h");
+        assert_eq!(format_interval_label(45.0 * 86_400.0), "1.5mo");
         assert_eq!(format_interval_label(365.0 * 86_400.0), "1y");
     }
 
@@ -1993,9 +1997,10 @@ mod tests {
     }
 
     #[test]
-    fn test_early_review_schedules_from_elapsed_time() {
-        // Answered ahead of schedule Anki uses its early-review branch, which schedules from the
-        // time actually elapsed rather than the interval.
+    fn test_early_review_in_a_normal_deck_schedules_as_on_time() {
+        // rslib's current.rs clamps a review card's due day to today in a normal deck, so its
+        // elapsed days never fall below the interval and review.rs's early branch is not taken: a
+        // card answered ahead of schedule gets the same buttons as one answered on time.
         let config = parse_deck_schedule_config(
             serde_json::json!({ "rev": { "hardFactor": 1.2, "ivlFct": 1.0, "ease4": 1.3 } })
                 .to_string(),
@@ -2005,9 +2010,8 @@ mod tests {
         let secs = preview_interval_secs(&config, &early, 0);
         let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
 
-        assert_eq!(days(2), 10, "Good keeps the scheduled interval, it does not shrink it");
-        assert!(days(1) < days(2), "Hard is below Good");
-        assert!(days(2) < days(3), "Easy is above Good");
+        assert_eq!(preview_interval_secs(&config, &review_state(), 0), secs);
+        assert_eq!((days(1), days(2), days(3)), (12, 25, 33));
     }
 
     #[test]

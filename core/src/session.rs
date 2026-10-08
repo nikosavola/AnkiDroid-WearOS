@@ -623,7 +623,7 @@ fn grade_kind_before(state: Option<&CardScheduleState>) -> i64 {
 }
 
 /// True for sub-day interval units (seconds/minutes/hours), false for day/month/year. Labels look
-/// like "45s", "1m", "2h", "4d", "3mo", "1y"; note "m" is minutes but "mo" is months.
+/// like "45s", "1m", "1.5h", "4d", "3.2mo", "1y"; note "m" is minutes but "mo" is months.
 fn label_is_subday(label: &str) -> bool {
     let unit: String = label.chars().filter(char::is_ascii_alphabetic).collect();
     matches!(unit.as_str(), "s" | "m" | "h")
