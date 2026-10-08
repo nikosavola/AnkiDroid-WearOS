@@ -22,8 +22,11 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
@@ -702,6 +705,14 @@ class MainActivity : ComponentActivity() {
     // Native calls once per grade rather than on every draw of the ring.
     val fraction = remember(session, cardCompletedTrigger) { session.getProgressFraction() }
     val label = remember(session, cardCompletedTrigger) { session.getProgressString() }
+    // Card text scrolled up fades out under the label rather than running through it.
+    val background = MaterialTheme.colorScheme.background
+    Box(
+      modifier =
+        Modifier.fillMaxWidth()
+          .height(44.dp)
+          .background(Brush.verticalGradient(0.5f to background, 1f to Color.Transparent))
+    )
     androidx.wear.compose.material3.CircularProgressIndicator(
       progress = { fraction },
       modifier = Modifier.fillMaxSize().padding(2.dp),
@@ -716,7 +727,13 @@ class MainActivity : ComponentActivity() {
   @Composable
   private fun TopCurvedProgress(text: String, style: CurvedTextStyle) {
     val color = MaterialTheme.colorScheme.onSurfaceVariant
-    CurvedLayout(modifier = Modifier.fillMaxSize(), anchor = 270f, anchorType = AnchorType.Center) {
+    // TalkBack otherwise reads the bare "N/M".
+    val spoken = text.replace("/", " of ") + " done"
+    CurvedLayout(
+      modifier = Modifier.fillMaxSize().clearAndSetSemantics { contentDescription = spoken },
+      anchor = 270f,
+      anchorType = AnchorType.Center,
+    ) {
       curvedText(
         text = text,
         style = style,

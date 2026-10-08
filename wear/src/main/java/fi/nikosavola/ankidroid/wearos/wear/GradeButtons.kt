@@ -3,6 +3,7 @@ package fi.nikosavola.ankidroid.wearos.wear
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -13,6 +14,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.input.pointer.PointerEvent
@@ -110,6 +113,15 @@ fun GradeEdgeButtons(
     // curvedText would otherwise expose each label as its own node, duplicating the accessible
     // overlay below, which is the single labelled + activatable representation.
     Box(modifier = Modifier.fillMaxSize().cachedLayer()) {
+      // Fades a long answer out before it reaches the pills, instead of letting lines show through
+      // the gaps between them. Scrolling still brings every line up into the clear.
+      Box(
+        modifier =
+          Modifier.align(Alignment.BottomCenter)
+            .fillMaxWidth()
+            .fillMaxHeight(TAP_STRIP_FRACTION)
+            .background(Brush.verticalGradient(0f to Color.Transparent, 0.45f to background))
+      )
       chrome()
       CurvedLayout(
       modifier = Modifier.clearAndSetSemantics {},
