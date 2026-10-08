@@ -1,0 +1,16 @@
+[package]
+name = "anki-states"
+version = "0.0.0"
+# rslib's edition (Anki's workspace Cargo.toml), so the vendored files compile as upstream does.
+edition = "2021"
+description = "Anki's rslib scheduler state machine (vendored verbatim in ../vendor/anki) behind a minimal stand-in for the rest of rslib."
+license = "AGPL-3.0-or-later"
+publish = false
+
+[dependencies]
+# Same spelling as wearos-core so `fsrs::NextStates` is one type across the crate boundary.
+fsrs = { version = "6.6.2", default-features = false }
+# alloc: load_balancer.rs uses WeightedIndex.
+rand = { version = "0.9.4", default-features = false, features = ["std_rng", "alloc"] }
+# Only for the `Datelike` trait load_balancer.rs imports; the code path itself is unreachable here.
+chrono = { version = "0.4.41", default-features = false }

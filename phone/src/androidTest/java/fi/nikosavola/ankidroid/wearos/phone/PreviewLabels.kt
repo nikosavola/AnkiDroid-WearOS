@@ -6,6 +6,9 @@ import kotlin.math.roundToLong
 // Comparing AnkiDroid's shipped interval labels against our computed seconds.
 private const val SECS_PER_DAY = 86_400.0
 
+// rslib timespan.rs: a label month is a twelfth of a year.
+private const val SECS_PER_MONTH = 365.0 / 12.0 * SECS_PER_DAY
+
 /** rslib `fuzz_delta`: whole days Anki may move an interval either way, built up per band. */
 internal fun fuzzDeltaDays(days: Double): Double =
   if (days < 2.5) {
@@ -34,7 +37,7 @@ internal fun allowedRange(oursSecs: Double, shipped: String): ClosedFloatingPoin
   return (lower * SECS_PER_DAY - slack)..(upper * SECS_PER_DAY + slack)
 }
 
-/** Half the last shown digit of a label, in seconds: "6m" -> 30, "2.2mo" -> 1.5 days. */
+/** Half the last shown digit of a label, in seconds: "6m" -> 30, "2.2mo" -> ~1.5 days. */
 internal fun labelSlackSeconds(label: String): Double {
   val unit = label.takeLastWhile { it.isLetter() }
   val number = label.dropLast(unit.length)
@@ -44,7 +47,7 @@ internal fun labelSlackSeconds(label: String): Double {
       "s" -> 1.0
       "m" -> 60.0
       "h" -> 3600.0
-      "mo" -> 30 * SECS_PER_DAY
+      "mo" -> SECS_PER_MONTH
       "y" -> 365 * SECS_PER_DAY
       else -> SECS_PER_DAY
     }
@@ -59,7 +62,7 @@ internal fun parseLabelToSeconds(label: String): Double? {
     "m" -> value * 60
     "h" -> value * 3600
     "d" -> value * 86_400
-    "mo" -> value * 30 * 86_400
+    "mo" -> value * SECS_PER_MONTH
     "y" -> value * 365 * 86_400
     else -> null
   }

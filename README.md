@@ -131,6 +131,7 @@ AnkiDroid's own API library, so apps of any license can use it.
 
 AGPL-3.0-or-later, the same license as Anki itself; see [LICENSE](LICENSE). The exception is the
 `ankidroid-provider/` library, which is LGPL-3.0-or-later (`ankidroid-provider/COPYING.LESSER`,
-which supplements the GPL in `ankidroid-provider/COPYING`). The offline scheduler in
-`core/src/sched.rs` and the queue builder in `core/src/pool.rs` port logic from Anki's `rslib`
-(Copyright Ankitects Pty Ltd and contributors, AGPL-3.0-or-later).
+which supplements the GPL in `ankidroid-provider/COPYING`). `core/vendor/anki/` holds files from Anki's
+`rslib` verbatim (Copyright Ankitects Pty Ltd and contributors, AGPL-3.0-or-later; pinned in
+`core/vendor/anki/UPSTREAM.toml`, checked by `scripts/vendor-rslib.sh --check`), and the queue
+builder in `core/src/pool.rs` ports logic from it.

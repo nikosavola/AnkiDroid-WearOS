@@ -45,6 +45,9 @@ jobs:
             ${{ runner.os }}-cargo-
       - name: Check Rust Formatting
         run: cargo fmt --manifest-path core/Cargo.toml --all -- --check
+      - name: Check Vendored Anki Sources
+        # core/vendor/anki must stay byte-identical to upstream; offline sha256 check.
+        run: scripts/vendor-rslib.sh --check
       - name: Run Codebase Verification (Lint & Format Checks)
         run: ./gradlew lintAll --no-daemon
   test:
