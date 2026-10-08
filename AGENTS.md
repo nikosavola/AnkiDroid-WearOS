@@ -112,10 +112,13 @@ grade, so a card that advanced a learning step or graduated would still show pre
   actually in. Without a config (older phone build, mock cards) the shipped labels are left alone.
 
 AnkiDroid remains the authority: previews are advisory and every grade is reconciled by AnkiDroid
-on write-back. The one deliberate difference is **fuzz**: Anki fuzzes intervals of 2.5 days and up
-into a window and its load balancer picks a day inside it, while these previews are deterministic.
-The window is rslib's `fuzz_delta`: one day plus 15% of the days between 2.5 and 7, 10% of those
-between 7 and 20 and 5% beyond, so a 25d Good can show anywhere from 22d to 28d.
+on write-back. **Fuzz** is reproduced: Anki fuzzes intervals of 2.5 days and up into rslib's
+`fuzz_delta` window (one day plus 15% of the days between 2.5 and 7, 10% of those between 7 and 20
+and 5% beyond) using a `StdRng` seeded with card id + reps. The phone ships that seed
+(`fuzz_seed`), and `sched.rs` makes the same draw with the same `rand` 0.9, so day+ labels land on
+Anki's day. The remaining gap is the **load balancer** (on by default): for intervals up to 90 days
+it picks the least busy day in that window from other cards' due dates, which the watch doesn't
+have, so those labels can be a day or two off.
 
 Agreement is checked on-device by `AnkiDroidProviderLiveTest` (shadow mode): it inserts a real card
 and compares every button label against AnkiDroid's own, which is what caught the new-card step
