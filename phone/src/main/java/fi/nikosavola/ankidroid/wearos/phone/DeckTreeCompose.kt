@@ -29,6 +29,9 @@ import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 
+// A folder's 24dp chevron plus its 4dp gap.
+private val ChevronSlot = 28.dp
+
 /**
  * The deck tree as lazy items, so it scrolls with the rest of the page instead of fighting a nested
  * scroller for height. Folder rows spring-rotate their chevron; rows animate in and out with
@@ -134,8 +137,15 @@ private fun DeckLeafRow(
     onCheckedChange = { onDeckChecked(id, it) },
     shapes = ListItemDefaults.segmentedShapes(row.index, row.siblingCount),
     colors = segmentColors(),
-    modifier = modifier.fillMaxWidth().padding(start = (row.depth * 16).dp + 28.dp),
-    leadingContent = { Checkbox(checked = checkedOf(id), onCheckedChange = null) },
+    modifier = modifier.fillMaxWidth().padding(start = (row.depth * 16).dp),
+    leadingContent = {
+      // Pad inside the row so it shares its left edge with sibling folders while the checkbox
+      // still lines up with theirs.
+      Row(verticalAlignment = Alignment.CenterVertically) {
+        Spacer(Modifier.width(ChevronSlot))
+        Checkbox(checked = checkedOf(id), onCheckedChange = null)
+      }
+    },
     trailingContent = { if (due != null) DuePill(due) },
   ) {
     Text(text = row.node.name, style = MaterialTheme.typography.bodyLarge)
