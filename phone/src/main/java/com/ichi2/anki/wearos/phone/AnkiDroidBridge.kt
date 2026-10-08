@@ -652,6 +652,7 @@ class AnkiDroidBridge(
             newQueuedToday = dueToday?.getOrNull(2),
             introducedToday = countCards("introduced:1 $deckSelector"),
             newAvailable = newPositions.size,
+            reviewLimitReached = dueToday?.getOrNull(1) ?: 0 >= c.reviewsPerDay,
           )
         if (inferred != c.newPerDay) Log.i(TAG, "Effective new/day $inferred (preset ${c.newPerDay})")
         c.copy(newPerDay = inferred)

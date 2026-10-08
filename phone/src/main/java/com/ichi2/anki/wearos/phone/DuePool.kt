@@ -36,17 +36,20 @@ internal fun isCompleteQueue(fetched: Int, requested: Int, dueToday: List<Int>?)
  * deck-level override, but AnkiDroid's count of new cards queued today already reflects it: when
  * more new cards are available than were queued, the limit is what was queued plus what was
  * introduced earlier today. Otherwise the limit isn't binding and can't be read off; keep the
- * preset unless today shows more.
+ * preset unless today shows more. A day whose reviews filled the review limit can't be read either:
+ * by default Anki then holds back new cards too (`newCardsIgnoreReviewLimit` off).
  */
 internal fun effectiveNewPerDay(
   presetNewPerDay: Int,
   newQueuedToday: Int?,
   introducedToday: Int?,
   newAvailable: Int,
+  reviewLimitReached: Boolean = false,
 ): Int {
   if (newQueuedToday == null || introducedToday == null) return presetNewPerDay
   val today = newQueuedToday + introducedToday
-  return if (newAvailable > newQueuedToday) today else maxOf(presetNewPerDay, today)
+  val binding = newAvailable > newQueuedToday && !reviewLimitReached
+  return if (binding) today else maxOf(presetNewPerDay, today)
 }
 
 /**

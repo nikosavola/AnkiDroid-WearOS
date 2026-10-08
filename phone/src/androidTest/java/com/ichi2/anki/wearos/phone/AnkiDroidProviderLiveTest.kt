@@ -11,6 +11,7 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import uniffi.wearos_core.WearosAnswer
+import uniffi.wearos_core.formatIntervalLabel
 import uniffi.wearos_core.previewIntervalSecs
 
 /**
@@ -89,6 +90,7 @@ class AnkiDroidProviderLiveTest {
       assertTrue("interval must not be negative", state.intervalDays >= 0.0)
       assertTrue("stability must not be negative", state.stability >= 0.0)
       assertTrue("elapsed days must not be negative", state.elapsedDays >= 0.0)
+      assertEquals("the fuzz seed is the card id plus its reps", true, state.fuzzSeed?.let { it >= card.id })
     }
   }
 
@@ -105,7 +107,13 @@ class AnkiDroidProviderLiveTest {
     val ids = pool.cards.map { it.id }
     assertEquals("pool must not repeat card ids", ids.size, ids.toSet().size)
     val countsByDay = pool.cards.groupingBy { it.dueDay }.eachCount()
-    Log.i(TAG, "pool deck $deckId: ${pool.cards.size} cards, dueDay counts=$countsByDay")
+    val queued = pool.cards.count { it.queuedDay != null }
+    Log.i(
+      TAG,
+      "pool deck $deckId: ${pool.cards.size} cards, $queued queued, queueDay=${pool.queueDay}, " +
+        "dueDay counts=$countsByDay",
+    )
+    assertEquals("AnkiDroid's deck counts vouch for its whole queue", bridge.todayDayIndex(), pool.queueDay)
   }
 
   /**
@@ -140,6 +148,13 @@ class AnkiDroidProviderLiveTest {
       card.nextReviewTimes.forEachIndexed { index, shipped ->
         assertLabelMatches("fresh card", index, shipped, recomputed[index])
       }
+      // With no cards due on later days the load balancer has nothing to weigh and Anki falls back
+      // to plain fuzz, so the labels should then agree exactly (seed = id + reps).
+      Log.i(
+        TAG,
+        "fresh card ${card.id} seed=${state.fuzzSeed}: AnkiDroid ${card.nextReviewTimes}, " +
+          "ours ${recomputed.map { formatIntervalLabel(it) }}",
+      )
       // The labels themselves are the evidence: [1m, 6m, 10m, 3d] on a stock deck is Anki's
       // first-step average for Hard and the FSRS/SM-2 graduation for Easy.
       Log.i(TAG, "shadow-agreed on ${card.nextReviewTimes} for a fresh card")
@@ -386,12 +401,12 @@ class AnkiDroidProviderLiveTest {
    * Only due cards expose `NEXT_REVIEW_TIMES`, so a card that graduates or lapses out of today's
    * queue disappears from the comparison (that is Anki's scheduling working, not a gap in this
    * test). Those states are covered by the unit tests in `core/src/lib.rs` instead
-   * (`test_relearning_graduation_uses_the_lapse_reduced_interval`,
+   * (`test_relearning_graduation_returns_to_the_interval_the_lapse_left`,
    * `test_sm2_late_review_grows_faster_and_stays_ordered`).
    *
-   * The tolerance is for Anki's fuzz, which our previews deliberately do not reproduce: AnkiDroid's
-   * Easy label on a 4-day interval varies between runs (seen: 3d, 4d, 5d) while we always compute
-   * 4d. Everything outside fuzz - the learning ladder, graduation, Hard's average - matches exactly.
+   * The tolerance is for Anki's load balancer, which can move a fuzzed interval to a less busy day
+   * the watch can't know about. Everything else - the learning ladder, graduation, Hard's average,
+   * and the fuzz itself - matches exactly.
    */
   @Test
   fun previewsTrackAnkiDroidThroughAReviewSession() {
