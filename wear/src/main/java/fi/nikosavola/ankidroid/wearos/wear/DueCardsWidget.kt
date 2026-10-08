@@ -76,24 +76,27 @@ class DueCardsWidget : GlanceWearWidget() {
   companion object {
     private const val TAG = "DueCardsWidget"
 
-    // Process-lifetime scope: the update outlives the sync service call that asked for it.
+    // Process-lifetime scope so the update outlives the onStop that asked for it.
     private val updateScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
-    /** Best-effort push of fresh content to every added instance of the widget. */
+    /** Fire-and-forget [update], for callers whose process stays alive (the activity). */
     fun requestUpdate(context: Context) {
       val appContext = context.applicationContext
-      updateScope.launch {
-        try {
-          DueCardsWidget().triggerUpdateAll(appContext)
-        } catch (e: CancellationException) {
-          throw e
-        } catch (
-          @Suppress("TooGenericExceptionCaught") e: Throwable,
-        ) {
-          // Looking up active widgets needs the optional wear-sdk library; without it (older
-          // watches, Robolectric) this is a NoClassDefFoundError rather than an Exception.
-          Log.w(TAG, "Widget update request failed: ${e.message}")
-        }
+      updateScope.launch { update(appContext) }
+    }
+
+    /** Best-effort push of fresh content to every added instance of the widget. */
+    suspend fun update(context: Context) {
+      try {
+        DueCardsWidget().triggerUpdateAll(context.applicationContext)
+      } catch (e: CancellationException) {
+        throw e
+      } catch (
+        @Suppress("TooGenericExceptionCaught") e: Throwable,
+      ) {
+        // Looking up active widgets needs the optional wear-sdk library; without it (older
+        // watches, Robolectric) this is a NoClassDefFoundError rather than an Exception.
+        Log.w(TAG, "Widget update request failed: ${e.message}")
       }
     }
   }

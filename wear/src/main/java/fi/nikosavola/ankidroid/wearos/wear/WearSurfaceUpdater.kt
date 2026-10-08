@@ -5,6 +5,7 @@ import android.content.Context
 import android.util.Log
 import androidx.wear.tiles.TileService
 import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUpdateRequester
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Best-effort push refresh for the tile and complication after something that could change the
@@ -24,8 +25,23 @@ import androidx.wear.watchface.complications.datasource.ComplicationDataSourceUp
  */
 internal object WearSurfaceUpdater {
   private const val TAG = "WearSurfaceUpdater"
+  private const val WIDGET_UPDATE_TIMEOUT_MS = 5_000L
 
   fun requestRefresh(context: Context) {
+    refreshTileAndComplication(context)
+    DueCardsWidget.requestUpdate(context)
+  }
+
+  /**
+   * [requestRefresh] that waits for the widget push, for the sync listener: its process can be
+   * killed as soon as it returns, which drops a widget update still in flight.
+   */
+  suspend fun refresh(context: Context) {
+    refreshTileAndComplication(context)
+    withTimeoutOrNull(WIDGET_UPDATE_TIMEOUT_MS) { DueCardsWidget.update(context) }
+  }
+
+  private fun refreshTileAndComplication(context: Context) {
     try {
       TileService.getUpdater(context).requestUpdate(AnkiTileService::class.java)
     } catch (e: Exception) {
@@ -40,6 +56,5 @@ internal object WearSurfaceUpdater {
     } catch (e: Exception) {
       Log.w(TAG, "Complication update request failed: ${e.message}")
     }
-    DueCardsWidget.requestUpdate(context)
   }
 }

@@ -201,7 +201,7 @@ class MainActivity : ComponentActivity() {
     }
 
   override fun onCreate(savedInstanceState: Bundle?) {
-    installSplashScreen()
+    installSplashScreen().setKeepOnScreenCondition { !vm.decksLoaded }
     super.onCreate(savedInstanceState)
 
     // Rust core database is initialised by WearApp.onCreate.
@@ -752,7 +752,7 @@ class MainActivity : ComponentActivity() {
           ) {
             onReveal()
           }
-          .padding(start = 12.dp, end = 12.dp, top = 30.dp, bottom = 34.dp),
+          .padding(start = 12.dp, end = 12.dp, top = 40.dp, bottom = 34.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Center,
     ) {
@@ -809,7 +809,8 @@ class MainActivity : ComponentActivity() {
           .rotaryScroll(scrollState)
           // Extra bottom space so the answer can scroll past the overlay buttons and every line can
           // be brought fully into the clear above them.
-          .padding(start = 14.dp, end = 14.dp, top = 28.dp, bottom = 96.dp),
+          // Top inset clears the curved N/M progress label, which ends about 36dp down.
+          .padding(start = 14.dp, end = 14.dp, top = 40.dp, bottom = 96.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Center,
     ) {
