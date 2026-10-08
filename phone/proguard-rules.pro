@@ -1,13 +1,10 @@
-# JNA resolves native symbols and maps types reflectively; R8 must not rename or strip its
-# classes, nor the classes JNA instantiates/derives at runtime.
+# JNA binds the UniFFI native interface by reflection: the Library proxy's method names are the
+# Rust symbol names, Structure fields are read by name in declared order, and callbacks are invoked
+# reflectively. Everything else in the generated bindings is plain Kotlin that R8 may shrink.
 -keep class com.sun.jna.** { *; }
+-keep interface * extends com.sun.jna.Library { *; }
 -keep class * implements com.sun.jna.Library { *; }
+-keep interface * extends com.sun.jna.Callback { *; }
 -keep class * implements com.sun.jna.Callback { *; }
--keepclassmembers class * extends com.sun.jna.Structure { *; }
-# JNA's desktop (AWT) integration paths are never used on Android.
+-keep class * extends com.sun.jna.Structure { *; }
 -dontwarn java.awt.*
-
-# UniFFI bindings: the library interface's method names are looked up as native symbols via JNA,
-# and record/enum classes are constructed through the generated FFI converters. Keep the whole
-# generated package rather than chasing individual reflective edges.
--keep class uniffi.wearos_core.** { *; }
