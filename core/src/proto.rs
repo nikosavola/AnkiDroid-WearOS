@@ -60,6 +60,8 @@ struct CardStatePb {
     // Additive: an older encoder omits it (decodes to 0), which reads as "unknown last review".
     #[prost(int64, tag = "9")]
     last_review_secs: i64,
+    #[prost(int64, optional, tag = "10")]
+    fuzz_seed: Option<i64>,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -154,6 +156,7 @@ impl From<CardScheduleState> for CardStatePb {
             elapsed_days: s.elapsed_days,
             ease_factor: s.ease_factor,
             last_review_secs: s.last_review_secs,
+            fuzz_seed: s.fuzz_seed,
         }
     }
 }
@@ -170,6 +173,7 @@ impl From<CardStatePb> for CardScheduleState {
             elapsed_days: s.elapsed_days,
             ease_factor: s.ease_factor,
             last_review_secs: s.last_review_secs,
+            fuzz_seed: s.fuzz_seed,
         }
     }
 }

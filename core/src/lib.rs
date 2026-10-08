@@ -1549,6 +1549,7 @@ mod tests {
             difficulty: 9.4,
             elapsed_days: 8.0,
             last_review_secs: 0,
+            fuzz_seed: None,
         }
     }
 
@@ -1568,6 +1569,7 @@ mod tests {
             difficulty: 5.0,
             elapsed_days: 10.0,
             last_review_secs: 0,
+            fuzz_seed: None,
         }
     }
 
@@ -1783,6 +1785,7 @@ mod tests {
             difficulty: 5.0,
             elapsed_days: 1.0,
             last_review_secs: 0,
+            fuzz_seed: None,
         };
         let secs = preview_interval_secs(&config, &state, 0);
         let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
@@ -2008,10 +2011,9 @@ mod tests {
     }
 
     #[test]
-    fn test_relearning_graduation_uses_the_lapse_reduced_interval() {
-        // Anki's failing_review_interval: a lapsed card returns to its old interval reduced by the
-        // lapse multiplier, floored by the deck's minimum lapse interval - not the graduating
-        // interval a new card would get.
+    fn test_relearning_graduation_returns_to_the_interval_the_lapse_left() {
+        // rslib cuts the interval when the card lapses (failing_review_interval) and stores the
+        // cut value on the card, which is what the provider reports; graduation returns to it.
         let config = parse_deck_schedule_config(
             serde_json::json!({
                 "new": { "delays": [1.0, 10.0], "ints": [1, 4] },
@@ -2020,23 +2022,68 @@ mod tests {
             .to_string(),
         )
         .unwrap();
-        // A 10-day review card on its last relearning step: Good returns it to 10 * 0.5 = 5 days.
-        // A lapsed card: type 3 (relearning) sitting in the learning queue, as Anki stores it.
-        let relearning = CardScheduleState {
-            queue: 1,
-            card_type: 3,
+        let review = CardScheduleState {
+            queue: 2,
+            card_type: 2,
             interval_days: 10.0,
-            learning_step: 0,
             ease_factor: 2.5,
-            elapsed_days: 0.0,
+            elapsed_days: 10.0,
             ..Default::default()
         };
-        let secs = preview_interval_secs(&config, &relearning, 0);
-        let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
 
+        let lapsed = advance_state(&config, &review, 1, 0);
+        assert_eq!((lapsed.queue, lapsed.card_type), (1, 3), "relearning, in the learning queue");
+        assert_eq!(lapsed.interval_days.round() as i64, 5, "10 days cut by the 0.5 multiplier");
+
+        let secs = preview_interval_secs(&config, &lapsed, 0);
+        let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
         assert_secs(secs[0], 600.0, "Again repeats the relearning step");
-        assert_eq!(days(2), 5, "Good returns to the lapse-reduced interval");
+        assert_eq!(days(2), 5, "Good returns to the cut interval, not cut again");
         assert_eq!(days(3), 6, "Easy is that interval plus a day");
+    }
+
+    #[test]
+    fn test_fuzz_reproduces_rslib_for_a_given_seed() {
+        use rand::{Rng, SeedableRng};
+
+        let config = sm2_deck_config();
+        let review = |seed: Option<i64>| CardScheduleState {
+            queue: 2,
+            card_type: 2,
+            interval_days: 100.0,
+            ease_factor: 2.5,
+            elapsed_days: 100.0,
+            fuzz_seed: seed,
+            ..Default::default()
+        };
+        let good_days =
+            |seed| (preview_interval_secs(&config, &review(seed), 0)[2] / 86_400.0).round() as i64;
+
+        // Unfuzzed Good is 100 * 2.5 = 250. rslib's delta there is 1 + 0.675 + 1.3 + 11.5 = 14.475
+        // days, so the window is 236..=264.
+        assert_eq!(good_days(None), 250);
+        let fuzzed: Vec<i64> = (1..=40).map(|seed| good_days(Some(seed))).collect();
+        assert!(fuzzed.iter().all(|d| (236..=264).contains(d)), "{fuzzed:?}");
+        assert!(fuzzed.iter().any(|d| *d != 250), "a seed moves the interval");
+
+        // The draw itself: rand 0.9's StdRng seeded as rslib seeds it.
+        let factor: f32 = rand::rngs::StdRng::seed_from_u64(7).random_range(0.0..1.0);
+        assert_eq!(good_days(Some(7)), 236 + (factor * 29.0).floor() as i64);
+    }
+
+    #[test]
+    fn test_grading_advances_the_fuzz_seed_by_one_rep() {
+        let config = sm2_deck_config();
+        let state = CardScheduleState {
+            queue: 2,
+            card_type: 2,
+            interval_days: 10.0,
+            ease_factor: 2.5,
+            elapsed_days: 10.0,
+            fuzz_seed: Some(1_000),
+            ..Default::default()
+        };
+        assert_eq!(advance_state(&config, &state, 3, 0).fuzz_seed, Some(1_001));
     }
 
     #[test]

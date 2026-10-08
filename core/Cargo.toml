@@ -32,6 +32,8 @@ zstd = "0.13"
 prost = "0.13"
 # The same FSRS crate rslib uses, so preview intervals match AnkiDroid exactly; burn-free since 6.x.
 fsrs = { version = "6.6.2", default-features = false }
+# rslib draws its interval fuzz from rand's StdRng; same crate and version line, same numbers.
+rand = { version = "0.9.4", default-features = false, features = ["std_rng"] }
 
 # Release profile for the shipped Android .so. cargo-ndk builds --release, so this is what ships.
 # LTO + a single codegen unit let the optimizer inline across crates and drop dead code (zstd,

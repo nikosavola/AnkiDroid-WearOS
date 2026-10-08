@@ -13,19 +13,22 @@
 //! still owns the real schedule: these previews only feed the watch UI and the session's requeue
 //! decision, and every grade is reconciled by AnkiDroid on write-back.
 //!
-//! Previews are unfuzzed while AnkiDroid's own labels carry fuzz, so the two can differ by a small
-//! percentage where a card has not been graded yet. Verifying the numbers against a real collection
-//! is tracked in #24; until then treat them as an approximation that is always superseded by
-//! AnkiDroid's own write-back.
+//! Fuzz is rslib's own: the card's seed (id + reps, shipped by the phone) drives the same `StdRng`
+//! draw, so day+ intervals land on the day Anki picks. The exception is Anki's load balancer, which
+//! (when enabled) picks a less busy day inside the same window for intervals up to 90 days from
+//! other cards' due dates the watch doesn't have; those labels can be a day or two off. Without a
+//! seed (older phone build) intervals stay unfuzzed.
 //!
-//! Modelled subset (Anki's basic scheduler): Again always returns to the first step; Hard repeats
-//! the current step; Good advances a step and graduates from the last one; Easy graduates
-//! immediately. Hard's "average of current step and graduation" refinement and fuzz are not
-//! modelled. Numbers are validated against AnkiDroid's own labels by
-//! `previews_match_shipped_labels` where a card has not been graded yet.
+//! Modelled subset (Anki's v3 scheduler): Again returns to the first step; Hard is Anki's hard delay
+//! (the average of the first two steps on step one, else a repeat); Good advances a step and
+//! graduates from the last one; Easy graduates immediately. A lapse cuts the interval right away, as
+//! Anki stores it, and relearning graduates back to it. Numbers are checked against AnkiDroid's own
+//! labels by `AnkiDroidProviderLiveTest`.
 
 use crate::models::CoreError;
 use fsrs::{FSRS, ItemState, MemoryState};
+use rand::rngs::StdRng;
+use rand::{Rng, SeedableRng};
 
 /// Anki's SM-2 constants (rslib `scheduler/states/review.rs`).
 const INITIAL_EASE_FACTOR: f64 = 2.5;
@@ -146,6 +149,11 @@ pub struct CardScheduleState {
     /// phone sent.
     #[uniffi(default = 0)]
     pub last_review_secs: i64,
+    /// rslib's fuzz seed for the card's next answer (card id + reps), which makes Anki's interval
+    /// fuzz reproducible. `None` when the phone didn't send `reps`; intervals then stay unfuzzed.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub fuzz_seed: Option<i64>,
 }
 
 /// Parse AnkiDroid's deck `OPTIONS` JSON (rslib's legacy schema11 dict) into a schedule config.
@@ -388,10 +396,10 @@ fn steps_preview(
     match ease {
         1 => steps.first().copied().unwrap_or(60.0),
         2 => hard_delay_secs(steps, current),
-        4 => graduation_secs(config, state, ease, next),
+        4 => graduation_days(config, state, ease, next) * SECS_PER_DAY,
         _ => {
             if current >= last_index {
-                graduation_secs(config, state, ease, next)
+                graduation_days(config, state, ease, next) * SECS_PER_DAY
             } else {
                 steps.get(current + 1).copied().unwrap_or(60.0)
             }
@@ -425,9 +433,7 @@ fn round_in_days(secs: f64) -> f64 {
 
 /// What FSRS-6 says one rating does to a card.
 struct FsrsOutcome {
-    /// Resulting interval in days, always at least 1.
-    days: f64,
-    /// The same interval before rounding, which Anki's floors compare against.
+    /// Resulting interval in days, unrounded, as rslib's floors and fuzz take it.
     raw_days: f64,
     /// Resulting memory state, which the next preview needs.
     stability: f64,
@@ -444,12 +450,6 @@ impl FsrsNext {
     /// What the given ease (1..=4, clamped) does to this card.
     fn outcome(&self, ease: i32) -> &FsrsOutcome {
         &self.outcomes[(ease.clamp(1, 4) - 1) as usize]
-    }
-
-    /// The FSRS interval in days for one button, or `None` when it is below a day.
-    fn scheduled_days(&self, ease: i32) -> Option<f64> {
-        let days = self.outcome(ease).days;
-        if days >= 1.0 { Some(days) } else { None }
     }
 }
 
@@ -479,10 +479,8 @@ fn fsrs_next(config: &DeckScheduleConfig, state: &CardScheduleState) -> Option<F
 
 /// One rating's interval and memory state, as the crate reports it.
 fn to_outcome(item: ItemState) -> FsrsOutcome {
-    let raw_days = f64::from(item.interval);
     FsrsOutcome {
-        days: raw_days.round().max(1.0),
-        raw_days,
+        raw_days: f64::from(item.interval),
         stability: f64::from(item.memory.stability),
         difficulty: f64::from(item.memory.difficulty),
     }
@@ -499,38 +497,22 @@ fn fsrs_review_intervals(
     next: Option<&FsrsNext>,
 ) -> Option<[f64; 3]> {
     let next = next?;
+    let factor = fuzz_factor(state);
     let scheduled_days = state.interval_days.round();
     // Returns the card's current interval plus a day when the new interval grew, otherwise nothing.
     let greater_than_last = |interval: f64| {
         if interval.round() > scheduled_days { scheduled_days + 1.0 } else { 0.0 }
     };
+    let constrain = |interval: f64, minimum: f64| {
+        let (minimum, maximum) = review_interval_bounds(config, minimum);
+        fuzzed_days(factor, interval, minimum, maximum)
+    };
     let raw = |ease: i32| next.outcome(ease).raw_days;
 
-    let hard_raw = raw(2);
-    let hard = clamp_days(config, hard_raw.round().max(greater_than_last(hard_raw).max(1.0)));
-    let good_raw = raw(3);
-    let good =
-        clamp_days(config, good_raw.round().max(greater_than_last(good_raw).max(hard + 1.0)));
-    let easy_raw = raw(4);
-    let easy =
-        clamp_days(config, easy_raw.round().max(greater_than_last(easy_raw).max(good + 1.0)));
+    let hard = constrain(raw(2), greater_than_last(raw(2)).max(1.0));
+    let good = constrain(raw(3), greater_than_last(raw(3)).max(hard + 1.0));
+    let easy = constrain(raw(4), greater_than_last(raw(4)).max(good + 1.0));
     Some([hard, good, easy])
-}
-
-/// Where a learning or relearning card graduates to under FSRS, in days.
-///
-/// Hard and Good graduation use the rating's FSRS interval as-is (already rounded to >= 1). Easy
-/// gets Anki's floor from rslib `answer_easy`: at least one day past the (rounded, >= 1) Good
-/// interval. `None` when the deck's weights are unusable, so the caller falls back to SM-2.
-fn fsrs_graduation_days(next: Option<&FsrsNext>, ease: i32) -> Option<f64> {
-    let next = next?;
-    if ease == 4 {
-        let good_days = next.scheduled_days(3)?;
-        let easy_days = next.scheduled_days(4)?;
-        Some(easy_days.max(good_days + 1.0))
-    } else {
-        next.scheduled_days(ease)
-    }
 }
 
 /// FSRS parameters from the deck's weights and desired retention, ready for one preview.
@@ -554,31 +536,38 @@ struct FsrsParameters {
     retention: f32,
 }
 
-/// Where a card graduates to when it leaves the step ladder.
+/// Where a card graduates to when it leaves the step ladder, in days (rslib's learning and
+/// relearning `answer_*` branches).
 ///
-/// Anki treats the two ladders differently: a *learning* card graduates to the configured (or
-/// FSRS) graduating interval, while a *relearning* card returns to Anki's failing review interval
-/// (the interval it had, reduced by the lapse multiplier) - plus a day for Easy, which Anki gives
-/// `failing + 1`. FSRS overrides both with the interval it computes for that button, with Easy
-/// floored above Good.
-fn graduation_secs(
+/// A *learning* card goes to the graduating (or Easy) interval, or under FSRS to that rating's
+/// interval with Easy floored a day past the fuzzed Good. A *relearning* card under SM-2 returns to
+/// the interval its lapse left it, a day more on Easy; under FSRS it is treated like learning. Each
+/// result is fuzzed the way rslib fuzzes it.
+fn graduation_days(
     config: &DeckScheduleConfig,
     state: &CardScheduleState,
     ease: i32,
     next: Option<&FsrsNext>,
 ) -> f64 {
-    let days = fsrs_graduation_days(next, ease).unwrap_or_else(|| {
-        if state.card_type == 3 {
-            // Relearning: back to the interval the lapse reduced the card to.
-            let failing = failing_review_interval_days(config, state);
-            if ease == 4 { failing + 1.0 } else { failing }
-        } else if ease == 4 {
-            f64::from(config.easy_interval_days)
+    let factor = fuzz_factor(state);
+    let (one, maximum) = review_interval_bounds(config, 1.0);
+    let fuzz = |interval: f64, minimum: f64| fuzzed_days(factor, interval, minimum, maximum);
+    if let Some(next) = next {
+        let rounded = |ease: i32| next.outcome(ease).raw_days.round().max(1.0);
+        return if ease == 4 {
+            let good = fuzz(next.outcome(3).raw_days, one);
+            fuzz(rounded(4), (good + 1.0).min(maximum))
         } else {
-            f64::from(config.graduating_interval_days)
-        }
-    });
-    clamp_days(config, days) * SECS_PER_DAY
+            fuzz(rounded(ease), one)
+        };
+    }
+    if state.card_type == 3 {
+        let interval = state.interval_days.round().max(1.0);
+        return if ease == 4 { interval + 1.0 } else { interval };
+    }
+    let interval =
+        if ease == 4 { config.easy_interval_days } else { config.graduating_interval_days };
+    fuzz(f64::from(interval), one)
 }
 
 /// A card in the review queue (Anki `ReviewState`).
@@ -617,47 +606,111 @@ fn sm2_passing_intervals(config: &DeckScheduleConfig, state: &CardScheduleState)
     if days_late < 0.0 {
         let elapsed = elapsed_days(state) as f64;
         let half_usual = hard_multiplier / 2.0;
+        // rslib leaves early reviews unfuzzed.
         let hard = constrain_passing_interval(
             config,
             (elapsed * hard_multiplier).max(scheduled * half_usual),
             0.0,
+            None,
         );
-        let good = constrain_passing_interval(config, (elapsed * ease).max(scheduled), 0.0);
+        let good = constrain_passing_interval(config, (elapsed * ease).max(scheduled), 0.0, None);
         let reduced_bonus = easy_multiplier - (easy_multiplier - 1.0) / 2.0;
         let easy_interval = constrain_passing_interval(
             config,
             (elapsed * ease).max(scheduled) * reduced_bonus,
             0.0,
+            None,
         );
         return [hard, good, easy_interval];
     }
 
+    let factor = fuzz_factor(state);
     let hard_minimum = if hard_multiplier <= 1.0 { 0.0 } else { state.interval_days + 1.0 };
-    let hard = constrain_passing_interval(config, scheduled * hard_multiplier, hard_minimum);
+    let hard =
+        constrain_passing_interval(config, scheduled * hard_multiplier, hard_minimum, factor);
     let good_minimum = if hard_multiplier <= 1.0 { state.interval_days + 1.0 } else { hard + 1.0 };
-    let good =
-        constrain_passing_interval(config, (scheduled + days_late / 2.0) * ease, good_minimum);
+    let good = constrain_passing_interval(
+        config,
+        (scheduled + days_late / 2.0) * ease,
+        good_minimum,
+        factor,
+    );
     let easy_interval = constrain_passing_interval(
         config,
         (scheduled + days_late) * ease * easy_multiplier,
         good + 1.0,
+        factor,
     );
     [hard, good, easy_interval]
 }
 
-/// Anki's `constrain_passing_interval`: the deck's interval modifier, then rounding into the deck's
-/// bounds.
-///
-/// Anki then fuzzes intervals of 2.5 days and up into rslib's `fuzz_bounds` window (and its load
-/// balancer picks a day inside it); our previews stay deterministic and unfuzzed.
+/// Anki's `constrain_passing_interval`: the deck's interval modifier, then fuzz (or plain rounding)
+/// into the deck's bounds.
 fn constrain_passing_interval(
     config: &DeckScheduleConfig,
     interval_days: f64,
     minimum: f64,
+    factor: Option<f32>,
 ) -> f64 {
     let interval = interval_days * config.interval_multiplier;
     let (minimum, maximum) = review_interval_bounds(config, minimum);
-    interval.round().clamp(minimum, maximum)
+    fuzzed_days(factor, interval, minimum, maximum)
+}
+
+/// rslib's `get_fuzz_factor`: a uniform draw in `0..1` from the card's seed, so the same card at the
+/// same rep count always fuzzes the same way. `None` without a seed.
+fn fuzz_factor(state: &CardScheduleState) -> Option<f32> {
+    state.fuzz_seed.map(|seed| StdRng::seed_from_u64(seed as u64).random_range(0.0..1.0))
+}
+
+/// rslib's `with_review_fuzz`, in f32 like rslib: a day inside the fuzz window around `interval`,
+/// picked by `factor`, or the plain rounded interval without one, within `minimum..=maximum`.
+///
+/// Anki's load balancer, when the collection enables it, instead picks the least busy day inside
+/// that same window for intervals of up to 90 days; the watch can't see other cards' due days, so
+/// those labels can still differ from AnkiDroid's by a day or two.
+#[expect(
+    clippy::suboptimal_flops,
+    reason = "a fused multiply-add rounds differently from rslib and can land on another day"
+)]
+fn fuzzed_days(factor: Option<f32>, interval: f64, minimum: f64, maximum: f64) -> f64 {
+    let (minimum, maximum) = (minimum as u32, maximum as u32);
+    let interval = interval as f32;
+    let days = factor.map_or_else(
+        || (interval.round() as u32).clamp(minimum.min(maximum), maximum),
+        |factor| {
+            let (lower, upper) = constrained_fuzz_bounds(interval, minimum, maximum);
+            (lower as f32 + factor * ((1 + upper - lower) as f32)).floor() as u32
+        },
+    );
+    f64::from(days)
+}
+
+/// rslib's `constrained_fuzz_bounds`: the fuzz window, kept within the bounds and at least two days
+/// wide where they allow.
+fn constrained_fuzz_bounds(interval: f32, minimum: u32, maximum: u32) -> (u32, u32) {
+    let minimum = minimum.min(maximum);
+    let interval = interval.clamp(minimum as f32, maximum as f32);
+    let delta = fuzz_delta(interval);
+    let lower = ((interval - delta).round() as u32).clamp(minimum, maximum);
+    let mut upper = ((interval + delta).round() as u32).clamp(minimum, maximum);
+    if upper == lower && upper > 2 && upper < maximum {
+        upper = lower + 1;
+    }
+    (lower, upper)
+}
+
+/// rslib's `fuzz_delta`: no fuzz under 2.5 days, then a day plus 15% of the days up to a week, 10%
+/// up to 20 days and 5% beyond, each way.
+fn fuzz_delta(interval: f32) -> f32 {
+    const RANGES: [(f32, f32, f32); 3] =
+        [(2.5, 7.0, 0.15), (7.0, 20.0, 0.1), (20.0, f32::MAX, 0.05)];
+    if interval < 2.5 {
+        return 0.0;
+    }
+    RANGES.iter().fold(1.0, |delta, (start, end, factor)| {
+        delta + factor * (interval.min(*end) - start).max(0.0)
+    })
 }
 
 /// Anki's `min_and_max_review_intervals`: the deck's maximum interval, with the caller's floor
@@ -681,13 +734,25 @@ fn ease_factor(state: &CardScheduleState) -> f64 {
     if state.ease_factor > 0.0 { state.ease_factor } else { INITIAL_EASE_FACTOR }
 }
 
-/// The interval a lapsed card returns to once it finishes relearning (Anki's
-/// `failing_review_interval`): its old interval reduced by the lapse multiplier, never below the
-/// deck's minimum lapse interval.
-fn failing_review_interval_days(config: &DeckScheduleConfig, state: &CardScheduleState) -> f64 {
+/// The interval a review card is cut to when it lapses (Anki's `failing_review_interval`), which it
+/// returns to once relearning ends. Under SM-2 its old interval reduced by the lapse multiplier,
+/// never below the deck's minimum lapse interval, and fuzzed; under FSRS the Again interval.
+fn failing_review_interval_days(
+    config: &DeckScheduleConfig,
+    state: &CardScheduleState,
+    next: Option<&FsrsNext>,
+) -> f64 {
+    if let Some(next) = next {
+        return next.outcome(1).raw_days.round().max(1.0);
+    }
     let (minimum, maximum) =
         review_interval_bounds(config, f64::from(config.lapse_min_interval_days));
-    (state.interval_days.max(1.0) * config.lapse_multiplier).clamp(minimum, maximum)
+    fuzzed_days(
+        fuzz_factor(state),
+        state.interval_days.max(1.0) * config.lapse_multiplier,
+        minimum,
+        maximum,
+    )
 }
 
 /// The card's SM-2 ease factor after each button, as Anki adjusts it.
@@ -750,10 +815,11 @@ pub fn advance_state(
         if ease == 1 {
             CardScheduleState {
                 // A lapsed card is *relearning* (type 3) but sits in the learning queue, as Anki
-                // stores it.
+                // stores it, already holding the cut interval it returns to afterwards.
                 queue: 1,
                 card_type: 3,
                 learning_step: 0,
+                interval_days: failing_review_interval_days(config, state, next.as_ref()),
                 ease_factor: ease_after(state, ease),
                 ..with_memory
             }
@@ -788,8 +854,9 @@ pub fn advance_state(
         }
     };
 
-    // The card was just reviewed, so no time has elapsed on the requeued copy.
-    CardScheduleState { elapsed_days: 0.0, ..next }
+    // The card was just reviewed, so no time has elapsed on the requeued copy, and Anki's next fuzz
+    // seed counts the extra rep.
+    CardScheduleState { elapsed_days: 0.0, fuzz_seed: state.fuzz_seed.map(|s| s + 1), ..next }
 }
 
 /// The card leaves its step ladder for the review queue.
@@ -804,19 +871,10 @@ fn graduate(
     mut graduated: CardScheduleState,
     next: Option<&FsrsNext>,
 ) -> CardScheduleState {
-    let days = match fsrs_graduation_days(next, ease) {
-        Some(days) => days,
-        None if state.card_type == 3 => {
-            let failing = failing_review_interval_days(config, state);
-            if ease == 4 { failing + 1.0 } else { failing }
-        }
-        None if ease == 4 => f64::from(config.easy_interval_days),
-        None => f64::from(config.graduating_interval_days),
-    };
     graduated.queue = 2;
     graduated.card_type = 2;
     graduated.learning_step = -1;
-    graduated.interval_days = clamp_days(config, days);
+    graduated.interval_days = graduation_days(config, state, ease, next);
     if state.card_type != 3 {
         graduated.ease_factor = INITIAL_EASE_FACTOR;
     }
