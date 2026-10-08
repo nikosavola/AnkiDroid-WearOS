@@ -2,6 +2,8 @@ package com.ichi2.anki.wearos.phone
 
 import android.app.Application
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasScrollToKeyAction
 import androidx.compose.ui.test.hasSetTextAction
 import androidx.compose.ui.test.hasText
@@ -93,6 +95,16 @@ class PhoneScreenLayoutTest {
     composeRule
       .onNode(hasText("Kaishi 1.5k") and !hasSetTextAction(), useUnmergedTree = true)
       .assertIsDisplayed()
+  }
+
+  @Test
+  @Config(qualifiers = "w320dp-h533dp-port")
+  fun topLevelDecksAndFolders_shareLeftEdge() {
+    show(viewModel())
+    composeRule.onNode(hasScrollToKeyAction()).performScrollToKey("deck:Japani")
+    val deck = composeRule.onNode(hasText("Deck 40") and hasClickAction()).getUnclippedBoundsInRoot()
+    val folder = composeRule.onNode(hasText("Japani") and hasClickAction()).getUnclippedBoundsInRoot()
+    assertEquals(folder.left, deck.left)
   }
 
   @Test
