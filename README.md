@@ -90,6 +90,43 @@ You can install both modules onto an Android Phone and a Wear OS circular emulat
 
 For a lightweight, headless phone environment (no KVM/AVD needed), `CONTRIBUTING.md` documents running Android in Docker via **redroid** — handy for verifying the AnkiDroid write-back path and phone UI on a server or remote VM.
 
+## Published packages
+
+`:ankidroid-provider` is a small Kotlin library for AnkiDroid's flashcard ContentProvider: deck
+lists with due counts and options, AnkiDroid's own review queue, card scheduler state, Anki-search
+card queries, and a write-back that confirms each answer actually landed. It has no Rust and no
+dependencies beyond the Kotlin stdlib. Calls are blocking; make them off the main thread. Your app
+needs AnkiDroid installed and the `com.ichi2.anki.permission.READ_WRITE_DATABASE` runtime grant.
+
+Each `vX.Y.Z` tag publishes `fi.nikosavola:ankidroid-provider:X.Y.Z` to GitHub Packages. Reading
+from GitHub Packages needs a classic personal access token with `read:packages`, even for public
+packages:
+
+```kotlin
+// settings.gradle.kts
+dependencyResolutionManagement {
+  repositories {
+    maven {
+      url = uri("https://maven.pkg.github.com/nikosavola/AnkiDroid-WearOS")
+      credentials {
+        username = System.getenv("GITHUB_ACTOR")
+        password = System.getenv("GITHUB_TOKEN")
+      }
+    }
+  }
+}
+
+// build.gradle.kts
+dependencies { implementation("fi.nikosavola:ankidroid-provider:0.1.0") }
+```
+
+The same tags also build on [JitPack](https://jitpack.io) without a token, once the repository is
+public: add `maven("https://jitpack.io")` and depend on
+`com.github.nikosavola.AnkiDroid-WearOS:ankidroid-provider:v0.1.0`.
+
+The library is AGPL-3.0-or-later like the rest of this repository, so apps that include it take on
+the AGPL's terms.
+
 ## License
 
 AGPL-3.0-or-later, the same license as Anki itself; see [LICENSE](LICENSE). The offline scheduler in

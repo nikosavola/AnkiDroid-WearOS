@@ -1,0 +1,72 @@
+name: Publish
+# Publishes the :ankidroid-provider library (AnkiDroid ContentProvider client) to GitHub Packages on
+# a version tag. JitPack builds the same module on demand from jitpack.yml.
+on:
+  push:
+    tags:
+      - 'v*'
+  # For retrying a botched publish: GitHub Packages refuses to overwrite an existing version, so a
+  # half-uploaded one has to be deleted from the package page before it can be published again.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Release tag to re-publish, including the v (e.g. v0.1.1)'
+        required: true
+        type: string
+concurrency:
+  # Keyed on the tag so a re-publish queues behind the tag push it retries instead of racing it.
+  group: ${{ github.workflow }}-${{ inputs.version || github.ref_name }}
+  # A cancelled run can leave a partial upload the registry then refuses to overwrite.
+  cancel-in-progress: false
+permissions: {}
+jobs:
+  publish:
+    name: Publish ankidroid-provider to GitHub Packages
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read # to check out the tagged commit
+      packages: write # to publish the artifact
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # On workflow_dispatch the default ref is the branch, not the tag being re-published.
+          ref: ${{ inputs.version || github.ref }}
+          persist-credentials: false
+      - name: Set up Java JDK 21
+        uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+      # No Gradle cache (a cache shared across refs is a poisoning surface for a published
+      # artifact) and no Rust toolchain: the library is pure Kotlin and never triggers cargo.
+      - name: Resolve the version to publish
+        id: version
+        env:
+          # Through the environment, not interpolated into run:, since the dispatch input is user text.
+          DISPATCH_TAG: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          tag="${DISPATCH_TAG:-$GITHUB_REF_NAME}"
+          if [[ "$tag" != v* ]]; then
+            echo "::error::'$tag' must be the release tag, including its leading v (e.g. v0.1.1)" >&2
+            exit 1
+          fi
+          version="${tag#v}"
+          # The registry never lets a version be overwritten, so junk like v-test is rejected up front.
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$ ]]; then
+            echo "::error::'$tag' is not a vX.Y.Z release tag" >&2
+            exit 1
+          fi
+          echo "Publishing version $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Publish to GitHub Packages
+        # Tests first: a broken version can only be removed from the registry by hand.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          ./gradlew :ankidroid-provider:testDebugUnitTest \
+            :ankidroid-provider:publishAllPublicationsToGitHubPackagesRepository \
+            -PreleaseVersion="$VERSION" --no-daemon

@@ -1,0 +1,9 @@
+# JitPack builds only the :ankidroid-provider library (pure Kotlin, no Rust). Consumers depend on
+# com.github.nikosavola.AnkiDroid-WearOS:ankidroid-provider:<tag>.
+jdk:
+  - openjdk21
+before_install:
+  # AGP downloads the compileSdk platform itself, but only once the SDK licenses are accepted.
+  - yes | "$ANDROID_HOME"/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+install:
+  - ./gradlew :ankidroid-provider:publishToMavenLocal -PreleaseVersion="$VERSION" --no-daemon

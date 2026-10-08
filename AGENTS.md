@@ -266,3 +266,18 @@ declares with `android:enabled="@bool/enablePlatformAppFunctionService"` so it o
   returned `PendingIntent` is launched with
   `--pending-intent-path property/androidAppfunctionsReturnValue`.
 - `ksp*Kotlin` tasks depend on `:generateBindings` like the compile tasks, or a clean build fails.
+
+---
+
+## 11. Published library (`:ankidroid-provider`)
+The generic AnkiDroid ContentProvider client lives in the Android library module
+`ankidroid-provider` (package `fi.nikosavola.ankidroid.provider`): `AnkiDroidContract` (URIs and
+columns), `AnkiDroidProvider` (decks, counts, options, the schedule queue, card reads and searches,
+`prop:pos` new-card windows, and `writeAnswers`, the confirmed write-back procedure),
+`DeckSelector` (keeps `(did:...)` last). `:phone`'s `AnkiDroidBridge` is a facade that maps it to
+the `Wearos*` types and owns the pool, the new-limit inference and the `read_only` gate.
+- No Rust, KSP or `../bindings` in the library; it must build on its own (JitPack builds only it).
+- `.github/workflows/publish.yml` publishes it to GitHub Packages on `v*` tags (tests first; the
+  registry never overwrites a version). `jitpack.yml` builds the same module.
+- Check a release locally with `./gradlew :ankidroid-provider:publishToMavenLocal
+  -PreleaseVersion=0.0.1-test` and inspect the POM and AAR; delete it from `~/.m2` afterwards.
