@@ -88,6 +88,7 @@ import androidx.window.core.layout.WindowSizeClass
 /** Readable line length for single-column content on wide windows. */
 private val MaxContentWidth = 600.dp
 private val SupportingPaneWidth = 360.dp
+private val PaneSpacer = 24.dp
 private val PageGutter = 16.dp
 
 // Leaves the last deck row clear of the floating Sync button.
@@ -195,7 +196,8 @@ private fun TwoPaneLayout(vm: PhoneViewModel, actions: PhoneActions) {
       // primary constructor takes the flag; copy() quietly resets it to true.
       PaneScaffoldDirective(
         maxHorizontalPartitions = 2,
-        horizontalPartitionSpacerSize = it.horizontalPartitionSpacerSize,
+        // The stock medium directive has one partition, so its spacer is 0dp and the panes touch.
+        horizontalPartitionSpacerSize = PaneSpacer,
         maxVerticalPartitions = it.maxVerticalPartitions,
         verticalPartitionSpacerSize = it.verticalPartitionSpacerSize,
         defaultPanePreferredWidth = it.defaultPanePreferredWidth,
