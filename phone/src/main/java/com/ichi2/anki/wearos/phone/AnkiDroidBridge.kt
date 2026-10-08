@@ -206,6 +206,9 @@ class AnkiDroidBridge(
    */
   @Volatile private var deckOptionsByDeck: Map<Long, String?> = emptyMap()
 
+  /** Each deck's `[learn, review, new]` due counts from the same listing, limits applied. */
+  @Volatile private var deckCountsByDeck: Map<Long, List<Int>> = emptyMap()
+
   /**
    * The deck's scheduling config from the deck's OPTIONS column. AnkiDroid exposes deck options
    * only through the all-decks URI (there is no per-deck item URI), so this scans the deck list for
@@ -370,6 +373,7 @@ class AnkiDroidBridge(
     // The deck listing already carries every column, including OPTIONS, so the scheduling config
     // costs no extra provider query: capture it here and let fetchDeckScheduleConfig reuse it.
     val options = mutableMapOf<Long, String?>()
+    val counts = mutableMapOf<Long, List<Int>>()
     // Unavailable provider returns an empty list, never fake decks: substituting mocks would
     // overwrite the user's real cached decks and offer phantom decks to sync.
     if (!isAnkiDroidAvailable()) return emptyList()
@@ -379,6 +383,7 @@ class AnkiDroidBridge(
         val idIdx = it.getColumnIndex(COL_DECK_ID)
         val nameIdx = it.getColumnIndex(COL_DECK_NAME)
         val optionsIdx = it.getColumnIndex(COL_DECK_OPTIONS)
+        val countsIdx = it.getColumnIndex(COL_DECK_COUNTS)
         while (it.moveToNext()) {
           if (idIdx != -1 && nameIdx != -1) {
             val deckId = it.getLong(idIdx)
@@ -386,6 +391,9 @@ class AnkiDroidBridge(
             list.add(Pair(DeckId(deckId), deckName))
             if (optionsIdx != -1) {
               options[deckId] = if (it.isNull(optionsIdx)) null else it.getString(optionsIdx)
+            }
+            if (countsIdx != -1 && !it.isNull(countsIdx)) {
+              parseDueCounts(it.getString(countsIdx))?.let { triple -> counts[deckId] = triple }
             }
           }
         }
@@ -397,6 +405,7 @@ class AnkiDroidBridge(
       list.add(Pair(DeckId(1L), "Default"))
     }
     deckOptionsByDeck = options
+    deckCountsByDeck = counts
     return list
   }
 
@@ -590,17 +599,22 @@ class AnkiDroidBridge(
     horizonDays: Int = POOL_HORIZON_DAYS,
     forceMock: Boolean = false,
   ): WearosDueBatch {
-    val today = fetchDueBatch(deckId, todayLimit, forceMock)
-    if (forceMock || !isAnkiDroidAvailable()) return today
+    if (forceMock || !isAnkiDroidAvailable()) return fetchDueBatch(deckId, todayLimit, forceMock)
     val allDecks = fetchAllDecks()
-    val (resolvedDeckId, resolvedDeckName) = allDecks.find { it.first == deckId } ?: return today
+    val (resolvedDeckId, resolvedDeckName) =
+      allDecks.find { it.first == deckId } ?: return fetchDueBatch(deckId, todayLimit, forceMock)
+    // Ask AnkiDroid for its whole queue for today (order, limits and deck overrides applied), not
+    // just a first slice, so the watch's day matches the phone's.
+    val dueToday = deckCountsByDeck[resolvedDeckId.value]
+    val wanted = dueToday?.sum()?.coerceIn(todayLimit, MAX_TODAY_QUEUE) ?: todayLimit
+    val today = fetchDueBatch(deckId, wanted, forceMock)
     // did: matches one deck exactly, while today's scheduler batch includes subdecks; list them too.
     val deckIds =
       allDecks
         .filter { (id, name) -> id == resolvedDeckId || name.startsWith("$resolvedDeckName::") }
         .joinToString(",") { it.first.value.toString() }
 
-    val config = fetchDeckScheduleConfig(resolvedDeckId.value)
+    val presetConfig = fetchDeckScheduleConfig(resolvedDeckId.value)
     val now = clock()
     val utcOffsetSecs = timeZone.getOffset(now) / 1000
     // AnkiDroid doesn't expose its own "next day starts at" hour yet (ankidroid/Anki-Android#20773
@@ -614,8 +628,27 @@ class AnkiDroidBridge(
     // Ids already in the pool, so a card that shows up in more than one search (or in today's queue)
     // is carried once, under the earliest group.
     val collected: MutableSet<Long> = today.cards.mapTo(HashSet<Long>()) { it.id }
+    val todayCards = today.cards.map { it.copy(queuedDay = todayIndex) }
+    val queueComplete = isCompleteQueue(today.cards.size, wanted, dueToday)
 
-    val learningRows = searchCards("is:learn -is:suspended -is:buried $deckSelector", config) ?: return today
+    val newPositions = searchCardPositions("is:new -is:suspended -is:buried $deckSelector")
+    // The preset's new.perDay misses deck-level overrides; infer the deck's real one from what
+    // AnkiDroid queued today. Only days after today use it (today is AnkiDroid's own queue).
+    val config =
+      presetConfig?.let { c ->
+        val inferred =
+          effectiveNewPerDay(
+            presetNewPerDay = c.newPerDay,
+            newQueuedToday = dueToday?.getOrNull(2),
+            introducedToday = countCards("introduced:1 $deckSelector"),
+            newAvailable = newPositions.size,
+          )
+        if (inferred != c.newPerDay) Log.i(TAG, "Effective new/day $inferred (preset ${c.newPerDay})")
+        c.copy(newPerDay = inferred)
+      }
+
+    val learningRows =
+      searchCards("is:learn -is:suspended -is:buried $deckSelector", config) ?: return today
     val learning =
       learningRows
         .filter { it.state?.queue == 1 }
@@ -633,15 +666,16 @@ class AnkiDroidBridge(
 
     // No config means no known daily new limit, so ship none rather than an unbounded slice.
     val allowance = if (config == null) 0 else newCardAllowance(config.newPerDay, horizonDays)
-    val newCards = fetchNewForPool(deckSelector, allowance, collected, config)
+    val newCards = fetchNewForPool(newPositions, allowance, collected, config)
 
     return WearosDueBatch(
       deckId = resolvedDeckId.value,
       deckName = resolvedDeckName,
-      cards = orderedPool(today.cards, learning, upcoming, newCards),
+      cards = orderedPool(todayCards, learning, upcoming, newCards),
       rolloverHour = rollover,
       fetchedAtMs = now,
       scheduleConfig = config,
+      queueDay = if (queueComplete) todayIndex else null,
     )
   }
 
@@ -657,14 +691,14 @@ class AnkiDroidBridge(
    * of new cards is listed by id and position first and only the shipped ones are rendered.
    */
   private fun fetchNewForPool(
-    deckSelector: String,
+    newPositions: List<Pair<Long, Long>>,
     allowance: Int,
     collected: MutableSet<Long>,
     config: DeckScheduleConfig?,
   ): List<WearosCard> {
     if (allowance <= 0) return emptyList()
     val picked =
-      searchCardPositions("is:new -is:suspended -is:buried $deckSelector")
+      newPositions
         .sortedBy { it.second }
         .map { it.first }
         .filter { it !in collected }
@@ -675,6 +709,15 @@ class AnkiDroidBridge(
       rows[id]?.takeIf { collected.add(id) }?.let { poolCard(it, dueDay = null, dueAtSecs = null) }
     }
   }
+
+  /** How many cards match [search], without rendering them; null if the search failed. */
+  private fun countCards(search: String): Int? =
+    try {
+      context.contentResolver.query(CARDS_URI, arrayOf("_id"), search, null, null)?.use { it.count }
+    } catch (e: Exception) {
+      Log.w(TAG, "Cards count '$search' failed (${e.message}).")
+      null
+    }
 
   /** Card ids and their `due` (a new card's queue position) for [search], without rendering. */
   private fun searchCardPositions(search: String): List<Pair<Long, Long>> =

@@ -104,4 +104,28 @@ class DuePoolTest {
     val kept = bitmapHorizonBatch(batch, todayIndex = 100)
     assertEquals(listOf(1L, 2L), kept.cards.map { it.id })
   }
+
+  @Test
+  fun `deck counts parse as learn, review, new`() {
+    assertEquals(listOf(1, 2, 3), parseDueCounts("[1,2,3]"))
+    assertEquals(null, parseDueCounts("[1,2]"))
+    assertEquals(null, parseDueCounts(null))
+  }
+
+  @Test
+  fun `a queue is complete only when the counts vouch for it`() {
+    assertEquals(true, isCompleteQueue(fetched = 5, requested = 20, dueToday = listOf(1, 2, 2)))
+    assertEquals(true, isCompleteQueue(fetched = 0, requested = 20, dueToday = listOf(0, 0, 0)))
+    assertEquals(true, isCompleteQueue(fetched = 7, requested = 20, dueToday = listOf(0, 9, 0)))
+    assertEquals(false, isCompleteQueue(fetched = 0, requested = 20, dueToday = listOf(0, 9, 0)))
+    assertEquals(false, isCompleteQueue(fetched = 200, requested = 200, dueToday = listOf(0, 900, 0)))
+    assertEquals(false, isCompleteQueue(fetched = 5, requested = 20, dueToday = null))
+  }
+
+  @Test
+  fun `the effective new limit comes from today's queue only when it binds`() {
+    assertEquals(8, effectiveNewPerDay(0, newQueuedToday = 5, introducedToday = 3, newAvailable = 50))
+    assertEquals(20, effectiveNewPerDay(20, newQueuedToday = 2, introducedToday = 0, newAvailable = 2))
+    assertEquals(20, effectiveNewPerDay(20, newQueuedToday = null, introducedToday = 3, newAvailable = 9))
+  }
 }

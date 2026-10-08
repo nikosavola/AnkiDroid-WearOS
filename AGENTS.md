@@ -189,16 +189,26 @@ cards never pay.
 The watch is meant to work for days without the phone. Under the current API it owns *what is due
 when*; AnkiDroid still owns the real schedule and re-derives it on write-back.
 
-- **Pool (phone, `AnkiDroidBridge.fetchDuePool`)**: per deck, today's scheduler batch (AnkiDroid's
-  exact labels), intraday learning cards (`due_at_secs`), cards from `prop:due=k` searches on the
-  `cards` URI for k = 1..7 (`due_day`, an absolute Anki day), and `new.perDay * 7` new cards in
-  position order. Capped at 400 cards; rich bitmaps are rendered only for near-term cards. Older
-  AnkiDroid builds without the `cards` URI get today's batch only.
+- **Pool (phone, `AnkiDroidBridge.fetchDuePool`)**: per deck, AnkiDroid's own queue for today
+  (the schedule query asked for the deck's whole `deck_count`, up to 200 cards, in AnkiDroid's order
+  with its exact labels, each card marked `queued_day`), intraday learning cards (`due_at_secs`),
+  cards from `prop:due=k` searches on the `cards` URI for k = 1..7 (`due_day`, an absolute Anki
+  day), and `new.perDay * 7` new cards in position order. The batch's `queue_day` says the queue
+  for that day is complete (the counts vouch for it). `new.perDay` is the deck's effective limit:
+  the provider only exposes the preset's, so when the limit binds it is read off today's queue as
+  new cards queued plus `introduced:1`. Capped at 400 cards; rich bitmaps are rendered only for
+  near-term cards. Older AnkiDroid builds without the `cards` URI get today's batch only.
 - **Day model (`core/src/day.rs`)**: Anki day numbers with a rollover hour. AnkiDroid doesn't expose
   the collection's rollover yet (ankidroid/Anki-Android#20773), so both sides use Anki's default 4am.
 - **Today's queue (`pool_today_batch`)**: learning cards within Anki's 20-minute learn-ahead, then
-  due and overdue reviews up to `rev.perDay`, then new cards up to `new.perDay`. The limits count
-  local grades per Anki day (`grade_log`). `ReviewSession.fromPool` builds the session; grading
+  AnkiDroid's queued cards. On the `queue_day` that queue is the whole day, since AnkiDroid already
+  applied every limit including deck-level overrides. On other days the watch builds the main queue
+  the way rslib v3 does: interday learning (gathered first) and reviews share `rev.perDay`, new
+  cards get `new.perDay`, and both are merged into the reviews per `interdayLearningMix` /
+  `newMix` with rslib's interspersing. The limits count local grades per Anki day (`grade_log`).
+  Not modelled: sibling burying (`new.bury` / `rev.bury`, off by default) and
+  `newCardsIgnoreReviewLimit` (a collection setting the provider doesn't expose; new cards are never
+  capped by the review limit). `ReviewSession.fromPool` builds the session; grading
   advances the card with `sched.rs` and stores its next due day or due time, and undo reverts it.
   As in Anki, a requeued learning card that isn't due yet waits behind the remaining new and review
   cards, and is shown early (learn-ahead) only once nothing else is left.
