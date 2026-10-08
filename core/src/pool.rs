@@ -10,7 +10,10 @@ use crate::day::{day_index, elapsed_days_between};
 use crate::db::get_db_connection;
 use crate::models::{CoreError, WearosCard, WearosDueBatch};
 use crate::proto::{decode_card, decode_deck_config, encode_card, encode_deck_config};
-use crate::sched::{DeckScheduleConfig, preview_labels_for_buttons};
+use crate::sched::{
+    DeckScheduleConfig, REVIEW_MIX_AFTER, REVIEW_MIX_BEFORE, REVIEW_MIX_MIXED,
+    preview_labels_for_buttons,
+};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::cmp::Ordering;
 
@@ -26,6 +29,8 @@ pub const GRADE_KIND_REVIEW: i64 = 2;
 
 /// AnkiDroid's `queue` value for intraday (sub-day) learning cards.
 const QUEUE_INTRADAY_LEARN: i32 = 1;
+/// AnkiDroid's `queue` value for interday learning cards (a learning step of a day or more).
+const QUEUE_DAY_LEARN: i32 = 3;
 
 /// A deck's stored pool summary for the watch's deck list.
 #[derive(uniffi::Record)]
@@ -53,14 +58,16 @@ pub fn pool_store_batch(batch: WearosDueBatch) -> Result<(), CoreError> {
     let deck_id = batch.deck_id;
 
     tx.execute(
-        "INSERT OR REPLACE INTO pool_decks (deck_id, name, config, rollover_hour, fetched_at_ms)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+        "INSERT OR REPLACE INTO pool_decks
+             (deck_id, name, config, rollover_hour, fetched_at_ms, queue_day)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
         params![
             deck_id,
             batch.deck_name,
             batch.schedule_config.map(encode_deck_config),
             batch.rollover_hour,
-            batch.fetched_at_ms
+            batch.fetched_at_ms,
+            batch.queue_day
         ],
     )?;
 
@@ -257,6 +264,7 @@ fn today_batch_for(
         load_pool_rows(conn, deck_id)?,
         config.as_ref(),
         today,
+        stored.queue_day == Some(today),
         learn_cutoff,
         graded_today(conn, deck_id, today, GRADE_KIND_REVIEW)?,
         graded_today(conn, deck_id, today, GRADE_KIND_NEW)?,
@@ -283,20 +291,24 @@ fn today_batch_for(
         schedule_config: config,
         rollover_hour: stored.rollover_hour,
         fetched_at_ms: stored.fetched_at_ms,
+        queue_day: None,
     })
 }
 
-/// The deck's stored row: name, config bytes, rollover hour, and fetch time.
+/// The deck's stored row: name, config bytes, rollover hour, fetch time, and the day whose
+/// AnkiDroid queue it carries.
 struct StoredDeck {
     name: String,
     config: Option<Vec<u8>>,
     rollover_hour: i32,
     fetched_at_ms: i64,
+    queue_day: Option<i64>,
 }
 
 fn load_deck(conn: &Connection, deck_id: i64) -> Result<StoredDeck, CoreError> {
     Ok(conn.query_row(
-        "SELECT name, config, rollover_hour, fetched_at_ms FROM pool_decks WHERE deck_id = ?1",
+        "SELECT name, config, rollover_hour, fetched_at_ms, queue_day
+         FROM pool_decks WHERE deck_id = ?1",
         params![deck_id],
         |r| {
             Ok(StoredDeck {
@@ -304,6 +316,7 @@ fn load_deck(conn: &Connection, deck_id: i64) -> Result<StoredDeck, CoreError> {
                 config: r.get(1)?,
                 rollover_hour: r.get(2)?,
                 fetched_at_ms: r.get(3)?,
+                queue_day: r.get(4)?,
             })
         },
     )?)
@@ -340,18 +353,27 @@ fn load_pool_rows(conn: &Connection, deck_id: i64) -> Result<Vec<PoolRow>, CoreE
     Ok(rows)
 }
 
-/// Split the stored rows into today's learning, review, and new buckets, order each the way Anki
-/// would, apply the daily limits, and concatenate them into the queue.
+/// Split the stored rows into today's buckets and assemble them the way rslib's v3 queue builder
+/// does: intraday learning first, then the cards AnkiDroid itself queued for today, then the main
+/// queue (reviews with interday learning and new cards merged in per the deck's
+/// `interdayLearningMix` / `newMix`), each bucket ordered and cut to the daily limits.
+///
+/// When the phone shipped AnkiDroid's complete queue for today (`anki_queue_is_today`), that queue
+/// is the whole day: AnkiDroid already applied every limit, including deck-level overrides the
+/// provider doesn't expose, so nothing from the pool is added on top.
 fn build_today_queue(
     rows: Vec<PoolRow>,
     config: Option<&DeckScheduleConfig>,
     today: i64,
+    anki_queue_is_today: bool,
     learn_cutoff: i64,
     reviews_graded: i64,
     new_graded: i64,
 ) -> Vec<PoolRow> {
     let mut learning = Vec::new();
+    let mut queued = Vec::new();
     let mut reviews = Vec::new();
+    let mut day_learning = Vec::new();
     let mut new_cards = Vec::new();
     for row in rows {
         if let Some(at) = row.due_at_secs {
@@ -363,36 +385,100 @@ fn build_today_queue(
             // Today's batch ships intraday learning cards without a due time; like rslib v3 they
             // sit outside the review limit.
             learning.push(row);
+        } else if is_queued_today(&row, today) {
+            queued.push(row);
+        } else if anki_queue_is_today {
+            // AnkiDroid's complete queue is the whole day; the rest waits for a later one.
         } else if row.is_new {
             new_cards.push(row);
         } else if row.due_day.is_none_or(|d| d <= today) {
-            reviews.push(row);
+            if is_day_learning(&row) {
+                day_learning.push(row);
+            } else {
+                reviews.push(row);
+            }
         }
     }
 
     // A today-batch learning card has no due time because AnkiDroid already had it due.
     learning.sort_by_key(|r| r.due_at_secs.unwrap_or(i64::MIN));
-    // Overdue and today's batch (due_day None) first, then by the order the phone listed them.
-    reviews.sort_by(|a, b| match (a.due_day, b.due_day) {
+    queued.sort_by_key(|r| r.position);
+    // Overdue and stale today-batch cards (due_day None) first, then by the order the phone listed
+    // them.
+    let by_due_then_position = |a: &PoolRow, b: &PoolRow| match (a.due_day, b.due_day) {
         (None, None) => a.position.cmp(&b.position),
         (None, Some(_)) => Ordering::Less,
         (Some(_), None) => Ordering::Greater,
         (Some(x), Some(y)) => x.cmp(&y).then(a.position.cmp(&b.position)),
-    });
+    };
+    reviews.sort_by(by_due_then_position);
+    day_learning.sort_by(by_due_then_position);
     new_cards.sort_by_key(|r| r.position);
 
+    // v3 gathers interday learning before reviews, and both draw on the review limit.
     if let Some(limit) = config.map(|c| i64::from(c.reviews_per_day).saturating_sub(reviews_graded))
     {
-        reviews.truncate(limit as usize);
+        let limit = limit.max(0) as usize;
+        day_learning.truncate(limit);
+        reviews.truncate(limit - day_learning.len());
     }
     if let Some(limit) = config.map(|c| i64::from(c.new_per_day).saturating_sub(new_graded)) {
-        new_cards.truncate(limit as usize);
+        new_cards.truncate(limit.max(0) as usize);
     }
 
+    let day_learn_mix = config.map_or(REVIEW_MIX_MIXED, |c| c.interday_learning_mix);
+    let new_mix = config.map_or(REVIEW_MIX_MIXED, |c| c.new_mix);
+    let main = merge(merge(reviews, day_learning, day_learn_mix), new_cards, new_mix);
+
     let mut selected = learning;
-    selected.extend(reviews);
-    selected.extend(new_cards);
+    selected.extend(queued);
+    selected.extend(main);
     selected
+}
+
+/// rslib's `merge_day_learning` / `merge_new`: put `other` after, before, or spread evenly through
+/// `reviews`.
+fn merge<T>(reviews: Vec<T>, other: Vec<T>, mix: i32) -> Vec<T> {
+    match mix {
+        REVIEW_MIX_AFTER => reviews.into_iter().chain(other).collect(),
+        REVIEW_MIX_BEFORE => other.into_iter().chain(reviews).collect(),
+        _ => intersperse(reviews, other),
+    }
+}
+
+/// rslib's `Intersperser`: spreads `two` evenly through `one`, using its exact float comparison so
+/// ties fall the same way.
+fn intersperse<T>(one: Vec<T>, two: Vec<T>) -> Vec<T> {
+    let ratio = (one.len() + 1) as f32 / (two.len() + 1) as f32;
+    let mut out = Vec::with_capacity(one.len() + two.len());
+    let (mut one, mut two) = (one.into_iter().peekable(), two.into_iter().peekable());
+    let (mut one_idx, mut two_idx) = (0usize, 0usize);
+    loop {
+        let take_two = match (one.peek().is_some(), two.peek().is_some()) {
+            (true, true) => ((two_idx + 1) as f32 * ratio) < (one_idx + 1) as f32,
+            (false, true) => true,
+            (true, false) => false,
+            (false, false) => break,
+        };
+        if take_two {
+            out.extend(two.next());
+            two_idx += 1;
+        } else {
+            out.extend(one.next());
+            one_idx += 1;
+        }
+    }
+    out
+}
+
+/// An untouched card from AnkiDroid's own queue for `today`.
+fn is_queued_today(row: &PoolRow, today: i64) -> bool {
+    row.card.queued_day == Some(today) && row.due_day.is_none() && !row.graded
+}
+
+/// A due card sitting in AnkiDroid's interday learning queue.
+fn is_day_learning(row: &PoolRow) -> bool {
+    row.card.state.as_ref().is_some_and(|s| s.queue == QUEUE_DAY_LEARN)
 }
 
 /// A card from today's batch that is in AnkiDroid's intraday learning queue.
@@ -421,10 +507,16 @@ fn finalize_card(
                 as f64;
     }
 
-    let keep_shipped = row.card.due_day.is_none()
-        && row.card.due_at_secs.is_none()
-        && fetched_day == today
-        && !row.graded;
+    // Only AnkiDroid's own queue carries its labels; an older phone build doesn't mark that queue,
+    // so fall back to "untouched and fetched today".
+    let keep_shipped = !row.graded
+        && !row.card.next_review_times.is_empty()
+        && match row.card.queued_day {
+            Some(day) => day == today,
+            None => {
+                row.card.due_day.is_none() && row.card.due_at_secs.is_none() && fetched_day == today
+            }
+        };
     if !keep_shipped && let (Some(config), Some(state)) = (config, row.card.state.as_ref()) {
         row.card.next_review_times =
             preview_labels_for_buttons(config, state, now_ms, row.card.button_count);

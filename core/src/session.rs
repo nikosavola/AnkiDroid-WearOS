@@ -223,6 +223,7 @@ impl ReviewSession {
             schedule_config: self.schedule_config.clone(),
             rollover_hour: self.rollover_hour,
             fetched_at_ms: self.fetched_at_ms,
+            queue_day: None,
         }
     }
 

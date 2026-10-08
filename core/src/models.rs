@@ -19,6 +19,11 @@ pub struct WearosCard {
     /// Epoch seconds the card is due within its day, for intraday learning cards only.
     #[uniffi(default = None)]
     pub due_at_secs: Option<i64>,
+    /// The Anki day on which this card sat in AnkiDroid's own scheduler queue (today's batch). Such
+    /// a card keeps AnkiDroid's order and has already been counted against its daily limits,
+    /// including deck-level overrides the provider doesn't expose. `None` for every other card.
+    #[uniffi(default = None)]
+    pub queued_day: Option<i64>,
     /// The card's scheduler state, used to recompute interval previews offline once the labels
     /// above go stale (a card graded and requeued within the session). `None` on older phone
     /// builds and for the mock fallback, where the shipped labels are all there is.
@@ -43,6 +48,11 @@ pub struct WearosDueBatch {
     /// stay as AnkiDroid shipped them.
     #[uniffi(default = None)]
     pub schedule_config: Option<DeckScheduleConfig>,
+    /// The Anki day whose AnkiDroid queue this batch carries (the cards marked with
+    /// [`WearosCard::queued_day`], possibly none). On that day the watch adds no pooled new cards,
+    /// since AnkiDroid already applied its own limits. `None` from older phone builds.
+    #[uniffi(default = None)]
+    pub queue_day: Option<i64>,
 }
 
 #[derive(uniffi::Record, Serialize, Deserialize, Clone)]

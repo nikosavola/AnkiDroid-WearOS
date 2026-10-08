@@ -327,6 +327,7 @@ mod tests {
             due_day: None,
             due_at_secs: None,
             state: None,
+            queued_day: None,
         };
         let batch = WearosDueBatch {
             deck_id: 123,
@@ -335,6 +336,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         };
 
         let bytes = serialize_due_batch(batch).unwrap();
@@ -359,6 +361,7 @@ mod tests {
             due_day: None,
             due_at_secs: None,
             state: None,
+            queued_day: None,
         }
     }
 
@@ -374,6 +377,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         };
         let bytes = serialize_due_batch(batch).unwrap();
         // zstd frame magic number (little-endian 0xFD2FB528).
@@ -394,6 +398,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         };
         let restored = deserialize_due_batch(serialize_due_batch(batch).unwrap()).unwrap();
         assert_eq!(restored.deck_id, 55);
@@ -499,6 +504,7 @@ mod tests {
             due_day: None,
             due_at_secs: None,
             state: None,
+            queued_day: None,
         };
         let card2 = WearosCard {
             id: 2,
@@ -511,6 +517,7 @@ mod tests {
             due_day: None,
             due_at_secs: None,
             state: None,
+            queued_day: None,
         };
         let batch = WearosDueBatch {
             deck_id: 123,
@@ -519,6 +526,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         };
 
         let session = ReviewSession::new(batch);
@@ -575,6 +583,7 @@ mod tests {
             due_day: None,
             due_at_secs: None,
             state: None,
+            queued_day: None,
         };
         let batch = WearosDueBatch {
             deck_id: 1,
@@ -583,6 +592,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         };
         let session = ReviewSession::new(batch);
 
@@ -631,6 +641,7 @@ mod tests {
             due_day: None,
             due_at_secs: None,
             state: None,
+            queued_day: None,
         }
     }
 
@@ -642,6 +653,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         })
     }
 
@@ -655,6 +667,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         });
         assert_eq!(session.upcoming_card_ids(1), vec![2]);
         assert_eq!(session.upcoming_card_ids(5), vec![2, 3]);
@@ -671,6 +684,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         });
         assert!(session.get_progress_fraction().abs() < f32::EPSILON);
 
@@ -686,6 +700,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         });
         assert!(empty.get_progress_fraction().abs() < f32::EPSILON);
     }
@@ -728,6 +743,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         });
 
         // Again requeues card 1, so it comes back behind card 2.
@@ -749,6 +765,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: Some(sm2_deck_config()),
+            queue_day: None,
         });
 
         let batch = session.remaining_batch();
@@ -777,6 +794,7 @@ mod tests {
             due_day: None,
             due_at_secs: None,
             state: None,
+            queued_day: None,
         };
         let s3 = single_card_session(three.clone());
         s3.answer_card(3, 0).unwrap();
@@ -858,6 +876,7 @@ mod tests {
             due_day: None,
             due_at_secs: None,
             state: None,
+            queued_day: None,
         };
         let batch = WearosDueBatch {
             deck_id: 1,
@@ -866,6 +885,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         };
         let session = ReviewSession::new(batch);
 
@@ -2059,6 +2079,7 @@ mod tests {
             due_day: None,
             due_at_secs: None,
             state: Some(review_state()),
+            queued_day: None,
         };
         let batch = WearosDueBatch {
             deck_id: 1,
@@ -2067,6 +2088,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: Some(config),
+            queue_day: None,
         };
 
         let decoded = deserialize_due_batch(serialize_due_batch(batch).unwrap()).unwrap();
@@ -2097,10 +2119,12 @@ mod tests {
                 due_day: None,
                 due_at_secs: None,
                 state: None,
+                queued_day: None,
             }],
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         };
 
         let decoded = deserialize_due_batch(serialize_due_batch(batch).unwrap()).unwrap();
@@ -2142,6 +2166,7 @@ mod tests {
             due_day: None,
             due_at_secs: None,
             state: Some(CardScheduleState { queue: 1, learning_step: 0, ..Default::default() }),
+            queued_day: None,
         }
     }
 
@@ -2156,6 +2181,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: Some(sm2_deck_config()),
+            queue_day: None,
         });
 
         // Good on the first step advances the card to the second step, so it requeues (its shipped
@@ -2187,6 +2213,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: Some(sm2_deck_config()),
+            queue_day: None,
         });
 
         session.reveal_answer();
@@ -2206,6 +2233,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         });
 
         session.reveal_answer();
@@ -2235,6 +2263,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: Some(config),
+            queue_day: None,
         });
 
         // Three Goods walk to the last step; the fourth graduates the card out of the session.
@@ -2263,6 +2292,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: Some(sm2_deck_config()),
+            queue_day: None,
         });
 
         session.reveal_answer();
@@ -2288,6 +2318,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: Some(sm2_deck_config()),
+            queue_day: None,
         });
 
         session.reveal_answer();
@@ -2311,6 +2342,7 @@ mod tests {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: Some(sm2_deck_config()),
+            queue_day: None,
         });
 
         let cap = 2 + 1; // learn_steps.len() + 1
@@ -2387,6 +2419,7 @@ mod tests {
                 last_review_secs: 1_700_000_000,
                 ..Default::default()
             }),
+            queued_day: None,
         };
         let batch = WearosDueBatch {
             deck_id: 1,
@@ -2399,6 +2432,7 @@ mod tests {
             }),
             rollover_hour: 5,
             fetched_at_ms: 1_791_331_200_000,
+            queue_day: None,
         };
 
         let decoded = deserialize_due_batch(serialize_due_batch(batch).unwrap()).unwrap();
@@ -2426,6 +2460,7 @@ mod tests {
             due_day: None,
             due_at_secs: None,
             state: Some(CardScheduleState { last_review_secs: 0, ..Default::default() }),
+            queued_day: None,
         };
         let batch = WearosDueBatch {
             deck_id: 1,
@@ -2438,6 +2473,7 @@ mod tests {
             }),
             rollover_hour: 0,
             fetched_at_ms: 0,
+            queue_day: None,
         };
 
         let decoded = deserialize_due_batch(serialize_due_batch(batch).unwrap()).unwrap();
@@ -2500,6 +2536,7 @@ mod tests {
             due_day,
             due_at_secs,
             state,
+            queued_day: None,
         }
     }
 
@@ -2511,6 +2548,7 @@ mod tests {
             rollover_hour: DEFAULT_ROLLOVER_HOUR,
             fetched_at_ms: POOL_NOW_MS,
             schedule_config: None,
+            queue_day: None,
         }
     }
 
@@ -2602,6 +2640,7 @@ mod tests {
             rollover_hour: DEFAULT_ROLLOVER_HOUR,
             fetched_at_ms: POOL_NOW_MS,
             schedule_config: Some(config),
+            queue_day: None,
         };
         pool_store_batch(batch).unwrap();
 
@@ -2652,6 +2691,151 @@ mod tests {
         let ids: Vec<i64> =
             pool_today_batch(11, POOL_NOW_MS, 0).unwrap().cards.iter().map(|c| c.id).collect();
         assert_eq!(ids, vec![2, 1], "the learning card comes first and the review still fits");
+
+        cleanup_db(&path);
+    }
+
+    fn queue_ids(deck_id: i64, now_ms: i64) -> Vec<i64> {
+        pool_today_batch(deck_id, now_ms, 0).unwrap().cards.iter().map(|c| c.id).collect()
+    }
+
+    #[test]
+    fn offline_days_spread_new_cards_through_reviews_per_the_decks_new_mix() {
+        let _guard = db_test_guard();
+        let path = pool_db("new_mix");
+
+        let cards = |deck: i64| {
+            let mut cards: Vec<WearosCard> = (1..=4)
+                .map(|i| {
+                    pool_card_full(
+                        deck * 100 + i,
+                        "R",
+                        Some(POOL_DAY),
+                        None,
+                        Some(pool_card_state(2)),
+                    )
+                })
+                .collect();
+            for i in 5..=6 {
+                cards.push(pool_card_full(
+                    deck * 100 + i,
+                    "N",
+                    None,
+                    None,
+                    Some(pool_card_state(0)),
+                ));
+            }
+            cards
+        };
+        let with_mix = |deck: i64, mix: Option<i32>| {
+            let mut options = serde_json::json!({});
+            if let Some(mix) = mix {
+                options["newMix"] = mix.into();
+            }
+            let config = parse_deck_schedule_config(options.to_string()).unwrap();
+            pool_store_batch(pool_config_batch(deck, config, cards(deck))).unwrap();
+            queue_ids(deck, POOL_NOW_MS).iter().map(|id| id % 100).collect::<Vec<_>>()
+        };
+
+        // rslib's Intersperser over 4 reviews and 2 new cards.
+        assert_eq!(with_mix(1, None), vec![1, 5, 2, 3, 6, 4], "Anki's default mixes them in");
+        assert_eq!(with_mix(2, Some(1)), vec![1, 2, 3, 4, 5, 6], "new after reviews");
+        assert_eq!(with_mix(3, Some(2)), vec![5, 6, 1, 2, 3, 4], "new before reviews");
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn interday_learning_mixes_into_reviews_and_draws_on_the_review_limit() {
+        let _guard = db_test_guard();
+        let path = pool_db("day_learning");
+
+        let config = parse_deck_schedule_config(
+            serde_json::json!({ "rev": { "perDay": 3 }, "interdayLearningMix": 1 }).to_string(),
+        )
+        .unwrap();
+        let mut cards: Vec<WearosCard> = (1..=3)
+            .map(|id| pool_card_full(id, "R", Some(POOL_DAY), None, Some(pool_card_state(2))))
+            .collect();
+        cards.push(pool_card_full(4, "D", Some(POOL_DAY), None, Some(pool_card_state(3))));
+        pool_store_batch(pool_config_batch(13, config, cards)).unwrap();
+
+        assert_eq!(
+            queue_ids(13, POOL_NOW_MS),
+            vec![1, 2, 4],
+            "the interday learning card is gathered first, takes a review slot, and goes after"
+        );
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn ankidroids_own_queue_keeps_its_order_and_limits_on_the_day_it_was_fetched() {
+        let _guard = db_test_guard();
+        let path = pool_db("anki_queue");
+
+        // The preset says no new cards, but a deck-level override (invisible to the provider) let
+        // AnkiDroid queue two of them today, mixed among its reviews.
+        let config = pool_schedule_config(&[1.0, 10.0], 0, 200);
+        let queued = |id: i64, queue: i32| WearosCard {
+            queued_day: Some(POOL_DAY),
+            ..pool_card_full(id, "Q", None, None, Some(pool_card_state(queue)))
+        };
+        let pooled_new = pool_card_full(4, "N", None, None, Some(pool_card_state(0)));
+        let overdue = pool_card_full(5, "R", Some(POOL_DAY - 1), None, Some(pool_card_state(2)));
+        let batch = WearosDueBatch {
+            queue_day: Some(POOL_DAY),
+            ..pool_config_batch(
+                14,
+                config,
+                vec![queued(1, 0), queued(2, 2), queued(3, 0), pooled_new, overdue],
+            )
+        };
+        pool_store_batch(batch).unwrap();
+
+        assert_eq!(queue_ids(14, POOL_NOW_MS), vec![1, 2, 3], "AnkiDroid's order, nothing added");
+
+        // A day later the untouched cards are ordinary overdue and new cards under the deck config.
+        assert_eq!(queue_ids(14, POOL_NOW_MS + 86_400_000), vec![2, 5]);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn an_empty_ankidroid_queue_for_today_holds_back_pooled_new_cards_until_tomorrow() {
+        let _guard = db_test_guard();
+        let path = pool_db("anki_queue_empty");
+
+        // The user finished the deck on the phone; the pool still ships new cards for later days.
+        let config = pool_schedule_config(&[1.0, 10.0], 5, 200);
+        let pooled_new = pool_card_full(1, "N", None, None, Some(pool_card_state(0)));
+        let batch = WearosDueBatch {
+            queue_day: Some(POOL_DAY),
+            ..pool_config_batch(15, config, vec![pooled_new])
+        };
+        pool_store_batch(batch).unwrap();
+
+        assert!(queue_ids(15, POOL_NOW_MS).is_empty(), "today's new cards were already studied");
+        assert_eq!(queue_ids(15, POOL_NOW_MS + 86_400_000), vec![1]);
+
+        cleanup_db(&path);
+    }
+
+    #[test]
+    fn a_partial_ankidroid_queue_leads_but_does_not_hold_back_the_pool() {
+        let _guard = db_test_guard();
+        let path = pool_db("anki_queue_partial");
+
+        // The phone hit its fetch cap, so it marks the cards it got but not the day as complete.
+        let config = pool_schedule_config(&[1.0, 10.0], 5, 200);
+        let queued = WearosCard {
+            queued_day: Some(POOL_DAY),
+            ..pool_card_full(1, "Q", None, None, Some(pool_card_state(2)))
+        };
+        let pooled_new = pool_card_full(2, "N", None, None, Some(pool_card_state(0)));
+        pool_store_batch(pool_config_batch(16, config, vec![pooled_new, queued])).unwrap();
+
+        assert_eq!(queue_ids(16, POOL_NOW_MS), vec![1, 2], "AnkiDroid's cards first, pool after");
 
         cleanup_db(&path);
     }
@@ -2738,6 +2922,7 @@ mod tests {
             rollover_hour: DEFAULT_ROLLOVER_HOUR,
             fetched_at_ms: POOL_NOW_MS,
             schedule_config: Some(config.clone()),
+            queue_day: None,
         };
         pool_store_batch(batch).unwrap();
 
@@ -2824,6 +3009,7 @@ mod tests {
             rollover_hour: DEFAULT_ROLLOVER_HOUR,
             fetched_at_ms: POOL_NOW_MS,
             schedule_config: Some(config),
+            queue_day: None,
         }
     }
 

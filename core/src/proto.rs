@@ -32,6 +32,8 @@ struct CardPb {
     due_day: Option<i64>,
     #[prost(int64, optional, tag = "10")]
     due_at_secs: Option<i64>,
+    #[prost(int64, optional, tag = "11")]
+    queued_day: Option<i64>,
 }
 
 /// Scheduler state for one card, read from `FlashCardsContract.Card`.
@@ -78,6 +80,8 @@ struct DueBatchPb {
     // Additive: absent decodes as 0, which reads as "fetch time unknown".
     #[prost(int64, tag = "6")]
     fetched_at_ms: i64,
+    #[prost(int64, optional, tag = "7")]
+    queue_day: Option<i64>,
 }
 
 /// The deck scheduling config, from AnkiDroid's deck `OPTIONS` JSON.
@@ -113,6 +117,11 @@ struct DeckConfigPb {
     new_per_day: Option<i32>,
     #[prost(int32, optional, tag = "14")]
     reviews_per_day: Option<i32>,
+    // Additive: absent decodes to 0, which is Anki's default (mix with reviews).
+    #[prost(int32, tag = "15")]
+    new_mix: i32,
+    #[prost(int32, tag = "16")]
+    interday_learning_mix: i32,
 }
 
 impl From<WearosCard> for CardPb {
@@ -128,6 +137,7 @@ impl From<WearosCard> for CardPb {
             state: c.state.map(CardStatePb::from),
             due_day: c.due_day,
             due_at_secs: c.due_at_secs,
+            queued_day: c.queued_day,
         }
     }
 }
@@ -181,6 +191,8 @@ impl From<DeckScheduleConfig> for DeckConfigPb {
             desired_retention: c.desired_retention,
             new_per_day: Some(c.new_per_day),
             reviews_per_day: Some(c.reviews_per_day),
+            new_mix: c.new_mix,
+            interday_learning_mix: c.interday_learning_mix,
         }
     }
 }
@@ -203,6 +215,8 @@ impl From<DeckConfigPb> for DeckScheduleConfig {
             desired_retention: c.desired_retention,
             new_per_day: c.new_per_day.unwrap_or(defaults.new_per_day),
             reviews_per_day: c.reviews_per_day.unwrap_or(defaults.reviews_per_day),
+            new_mix: c.new_mix,
+            interday_learning_mix: c.interday_learning_mix,
         }
     }
 }
@@ -220,6 +234,7 @@ impl From<CardPb> for WearosCard {
             state: c.state.map(CardScheduleState::from),
             due_day: c.due_day,
             due_at_secs: c.due_at_secs,
+            queued_day: c.queued_day,
         }
     }
 }
@@ -233,6 +248,7 @@ impl From<WearosDueBatch> for DueBatchPb {
             schedule_config: b.schedule_config.map(DeckConfigPb::from),
             rollover_hour: Some(b.rollover_hour),
             fetched_at_ms: b.fetched_at_ms,
+            queue_day: b.queue_day,
         }
     }
 }
@@ -246,6 +262,7 @@ impl From<DueBatchPb> for WearosDueBatch {
             schedule_config: b.schedule_config.map(DeckScheduleConfig::from),
             rollover_hour: b.rollover_hour.unwrap_or(DEFAULT_ROLLOVER_HOUR),
             fetched_at_ms: b.fetched_at_ms,
+            queue_day: b.queue_day,
         }
     }
 }
@@ -394,6 +411,7 @@ mod tests {
             }),
             rollover_hour: None,
             fetched_at_ms: 0,
+            queue_day: None,
         };
         let decoded = decode_due_batch(&old.encode_to_vec()).unwrap();
         assert_eq!(decoded.rollover_hour, DEFAULT_ROLLOVER_HOUR);

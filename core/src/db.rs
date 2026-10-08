@@ -136,6 +136,9 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
     if !column_exists(&conn, "pool_cards", "graded")? {
         conn.execute("ALTER TABLE pool_cards ADD COLUMN graded INTEGER NOT NULL DEFAULT 0", [])?;
     }
+    if !column_exists(&conn, "pool_decks", "queue_day")? {
+        conn.execute("ALTER TABLE pool_decks ADD COLUMN queue_day INTEGER", [])?;
+    }
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pool_cards_deck_id ON pool_cards(deck_id)", [])?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS grade_log (

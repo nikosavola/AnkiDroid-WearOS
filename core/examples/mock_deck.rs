@@ -29,6 +29,7 @@ fn main() {
             due_day: None,
             due_at_secs: None,
             state: None,
+            queued_day: None,
         };
         WearosDueBatch {
             deck_id: 9001,
@@ -37,6 +38,7 @@ fn main() {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         }
     } else {
         let deck_id: i64 = rest[0].parse().expect("deck_id must be an integer");
@@ -56,6 +58,7 @@ fn main() {
                     due_day: None,
                     due_at_secs: None,
                     state: None,
+                    queued_day: None,
                 }
             })
             .collect();
@@ -66,6 +69,7 @@ fn main() {
             rollover_hour: 4,
             fetched_at_ms: 0,
             schedule_config: None,
+            queue_day: None,
         }
     };
 
