@@ -25,6 +25,8 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
 import androidx.wear.compose.foundation.AnchorType
 import androidx.wear.compose.foundation.CurvedDirection
+import androidx.compose.foundation.layout.size
+import androidx.compose.ui.res.painterResource
 import androidx.wear.compose.foundation.CurvedLayout
 import androidx.wear.compose.foundation.CurvedModifier
 import androidx.wear.compose.foundation.CurvedTextStyle
@@ -35,6 +37,7 @@ import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.ButtonGroup
 import androidx.wear.compose.material3.CompactButton
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
@@ -709,15 +712,16 @@ class MainActivity : ComponentActivity() {
         curvedText(text = "Tap to show answer", style = curvedStyle, color = hintColor)
       }
     }
-    // Undo the previous grade (steps back a card and drops its buffered answer). A bare glyph with
+    // Undo the previous grade (steps back a card and drops its buffered answer). A bare icon with
     // no background, tucked just left of the progress text at the top. Drawn LAST so it sits above
-    // the full-screen reveal-clickable Column, which would otherwise eat the tap. The trailing
-    // padding both spaces the glyph and widens the tap target.
+    // the full-screen reveal-clickable Column, which would otherwise eat the tap. The padding both
+    // spaces the icon and widens the tap target. A vector rather than a text arrow, which pulled in
+    // a symbol fallback font on the first card's frame.
     if (session.canUndo()) {
-      Text(
-        text = "↩",
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      Icon(
+        painter = painterResource(R.drawable.ic_undo),
+        contentDescription = "Undo",
+        tint = MaterialTheme.colorScheme.onSurfaceVariant,
         modifier =
           Modifier.align(Alignment.TopCenter)
             .offset(x = (-30).dp, y = 8.dp)
@@ -727,7 +731,8 @@ class MainActivity : ComponentActivity() {
             ) {
               undoLastAnswer(session)
             }
-            .padding(8.dp),
+            .padding(8.dp)
+            .size(16.dp),
       )
     }
   }
