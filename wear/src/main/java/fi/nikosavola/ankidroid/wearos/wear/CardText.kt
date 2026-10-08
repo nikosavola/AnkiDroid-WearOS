@@ -14,9 +14,9 @@ import androidx.wear.compose.material3.Text
 /**
  * Renders sanitized card HTML (bold, colors, line breaks, etc.) as Compose text. Wear OS has no
  * WebView, and a Compose [Text] keeps the card in the same render pipeline as the rest of the
- * screen instead of an interop View. Text color follows the active theme (so it stays legible in
- * light mode); [fontScale] and [cardFont] come from the user's settings. Top-level (state passed
- * in) so it's reusable and testable outside the Activity.
+ * screen instead of an interop View. Text color follows the theme's onSurface; [fontScale] and
+ * [cardFont] come from the user's settings. Top-level (state passed in) so it's reusable and
+ * testable outside the Activity.
  */
 @Composable
 fun HtmlText(

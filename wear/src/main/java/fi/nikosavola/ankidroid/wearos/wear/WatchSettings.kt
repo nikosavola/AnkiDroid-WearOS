@@ -9,7 +9,6 @@ import android.content.Context
  */
 object WatchSettings {
   private const val PREFS = "watch_settings"
-  private const val KEY_THEME = "theme_mode"
   private const val KEY_FONT_SCALE = "font_scale"
   private const val KEY_CARD_FONT = "card_font"
   private const val KEY_KEEP_SCREEN_ON = "keep_screen_on"
@@ -18,13 +17,6 @@ object WatchSettings {
   private const val KEY_HIDE_CLOCK = "hide_clock"
   private const val KEY_HIDE_PROGRESS = "hide_progress"
   private const val KEY_COLORED_GRADE_BUTTONS = "colored_grade_buttons"
-
-  /** Theme selection. SYSTEM follows the OS light/dark setting where the platform reports one. */
-  enum class ThemeMode {
-    SYSTEM,
-    DARK,
-    LIGHT,
-  }
 
   /** Typeface family for card text; Serif/Monospace render larger, CJK-friendly glyphs. */
   enum class CardFont {
@@ -42,14 +34,6 @@ object WatchSettings {
   const val SPEECH_RATE_MAX = 2.0f
 
   private fun prefs(context: Context) = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-
-  fun themeMode(context: Context): ThemeMode =
-    runCatching { ThemeMode.valueOf(prefs(context).getString(KEY_THEME, "") ?: "") }
-      .getOrDefault(ThemeMode.DARK)
-
-  fun setThemeMode(context: Context, mode: ThemeMode) {
-    prefs(context).edit().putString(KEY_THEME, mode.name).apply()
-  }
 
   fun fontScale(context: Context): Float =
     prefs(context).getFloat(KEY_FONT_SCALE, 1.0f).coerceIn(FONT_SCALE_MIN, FONT_SCALE_MAX)

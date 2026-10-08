@@ -4,6 +4,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.padding
@@ -59,42 +61,18 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
         )
       }
       item {
-        Card(
-          onClick = {},
+        DeckStatsCard(
+          session,
           transformation = SurfaceTransformation(transformSpec),
           modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
-        ) {
-          Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Row(
-              modifier = Modifier.fillMaxWidth(),
-              horizontalArrangement = Arrangement.Center,
-              verticalAlignment = Alignment.CenterVertically,
-            ) {
-              StatNumeral(
-                label = "Due",
-                value = "${session.getTotalCards()}",
-                color = MaterialTheme.colorScheme.primary,
-              )
-              if (reviewedToday > 0) {
-                Spacer(modifier = Modifier.width(32.dp))
-                StatNumeral(
-                  label = "Today",
-                  value = "$reviewedToday",
-                  color = MaterialTheme.colorScheme.tertiary,
-                )
-              }
-            }
-            Text(
-              text = "Progress ${session.getProgressString()}",
-              style = MaterialTheme.typography.labelSmall,
-              color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-          }
-        }
+        )
       }
       item {
         Button(
-          onClick = { pushScreen(WatchScreen.Review) },
+          onClick = {
+            requestReviewNotificationsIfNeeded()
+            pushScreen(WatchScreen.Review)
+          },
           transformation = SurfaceTransformation(transformSpec),
           modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
         ) {
@@ -113,7 +91,7 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
             WatchSettings.setTtsEnabled(activity, it)
           },
           label = { Text("Voice Reviews") },
-          secondaryLabel = { Text(if (ttsEnabled) "Speaker On 🔊" else "Speaker Off 🔇") },
+          secondaryLabel = { Text(if (ttsEnabled) "Speaker on" else "Speaker off") },
           transformation = SurfaceTransformation(transformSpec),
           modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
         )
@@ -141,6 +119,52 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
           }
         }
       }
+    }
+  }
+}
+
+@Composable
+private fun MainActivity.DeckStatsCard(
+  session: ReviewSession,
+  transformation: SurfaceTransformation,
+  modifier: Modifier,
+) {
+  val statsDescription =
+    "${session.getTotalCards()} due" +
+      (if (reviewedToday > 0) ", $reviewedToday reviewed today" else "") +
+      ", progress ${session.getProgressString()}"
+  // Wear's Card is always clickable; replacing its semantics stops TalkBack announcing a button
+  // that does nothing.
+  Card(
+    onClick = {},
+    transformation = transformation,
+    modifier = modifier.clearAndSetSemantics { contentDescription = statsDescription },
+  ) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.Center,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        StatNumeral(
+          label = "Due",
+          value = "${session.getTotalCards()}",
+          color = MaterialTheme.colorScheme.primary,
+        )
+        if (reviewedToday > 0) {
+          Spacer(modifier = Modifier.width(32.dp))
+          StatNumeral(
+            label = "Today",
+            value = "$reviewedToday",
+            color = MaterialTheme.colorScheme.tertiary,
+          )
+        }
+      }
+      Text(
+        text = "Progress ${session.getProgressString()}",
+        style = MaterialTheme.typography.labelSmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
     }
   }
 }

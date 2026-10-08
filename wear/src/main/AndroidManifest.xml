@@ -4,6 +4,9 @@
 
     <uses-feature android:name="android.hardware.type.watch" />
 
+    <!-- The ongoing activity shown during a review session. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <application
         android:name=".WearApp"
         android:allowBackup="true"
@@ -12,9 +15,9 @@
         android:enableOnBackInvokedCallback="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
-        android:label="AnkiDroid WearOS"
+        android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@android:style/Theme.DeviceDefault">
+        android:theme="@style/Theme.AnkiWear">
 
         <!-- Lets perfetto and gfxinfo trace release builds. -->
         <profileable android:shell="true" />
@@ -27,7 +30,9 @@
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@android:style/Theme.DeviceDefault">
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/Theme.AnkiWear.Starting">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -55,15 +60,17 @@
         <!-- Native Wear OS System Tile showing cards due at a glance -->
         <service
             android:name=".AnkiTileService"
+            android:description="@string/tile_description"
             android:exported="true"
-            android:label="AnkiDroid Due"
+            android:icon="@drawable/ic_cards"
+            android:label="@string/tile_label"
             android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
             <intent-filter>
                 <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
             </intent-filter>
             <meta-data
                 android:name="androidx.wear.tiles.PREVIEW"
-                android:resource="@mipmap/ic_launcher" />
+                android:resource="@drawable/tile_preview" />
         </service>
 
         <!-- Wear OS 7 widget (Glance Wear). Widget action only: the tile above already covers
@@ -86,15 +93,15 @@
         <service
             android:name=".AnkiComplicationService"
             android:exported="true"
-            android:icon="@mipmap/ic_launcher"
-            android:label="AnkiDroid Due"
+            android:icon="@drawable/ic_cards"
+            android:label="@string/complication_label"
             android:permission="com.google.android.wearable.permission.BIND_COMPLICATION_PROVIDER">
             <intent-filter>
                 <action android:name="android.support.wearable.complications.ACTION_COMPLICATION_UPDATE_REQUEST" />
             </intent-filter>
             <meta-data
                 android:name="android.support.wearable.complications.SUPPORTED_TYPES"
-                android:value="SHORT_TEXT" />
+                android:value="SHORT_TEXT,LONG_TEXT,RANGED_VALUE" />
             <meta-data
                 android:name="android.support.wearable.complications.UPDATE_PERIOD_SECONDS"
                 android:value="1800" />

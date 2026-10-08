@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="app_name">AnkiDroid WearOS</string>
+    <string name="tile_label">AnkiDroid due</string>
+    <string name="tile_description">Cards due today, with a shortcut into your most-due deck.</string>
+    <string name="complication_label">AnkiDroid due</string>
+    <string name="review_channel_name">Review session</string>
+    <string name="review_channel_description">Shows an ongoing review so you can return to it from the watch face.</string>
     <plurals name="learning_cards_due_in_minutes">
         <item quantity="one">%1$d learning card due in %2$d min</item>
         <item quantity="other">%1$d learning cards due in %2$d min</item>

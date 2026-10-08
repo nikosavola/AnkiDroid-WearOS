@@ -48,22 +48,6 @@ internal fun MainActivity.SettingsScreen() {
       }
       item {
         settingChoiceRow(
-          label = "Theme",
-          options =
-            listOf(
-              WatchSettings.ThemeMode.SYSTEM to "Auto",
-              WatchSettings.ThemeMode.DARK to "Dark",
-              WatchSettings.ThemeMode.LIGHT to "Light",
-            ),
-          selected = themeMode,
-          modifier = Modifier.transformedHeight(this, transformSpec),
-        ) { mode ->
-          themeMode = mode
-          WatchSettings.setThemeMode(activity, mode)
-        }
-      }
-      item {
-        settingChoiceRow(
           label = "Text size",
           options = listOf(0.9f to "S", 1.0f to "M", 1.3f to "L", 1.6f to "XL", 1.8f to "2XL"),
           selected = fontScale,
