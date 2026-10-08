@@ -76,6 +76,14 @@ pub struct DeckScheduleConfig {
     /// Maximum reviews per day (`rev.perDay`). Clamped to >= 0; Anki's default 200 when absent.
     #[uniffi(default = 200)]
     pub reviews_per_day: i32,
+    /// Where new cards go relative to reviews (`newMix`): 0 mixed in, 1 after, 2 before.
+    #[uniffi(default = 0)]
+    #[serde(default)]
+    pub new_mix: i32,
+    /// Where interday learning cards go relative to reviews (`interdayLearningMix`), same values.
+    #[uniffi(default = 0)]
+    #[serde(default)]
+    pub interday_learning_mix: i32,
 }
 
 impl Default for DeckScheduleConfig {
@@ -96,6 +104,8 @@ impl Default for DeckScheduleConfig {
             desired_retention: 0.9,
             new_per_day: 20,
             reviews_per_day: 200,
+            new_mix: REVIEW_MIX_MIXED,
+            interday_learning_mix: REVIEW_MIX_MIXED,
         }
     }
 }
@@ -190,7 +200,22 @@ pub fn parse_deck_schedule_config(options_json: String) -> Result<DeckScheduleCo
         desired_retention: read_desired_retention(&root).unwrap_or(defaults.desired_retention),
         new_per_day: read_per_day(new, defaults.new_per_day),
         reviews_per_day: read_per_day(rev, defaults.reviews_per_day),
+        new_mix: read_review_mix(&root, "newMix"),
+        interday_learning_mix: read_review_mix(&root, "interdayLearningMix"),
     })
+}
+
+/// Anki's `ReviewMix` values for `newMix` / `interdayLearningMix`.
+pub const REVIEW_MIX_MIXED: i32 = 0;
+pub const REVIEW_MIX_AFTER: i32 = 1;
+pub const REVIEW_MIX_BEFORE: i32 = 2;
+
+/// A `ReviewMix` key from the top level of the schema11 dict; anything unknown is Anki's default.
+fn read_review_mix(root: &Value, key: &str) -> i32 {
+    root.get(key)
+        .and_then(number_as_i32)
+        .filter(|v| matches!(*v, REVIEW_MIX_AFTER | REVIEW_MIX_BEFORE))
+        .unwrap_or(REVIEW_MIX_MIXED)
 }
 
 /// Read a per-day limit from a schema11 `new`/`rev` object (`perDay`), clamped to >= 0. A missing or
