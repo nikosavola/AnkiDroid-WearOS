@@ -89,3 +89,9 @@ cargo test --manifest-path core/Cargo.toml
 You can install both modules onto an Android Phone and a Wear OS circular emulator. The phone companion will automatically pair with the watch's sync listener and detect whether the local `com.ichi2.anki.flashcards` provider is available. Debug builds fall back to mock cards for testing when it is not; release builds need the Force Mock Mode toggle.
 
 For a lightweight, headless phone environment (no KVM/AVD needed), `CONTRIBUTING.md` documents running Android in Docker via **redroid** — handy for verifying the AnkiDroid write-back path and phone UI on a server or remote VM.
+
+## License
+
+AGPL-3.0-or-later, the same license as Anki itself; see [LICENSE](LICENSE). The offline scheduler in
+`core/src/sched.rs` and the queue builder in `core/src/pool.rs` port logic from Anki's `rslib`
+(Copyright Ankitects Pty Ltd and contributors, AGPL-3.0-or-later).
