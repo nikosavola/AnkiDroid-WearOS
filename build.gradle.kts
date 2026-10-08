@@ -13,6 +13,7 @@ buildscript {
 
 plugins {
     alias(libs.plugins.android.application) apply false
+    alias(libs.plugins.android.library) apply false
     // kotlin.android removed: AGP 9 provides built-in Kotlin (applying it errors on a duplicate
     // `kotlin` extension). Version is pinned via the buildscript classpath above.
     alias(libs.plugins.compose.compiler) apply false
@@ -155,7 +156,7 @@ tasks.register<Exec>("rustLint") {
 tasks.register("formatAll") {
     group = "formatting"
     description = "Auto-format both Kotlin and Rust codebases"
-    dependsOn(":phone:ktfmtFormat", ":wear:ktfmtFormat", "rustFmt")
+    dependsOn(":phone:ktfmtFormat", ":wear:ktfmtFormat", ":ankidroid-provider:ktfmtFormat", "rustFmt")
 }
 
 tasks.register("lintAll") {
@@ -164,10 +165,13 @@ tasks.register("lintAll") {
     dependsOn(
         ":phone:ktfmtCheck",
         ":wear:ktfmtCheck",
+        ":ankidroid-provider:ktfmtCheck",
         ":phone:ktlintCheck",
         ":wear:ktlintCheck",
+        ":ankidroid-provider:ktlintCheck",
         ":phone:detekt",
         ":wear:detekt",
+        ":ankidroid-provider:detekt",
         "rustLint"
     )
 }
