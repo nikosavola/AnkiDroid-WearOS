@@ -137,6 +137,52 @@ class DuePoolProviderTest {
   }
 
   @Test
+  fun `the whole of today's queue is fetched and marked complete when the deck counts cover it`() {
+    provider.dueCounts = "[0,1,0]"
+
+    val pool = bridge().fetchDuePool(DeckId(DECK_ID), todayLimit = 20)
+
+    assertEquals(20, provider.scheduleLimit)
+    assertEquals(todayIndex(), pool.queueDay)
+    assertEquals(todayIndex(), pool.cards.first { it.id == TODAY_CARD }.queuedDay)
+  }
+
+  @Test
+  fun `a big day asks AnkiDroid for all of it, up to the cap`() {
+    provider.dueCounts = "[2,150,30]"
+    assertEquals(182, run {
+      bridge().fetchDuePool(DeckId(DECK_ID), 20)
+      provider.scheduleLimit
+    })
+
+    provider.dueCounts = "[0,900,30]"
+    bridge().fetchDuePool(DeckId(DECK_ID), todayLimit = 20)
+    assertEquals(MAX_TODAY_QUEUE, provider.scheduleLimit)
+  }
+
+  @Test
+  fun `without deck counts today's cards are marked but the day is not claimed complete`() {
+    val pool = bridge().fetchDuePool(DeckId(DECK_ID), todayLimit = 20)
+
+    assertEquals(20, provider.scheduleLimit)
+    assertNull(pool.queueDay)
+    assertEquals(todayIndex(), pool.cards.first { it.id == TODAY_CARD }.queuedDay)
+  }
+
+  @Test
+  fun `a deck-level new limit is read off today's queue for later days`() {
+    // The preset says none, yet AnkiDroid queued 3 of the 10 available new cards today.
+    provider.newPerDay = 0
+    provider.dueCounts = "[0,1,3]"
+    provider.newCards = (100L until 110L).map { FakeCardRow(it, it + 1000, 0, due = it) }
+
+    val pool = bridge().fetchDuePool(DeckId(DECK_ID), todayLimit = 20)
+
+    assertEquals(3, pool.scheduleConfig?.newPerDay)
+    assertEquals(10, pool.cards.count { it.id >= 100L })
+  }
+
+  @Test
   fun `the pool records the rollover hour and fetch time`() {
     val pool = bridge().fetchDuePool(DeckId(DECK_ID), todayLimit = 20)
 
@@ -179,6 +225,10 @@ class FakeCardsProvider : ContentProvider() {
   var newCards: List<FakeCardRow> = emptyList()
   val renderedSearches = mutableListOf<String>()
   var newPerDay = 2
+  /** The deck's `deck_count` value; null leaves the column out, like an older AnkiDroid. */
+  var dueCounts: String? = null
+  /** The `limit` the bridge asked the schedule for. */
+  var scheduleLimit: Int? = null
 
   override fun onCreate() = true
 
@@ -191,27 +241,32 @@ class FakeCardsProvider : ContentProvider() {
   ): Cursor? =
     when (uri.pathSegments.firstOrNull()) {
       "decks" -> deckCursor()
-      "schedule" -> scheduleCursor()
+      "schedule" -> scheduleCursor(selectionArgs)
       "cards" -> cardsSearchCursor(selection)
       "notes" -> cardCursor(uri)
       else -> null
     }
 
-  private fun deckCursor(): Cursor =
-    MatrixCursor(arrayOf("deck_id", "deck_name", "options")).apply {
-      addRow(
-        arrayOf<Any>(
-          DECK_ID,
-          "Japani",
-          """{"new":{"delays":[1.0,10.0],"ints":[1,4],"perDay":$newPerDay},"rev":{},"lapse":{}}""",
-        )
-      )
+  private fun deckCursor(): Cursor {
+    val options = """{"new":{"delays":[1.0,10.0],"ints":[1,4],"perDay":$newPerDay},"rev":{},"lapse":{}}"""
+    val counts = dueCounts
+    return if (counts == null) {
+      MatrixCursor(arrayOf("deck_id", "deck_name", "options")).apply {
+        addRow(arrayOf<Any>(DECK_ID, "Japani", options))
+      }
+    } else {
+      MatrixCursor(arrayOf("deck_id", "deck_name", "options", "deck_count")).apply {
+        addRow(arrayOf<Any>(DECK_ID, "Japani", options, counts))
+      }
     }
+  }
 
-  private fun scheduleCursor(): Cursor =
-    MatrixCursor(arrayOf("note_id", "ord", "button_count", "next_review_times")).apply {
+  private fun scheduleCursor(selectionArgs: Array<out String>?): Cursor {
+    scheduleLimit = selectionArgs?.firstOrNull()?.toIntOrNull()
+    return MatrixCursor(arrayOf("note_id", "ord", "button_count", "next_review_times")).apply {
       addRow(arrayOf<Any>(TODAY_NOTE, 0, 3, "1m, 10m, 4d, 7d"))
     }
+  }
 
   /** The per-card fetch: the card the today-schedule row points at. */
   private fun cardCursor(uri: Uri): Cursor {

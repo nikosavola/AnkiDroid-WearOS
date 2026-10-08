@@ -10,6 +10,46 @@ internal const val POOL_HORIZON_DAYS = 7
 internal const val MAX_POOL_CARDS = 400
 
 /**
+ * Most cards fetched from AnkiDroid's own queue for today. Each one costs a rendered card query
+ * while the watch waits on its download timeout, so a huge backlog is shipped in part.
+ */
+internal const val MAX_TODAY_QUEUE = 200
+
+/** A deck's `deck_count` value (`[learn, review, new]`), or null if it isn't three integers. */
+internal fun parseDueCounts(raw: String?): List<Int>? {
+  val nums = Regex("-?\\d+").findAll(raw ?: return null).map { it.value.toInt() }.toList()
+  return nums.takeIf { it.size == 3 && it.all { n -> n >= 0 } }
+}
+
+/**
+ * Whether a schedule fetch of [requested] cards that returned [fetched] holds AnkiDroid's whole
+ * queue for today. Needs the deck's [dueToday] counts: an empty result is otherwise
+ * indistinguishable from a failed query, and only a complete queue may stand in for the day.
+ */
+internal fun isCompleteQueue(fetched: Int, requested: Int, dueToday: List<Int>?): Boolean {
+  if (dueToday == null) return false
+  return fetched >= dueToday.sum() || fetched in 1 until requested
+}
+
+/**
+ * The deck's real daily new-card limit. The provider only exposes the preset's `new.perDay`, not a
+ * deck-level override, but AnkiDroid's count of new cards queued today already reflects it: when
+ * more new cards are available than were queued, the limit is what was queued plus what was
+ * introduced earlier today. Otherwise the limit isn't binding and can't be read off; keep the
+ * preset unless today shows more.
+ */
+internal fun effectiveNewPerDay(
+  presetNewPerDay: Int,
+  newQueuedToday: Int?,
+  introducedToday: Int?,
+  newAvailable: Int,
+): Int {
+  if (newQueuedToday == null || introducedToday == null) return presetNewPerDay
+  val today = newQueuedToday + introducedToday
+  return if (newAvailable > newQueuedToday) today else maxOf(presetNewPerDay, today)
+}
+
+/**
  * How many new cards the pool may carry: the deck's daily new limit across the whole horizon. Zero
  * when the deck exposed no config, since a missing limit must not become an unbounded allowance.
  */
