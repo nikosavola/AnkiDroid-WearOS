@@ -250,7 +250,7 @@ class AnkiDroidBridge(
         )
       }
       val (resolvedDeckId, resolvedDeckName) = matchedDeck
-      Log.i(TAG, "Using AnkiDroid deck: $resolvedDeckName (ID: $resolvedDeckId)")
+      Log.i(TAG, "Using AnkiDroid deck: ${redact(resolvedDeckName)} (ID: $resolvedDeckId)")
 
       // The deck's scheduling config (learning steps, graduation intervals, FSRS weights) drives
       // the watch's offline preview recompute. A missing config is not fatal: previews then stay
@@ -508,7 +508,7 @@ class AnkiDroidBridge(
     // Escape backslashes before quotes, or a deck name ending in '\' would break the quoted term.
     val escaped = deckName.replace("\\", "\\\\").replace("\"", "\\\"")
     val search = "deck:\"$escaped\" is:new"
-    Log.i(TAG, "Searching new cards: $search")
+    Log.i(TAG, "Searching new cards: ${redact(search)}")
     val ids = provider.searchNoteIds(search, limit)
     Log.d(TAG, "Found ${ids.size} new-card notes (capped at $limit).")
     return ids

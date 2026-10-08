@@ -164,7 +164,7 @@ class CardBitmapRenderer(private val context: Context) {
               // permission today; this keeps the invariant if that ever changes.
               val scheme = url.scheme?.lowercase()
               if (scheme != null && scheme !in ALLOWED_SCHEMES) {
-                Log.w(TAG, "Blocked non-local WebView request: $url")
+                Log.w(TAG, "Blocked non-local WebView request: ${redact(url)}")
                 return WebResourceResponse(
                   "text/plain",
                   "UTF-8",
@@ -189,7 +189,7 @@ class CardBitmapRenderer(private val context: Context) {
                     }
                   WebResourceResponse(mimeType, "UTF-8", inputStream)
                 } catch (e: Exception) {
-                  Log.e(TAG, "Failed to resolve media file via provider: $filename", e)
+                  Log.e(TAG, "Failed to resolve media file via provider: ${redact(filename)}", e)
                   null
                 }
               }
@@ -347,7 +347,7 @@ class CardBitmapRenderer(private val context: Context) {
       }
       !unsupported
     } catch (e: Exception) {
-      Log.w(TAG, "Media probe failed for $filename: ${e.message}")
+      Log.w(TAG, "Media probe failed for ${redact(filename)}: ${e.message}")
       true
     }
 

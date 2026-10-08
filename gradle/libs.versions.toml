@@ -19,6 +19,8 @@ mockk = "1.13.13"
 androidx-test-core = "1.6.1"
 androidx-test-ext-junit = "1.2.1"
 compose = "1.13.0-alpha03"
+# Stable line; only needs Compose 1.9+, so it sits fine under the 1.13 alpha.
+material3-adaptive = "1.3.0"
 
 [libraries]
 androidx-appfunctions = { module = "androidx.appfunctions:appfunctions", version.ref = "appfunctions" }
@@ -81,6 +83,9 @@ compose-ui = { group = "androidx.compose.ui", name = "ui", version.ref = "compos
 compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling-preview", version.ref = "compose" }
 compose-animation = { group = "androidx.compose.animation", name = "animation", version.ref = "compose" }
 compose-material3 = { group = "androidx.compose.material3", name = "material3", version = "1.5.0-alpha29" }
+compose-material3-adaptive = { group = "androidx.compose.material3.adaptive", name = "adaptive", version.ref = "material3-adaptive" }
+compose-material3-adaptive-layout = { group = "androidx.compose.material3.adaptive", name = "adaptive-layout", version.ref = "material3-adaptive" }
+compose-material3-adaptive-navigation = { group = "androidx.compose.material3.adaptive", name = "adaptive-navigation", version.ref = "material3-adaptive" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

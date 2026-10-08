@@ -139,7 +139,7 @@ object DeckSync {
         "Copying $deckName… ($pushed decks, $totalCards cards)",
         SyncService.syncProgressPercent(pushed, prePushCap),
       )
-      Log.d(TAG, "Pushed deck $deckId ('$deckName') with ${batch.cards.size} cards.")
+      Log.d(TAG, "Pushed deck $deckId ('${redact(deckName)}') with ${batch.cards.size} cards.")
     }
 
     settings.edit().putLong(KEY_LAST_SYNC_MS, System.currentTimeMillis()).apply()

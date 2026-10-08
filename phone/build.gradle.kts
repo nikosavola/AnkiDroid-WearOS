@@ -38,7 +38,10 @@ android {
     sourceCompatibility = JavaVersion.VERSION_21
     targetCompatibility = JavaVersion.VERSION_21
   }
-  buildFeatures { compose = true }
+  buildFeatures {
+    compose = true
+    buildConfig = true
+  }
   // ../bindings is generated UniFFI Kotlin. Under AGP 9 built-in Kotlin, extra dirs must be added
   // to
   // the *kotlin* source set (java.srcDirs no longer feeds Kotlin compilation as the KGP plugin
@@ -86,6 +89,9 @@ dependencies {
   implementation(libs.compose.ui.tooling.preview)
   implementation(libs.compose.animation)
   implementation(libs.compose.material3)
+  implementation(libs.compose.material3.adaptive)
+  implementation(libs.compose.material3.adaptive.layout)
+  implementation(libs.compose.material3.adaptive.navigation)
 
   implementation(libs.play.services.wearable)
   implementation(libs.androidx.work.runtime)
@@ -102,6 +108,8 @@ dependencies {
   testImplementation(libs.androidx.test.ext.junit)
   // Plain desktop JNA jar so uniffi's Native.load works under the host test JVM.
   testImplementation(libs.jna.jvm)
+  testImplementation(libs.compose.ui.test.junit4)
+  debugImplementation(libs.compose.ui.test.manifest)
 
   // Instrumented tests run against a real AnkiDroid install on a device/emulator: they exercise the
   // ContentProvider contract (deck OPTIONS, card scheduler state) that unit tests can only fake.
