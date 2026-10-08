@@ -91,6 +91,8 @@ class MainActivity : ComponentActivity() {
     private const val TAG = "WatchMainActivity"
     // How long to keep the sync-progress arc up waiting for the phone's batch before giving up.
     private const val DOWNLOAD_TIMEOUT_MS = 20_000L
+    /** Deck to open on launch, set by the AppFunctions "startReview" intent. */
+    internal const val EXTRA_OPEN_DECK_ID = "open_deck_id"
   }
 
   internal var reviewSession by mutableStateOf<ReviewSession?>(null)
@@ -236,6 +238,21 @@ class MainActivity : ComponentActivity() {
     // AppScaffold paints the background; the window's own would be a second full-screen fill under
     // it on every frame. The starting window still uses the theme background.
     window.setBackgroundDrawable(null)
+    // A recreated activity already restored its screens; only a fresh launch opens the deck.
+    if (savedInstanceState == null) openDeckFrom(intent)
+  }
+
+  override fun onNewIntent(intent: Intent) {
+    super.onNewIntent(intent)
+    openDeckFrom(intent)
+  }
+
+  /** Open the deck an assistant asked for (the AppFunctions "startReview" intent). */
+  private fun openDeckFrom(intent: Intent) {
+    val deckId = intent.getLongExtra(EXTRA_OPEN_DECK_ID, -1L)
+    if (deckId < 0) return
+    intent.removeExtra(EXTRA_OPEN_DECK_ID)
+    loadDeckSession(deckId)
   }
 
   override fun onDestroy() {

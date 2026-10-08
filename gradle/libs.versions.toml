@@ -1,4 +1,8 @@
 [versions]
+# Alpha: AppFunctions is a preview API; alpha13 renamed @AppFunction to @AppFunctionDeclaration.
+appfunctions = "1.0.0-alpha13"
+# KSP2 versions are no longer tied to the Kotlin version.
+ksp = "2.3.12"
 agp = "9.5.0-alpha08"
 kotlin = "2.4.20"
 compose-compiler = "2.4.20"
@@ -17,6 +21,8 @@ androidx-test-ext-junit = "1.2.1"
 compose = "1.13.0-alpha03"
 
 [libraries]
+androidx-appfunctions = { module = "androidx.appfunctions:appfunctions", version.ref = "appfunctions" }
+androidx-appfunctions-compiler = { module = "androidx.appfunctions:appfunctions-compiler", version.ref = "appfunctions" }
 # Kotlin and Coroutines
 kotlin-stdlib = { group = "org.jetbrains.kotlin", name = "kotlin-stdlib", version.ref = "kotlin" }
 kotlinx-coroutines-core = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-core", version.ref = "coroutines" }
@@ -83,3 +89,4 @@ compose-compiler = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version.ref = "ktlint" }
 ktfmt = { id = "com.ncorti.ktfmt.gradle", version.ref = "ktfmt" }
 detekt = { id = "dev.detekt", version.ref = "detekt" }
+ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
