@@ -243,3 +243,26 @@ when*; AnkiDroid still owns the real schedule and re-derives it on write-back.
 ```bash
 uv run prek run --all-files
 ```
+
+---
+
+## 10. AppFunctions (assistant-callable actions, Android 16+)
+Both apps expose [AppFunctions](https://developer.android.com/ai/appfunctions) on the alpha
+`androidx.appfunctions` line (KSP compiler, `aggregateAppFunctions=true`). Each app has one
+`@AppFunctionServiceEntryPoint` base class (`phone/.../appfunctions/PhoneAppFunctions.kt`,
+`wear/.../appfunctions/WatchAppFunctions.kt`); KSP generates the concrete service, which the manifest
+declares with `android:enabled="@bool/enablePlatformAppFunctionService"` so it only runs on API 36+.
+- **Phone:** `listDecks`, `setDeckSyncedToWatch`, `syncWatchNow` (enqueues the sync worker).
+- **Watch:** `listCachedDecks`, `startReview` (returns a per-deck `PendingIntent` into the deck
+  screen), `refreshDeck` (asks the phone for that deck's latest cards).
+- Only deck names and counts leave the apps; nothing grades cards or writes to AnkiDroid. Function
+  descriptions come from KDoc, so those KDocs follow the AppFunctions skill's style rather than the
+  sparse-comment rule.
+- Alpha drift: alpha13 renamed `@AppFunction` to `@AppFunctionDeclaration` and alpha12 removed
+  `AppFunctionContext`; Google's guide and skill still show the old names.
+- Verify with `adb shell cmd app_function list-app-functions --package com.ichi2.anki.wearos` and
+  `execute-app-function --function '<BaseClass FQN>#<fn>' --parameters '{...}' --brief-yaml`. API
+  36.0 images have the service but no shell command; the Wear OS 7 (API 37) emulator has both. A
+  returned `PendingIntent` is launched with
+  `--pending-intent-path property/androidAppfunctionsReturnValue`.
+- `ksp*Kotlin` tasks depend on `:generateBindings` like the compile tasks, or a clean build fails.
