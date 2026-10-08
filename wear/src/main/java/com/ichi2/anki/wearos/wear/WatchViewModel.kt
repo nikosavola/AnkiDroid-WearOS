@@ -111,16 +111,24 @@ class WatchViewModel(app: Application, private val savedState: SavedStateHandle)
   var knownDecks by mutableStateOf<List<Pair<Long, String>>>(emptyList())
     private set
 
+  // Holds the splash screen until the first load, so a cold start doesn't flash the empty state.
+  var decksLoaded by mutableStateOf(false)
+    private set
+
   fun loadDecks() {
     viewModelScope.launch {
       val app = getApplication<Application>()
       val nowMs = systemWatchClock.nowMs()
       val offset = utcOffsetSecs(nowMs)
-      val cached = withContext(Dispatchers.IO) { poolDeckSummaries(nowMs, offset) }
-      val known = withContext(Dispatchers.IO) { loadKnownDecks(app.filesDir) }
-      cachedDecks = cached
-      knownDecks = known
-      Log.d(TAG, "Loaded ${cached.size} pooled decks, ${known.size} known decks.")
+      try {
+        val cached = withContext(Dispatchers.IO) { poolDeckSummaries(nowMs, offset) }
+        val known = withContext(Dispatchers.IO) { loadKnownDecks(app.filesDir) }
+        cachedDecks = cached
+        knownDecks = known
+        Log.d(TAG, "Loaded ${cached.size} pooled decks, ${known.size} known decks.")
+      } finally {
+        decksLoaded = true
+      }
     }
   }
 
