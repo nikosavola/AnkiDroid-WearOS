@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="due_widget_label">AnkiDroid Due</string>
+    <string name="due_widget_label">AnkiDroid due</string>
     <string name="due_widget_description">Cards due on your watch, with your busiest decks.</string>
 </resources>
