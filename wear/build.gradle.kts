@@ -30,6 +30,7 @@ android {
   buildTypes {
     release {
       isMinifyEnabled = true
+      isShrinkResources = true
       proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
     }
     // Release code (R8, no debuggable) signed with the debug key, for frame timing and baseline
