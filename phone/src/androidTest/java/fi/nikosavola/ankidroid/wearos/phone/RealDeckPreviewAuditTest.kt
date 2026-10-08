@@ -8,6 +8,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import uniffi.wearos_core.formatIntervalLabel
 import uniffi.wearos_core.previewIntervalSecs
 
 /**
@@ -29,6 +30,7 @@ class RealDeckPreviewAuditTest {
     assumeTrue("AnkiDroid not installed/reachable", bridge.isAnkiDroidAvailable())
     val now = System.currentTimeMillis()
     var compared = 0
+    var exact = 0
     val mismatches = mutableListOf<String>()
 
     for ((deckId, name) in bridge.fetchAllDecks()) {
@@ -41,6 +43,7 @@ class RealDeckPreviewAuditTest {
           val shippedSecs = parseLabelToSeconds(shipped) ?: return@forEachIndexed
           val allowed = allowedRange(ours[button], shipped)
           compared++
+          if (formatIntervalLabel(ours[button]) == shipped) exact++
           if (shippedSecs !in allowed) {
             mismatches +=
               "deck '$name' card ${card.id} (queue ${state.queue}, type ${state.cardType}, " +
@@ -55,7 +58,10 @@ class RealDeckPreviewAuditTest {
     }
 
     mismatches.forEach { Log.w(TAG, it) }
-    Log.i(TAG, "compared $compared labels, ${mismatches.size} outside Anki's fuzz window")
+    Log.i(
+      TAG,
+      "compared $compared labels: $exact exact, ${mismatches.size} outside Anki's fuzz window",
+    )
     assertTrue(
       "${mismatches.size} of $compared labels disagree; first: ${mismatches.firstOrNull()}",
       mismatches.isEmpty(),
@@ -69,7 +75,10 @@ class RealDeckPreviewAuditTest {
     val problems = mutableListOf<String>()
 
     for ((deckId, name) in bridge.fetchAllDecks().filter { !it.second.contains("::") }) {
-      val pool = bridge.fetchDuePool(deckId = deckId, todayLimit = POOL_TODAY_LIMIT).cards
+      val started = System.currentTimeMillis()
+      val batch = bridge.fetchDuePool(deckId = deckId, todayLimit = POOL_TODAY_LIMIT)
+      val tookMs = System.currentTimeMillis() - started
+      val pool = batch.cards
       val dupes = pool.groupingBy { it.id }.eachCount().filter { it.value > 1 }.keys
       if (dupes.isNotEmpty()) problems += "deck '$name' ships duplicate cards $dupes"
       pool
@@ -81,7 +90,9 @@ class RealDeckPreviewAuditTest {
       val byDay = pool.mapNotNull { it.dueDay }.groupingBy { it - today }.eachCount().toSortedMap()
       Log.i(
         TAG,
-        "pool '$name': ${pool.size} cards, today ${pool.count { it.nextReviewTimes.isNotEmpty() }}, " +
+        "pool '$name' in ${tookMs}ms: ${pool.size} cards, queued ${pool.count { it.queuedDay == today }}" +
+          " (day complete: ${batch.queueDay == today}), new/day ${batch.scheduleConfig?.newPerDay}, " +
+          "today ${pool.count { it.nextReviewTimes.isNotEmpty() }}, " +
           "learning ${pool.count { it.dueAtSecs != null }}, new " +
           "${pool.count { it.state?.queue == 0 && it.nextReviewTimes.isEmpty() }}, by day $byDay",
       )

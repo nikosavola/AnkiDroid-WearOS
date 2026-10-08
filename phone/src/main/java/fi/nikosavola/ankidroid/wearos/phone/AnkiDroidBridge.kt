@@ -80,6 +80,9 @@ class AnkiDroidBridge(
     // Review count, bumped by a real answerCard. Write-back re-reads it to confirm an answer stuck,
     // since the provider swallows a scheduler error and still reports a row (see writeAnswersBack).
     private const val COL_REPS = "reps"
+    // New cards are listed in `prop:pos` windows starting at this size (see searchNewCardPositions).
+    private const val NEW_POSITION_WINDOW = 64L
+    private const val MAX_NEW_POSITION = 100_000_000L
     // Raw due value: an Anki day number for review/day-learning cards, epoch seconds for intraday
     // learning cards. The pool uses it for new-card ordering and intraday due times.
     private const val COL_DUE = "due"
@@ -650,16 +653,38 @@ class AnkiDroidBridge(
     val todayCards = today.cards.map { it.copy(queuedDay = todayIndex) }
     val queueComplete = isCompleteQueue(today.cards.size, wanted, dueToday)
 
-    val newPositions = searchCardPositions("is:new -is:suspended -is:buried $deckSelector")
     // The preset's new.perDay misses deck-level overrides; infer the deck's real one from what
     // AnkiDroid queued today. Only days after today use it (today is AnkiDroid's own queue).
+    val newQueuedToday = dueToday?.getOrNull(2)
+    val introducedToday = countCards("introduced:1 $deckSelector")
+    // At most the pool's worth of new cards plus one, which is all the inference needs to tell a
+    // binding limit from a deck that ran out.
+    val newCeiling = maxOf(presetConfig?.newPerDay ?: 0, (newQueuedToday ?: 0) + (introducedToday ?: 0))
+    val newPositions =
+      if (presetConfig == null || newCeiling == 0) {
+        emptyList()
+      } else {
+        // AnkiDroid's queued new cards are the first unstudied ones, so start right before them.
+        val queuedNew = today.cards.filter { it.state?.queue == 0 }.map { it.id }
+        val firstQueued =
+          if (queuedNew.isEmpty()) {
+            null
+          } else {
+            searchCardPositions("cid:${queuedNew.joinToString(",")}").minOfOrNull { it.second }
+          }
+        searchNewCardPositions(
+          deckSelector,
+          wanted = newCardAllowance(newCeiling, horizonDays) + (newQueuedToday ?: 0) + 1,
+          after = (firstQueued ?: 0L) - 1,
+        )
+      }
     val config =
       presetConfig?.let { c ->
         val inferred =
           effectiveNewPerDay(
             presetNewPerDay = c.newPerDay,
-            newQueuedToday = dueToday?.getOrNull(2),
-            introducedToday = countCards("introduced:1 $deckSelector"),
+            newQueuedToday = newQueuedToday,
+            introducedToday = introducedToday,
             newAvailable = newPositions.size,
             reviewLimitReached = dueToday?.getOrNull(1) ?: 0 >= c.reviewsPerDay,
           )
@@ -728,6 +753,41 @@ class AnkiDroidBridge(
     return picked.mapNotNull { id ->
       rows[id]?.takeIf { collected.add(id) }?.let { poolCard(it, dueDay = null, dueAtSecs = null) }
     }
+  }
+
+  /**
+   * The first [wanted] new cards by queue position (id to position) past position [after], read in
+   * growing `prop:pos` windows. AnkiDroid builds every result row separately, so listing a 5000-card deck's whole new
+   * queue took 35 s on a Pixel 8 Pro; windows cost about what they return.
+   */
+  private fun searchNewCardPositions(
+    deckSelector: String,
+    wanted: Int,
+    after: Long,
+  ): List<Pair<Long, Long>> {
+    val found = mutableListOf<Pair<Long, Long>>()
+    var below = after
+    var window = NEW_POSITION_WINDOW
+    // Growth is capped so one window can't swallow a large part of the deck at once.
+    val maxWindow = 4L * wanted + NEW_POSITION_WINDOW
+    while (found.size < wanted && below < MAX_NEW_POSITION) {
+      val upTo = below + window
+      val rows =
+        searchCardPositions(
+          "is:new -is:suspended -is:buried prop:pos>$below prop:pos<=$upTo $deckSelector"
+        )
+      found += rows
+      below = upTo
+      // Empty stretches (cards already studied) double the window; once new cards turn up, ask for
+      // about what is still missing.
+      window =
+        if (rows.isEmpty()) {
+          minOf(window * 2, maxWindow)
+        } else {
+          maxOf(NEW_POSITION_WINDOW, 2L * (wanted - found.size))
+        }
+    }
+    return found.distinctBy { it.first }.sortedBy { it.second }.take(wanted)
   }
 
   /** How many cards match [search], without rendering them; null if the search failed. */

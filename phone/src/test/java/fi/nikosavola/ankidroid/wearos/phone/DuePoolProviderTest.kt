@@ -183,6 +183,19 @@ class DuePoolProviderTest {
   }
 
   @Test
+  fun `new cards are read in position windows, not as the whole deck`() {
+    provider.dueCounts = "[0,1,2]"
+    // Cards far apart in position, as in a deck whose early cards were studied long ago.
+    provider.newCards = (0L until 40L).map { FakeCardRow(1000L + it, 5000L + it, 0, due = 9000L + it * 50) }
+
+    val pool = bridge().fetchDuePool(DeckId(DECK_ID), todayLimit = 20)
+
+    val shipped = pool.cards.map { it.id }.filter { it >= 1000L }
+    assertEquals("2 a day for the week, in position order", (1000L until 1014L).toList(), shipped)
+    assertTrue("only a window's worth listed", provider.positionRowsServed < 40)
+  }
+
+  @Test
   fun `the pool records the rollover hour and fetch time`() {
     val pool = bridge().fetchDuePool(DeckId(DECK_ID), todayLimit = 20)
 
@@ -229,6 +242,8 @@ class FakeCardsProvider : ContentProvider() {
   var newPerDay = 2
   /** The deck's `deck_count` value; null leaves the column out, like an older AnkiDroid. */
   var dueCounts: String? = null
+  /** New-card rows served to position searches, to check the pool doesn't list the whole deck. */
+  var positionRowsServed = 0
   /** The `limit` the bridge asked the schedule for. */
   var scheduleLimit: Int? = null
 
@@ -303,6 +318,13 @@ class FakeCardsProvider : ContentProvider() {
     return (newCards + learningCards).filter { it.id in ids }
   }
 
+  /** Anki's `prop:pos>a prop:pos<=b` filter on a new card's position, when the search has one. */
+  private fun inPositionWindow(search: String, position: Long): Boolean {
+    val above = Regex("prop:pos>(-?\\d+)").find(search)?.groupValues?.get(1)?.toLong()
+    val upTo = Regex("prop:pos<=(-?\\d+)").find(search)?.groupValues?.get(1)?.toLong()
+    return (above == null || position > above) && (upTo == null || position <= upTo)
+  }
+
   private fun dueOffset(search: String): Long? =
     search.substringAfter("prop:due=").takeWhile { it.isDigit() }.toLongOrNull()
 
@@ -312,7 +334,8 @@ class FakeCardsProvider : ContentProvider() {
     val rows =
       when {
         search.contains("is:learn") -> learningCards
-        search.contains("is:new") -> newCards
+        search.contains("is:new") ->
+          newCards.filter { inPositionWindow(search, it.due) }.also { positionRowsServed += it.size }
         search.startsWith("cid:") -> renderedRows(search)
         search.contains("prop:due=") -> dueCardsByOffset[dueOffset(search)] ?: emptyList()
         else -> emptyList()
