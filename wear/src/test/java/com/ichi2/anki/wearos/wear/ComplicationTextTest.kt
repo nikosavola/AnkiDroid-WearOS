@@ -25,4 +25,21 @@ class ComplicationTextTest {
     assertEquals("42", text)
     assertEquals("42 cards due", description)
   }
+
+  @Test
+  fun longText_addsEtaOnlyWhenSomethingIsDue() {
+    assertEquals("12 due, ~6 min to finish", dueLongText(12, "~6 min to finish"))
+    assertEquals("No cards due", dueLongText(0, ""))
+  }
+
+  @Test
+  fun progressRange_isDoneOverDonePlusDue() {
+    assertEquals(28f to 40f, todayProgressRange(reviewedToday = 28, due = 12))
+    assertEquals(0f to 5f, todayProgressRange(reviewedToday = 0, due = 5))
+  }
+
+  @Test
+  fun progressRange_nothingAtAllReadsAsCompleteAndKeepsMaxAboveMin() {
+    assertEquals(1f to 1f, todayProgressRange(reviewedToday = 0, due = 0))
+  }
 }

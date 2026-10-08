@@ -1,11 +1,20 @@
 package com.ichi2.anki.wearos.wear
 
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.foundation.CurvedTextStyle
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
@@ -59,7 +68,7 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
   PrefetchUpcomingImages(session, card.id)
   ScreenScaffold(scrollState = scrollState, timeText = reviewTimeText) {
     if (!isRevealed) {
-      ReviewFront(session, card, displayFront, curvedStyle, scrollState) {
+      ReviewFront(session, card, displayFront, cleanFront, curvedStyle, scrollState) {
         session.revealAnswer()
         isRevealed = true
       }
@@ -69,6 +78,8 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
         card,
         displayFront,
         displayBack,
+        cleanFront,
+        cleanBack,
         scrollState,
         cardStartTime,
         gradeEnabled = !isAnswering,
@@ -79,10 +90,53 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
           // Confirm the grade with a short haptic tick (eyes-free / glanceable feedback).
           haptics.performHapticFeedback(HapticFeedbackType.LongPress)
           // Answers just buffer locally here; they sync on the Finished screen, the deck-screen
-          // "Sync N reviews" action, or background sync — not after every grade (too noisy).
+          // "Sync N reviews" action, or background sync, not after every grade (too noisy).
           answerCardSafely(session, ease, duration) { isAnswering = false }
         }
       }
     }
+  }
+}
+
+/** Undo the previous grade: a small glyph with a full 48dp touch target around it. */
+@Composable
+internal fun UndoButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
+  Box(
+    modifier =
+      modifier.size(48.dp).clickable(onClickLabel = "Undo last grade", role = Role.Button) {
+        onClick()
+      },
+    contentAlignment = Alignment.Center,
+  ) {
+    Icon(
+      painter = painterResource(R.drawable.ic_undo),
+      contentDescription = "Undo",
+      tint = MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.size(16.dp),
+    )
+  }
+}
+
+/** One card side: the phone-rendered image read out as [spokenText], else the HTML fallback. */
+@Composable
+internal fun CardSide(
+  image: SideImage,
+  fallbackHtml: String,
+  spokenText: String,
+  fontScale: Float,
+  cardFont: WatchSettings.CardFont,
+  modifier: Modifier = Modifier,
+) {
+  when (image) {
+    is SideImage.Ready ->
+      Image(
+        bitmap = image.bitmap,
+        contentDescription = spokenText,
+        modifier = modifier.fillMaxWidth(),
+        contentScale = ContentScale.Fit,
+      )
+    SideImage.None ->
+      HtmlText(html = fallbackHtml, fontScale = fontScale, cardFont = cardFont, modifier = modifier)
+    SideImage.Loading -> Unit
   }
 }

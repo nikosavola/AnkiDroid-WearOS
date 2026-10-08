@@ -1,15 +1,18 @@
 package com.ichi2.anki.wearos.wear
 
+import android.annotation.SuppressLint
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,13 +23,16 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.semantics.Role
+import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.viewModelScope
 import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
 import androidx.wear.compose.foundation.AnchorType
 import androidx.wear.compose.foundation.CurvedDirection
 import androidx.compose.foundation.layout.size
-import androidx.compose.ui.res.painterResource
 import androidx.wear.compose.foundation.CurvedLayout
 import androidx.wear.compose.foundation.CurvedModifier
 import androidx.wear.compose.foundation.CurvedTextStyle
@@ -37,7 +43,6 @@ import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.ButtonGroup
 import androidx.wear.compose.material3.CompactButton
-import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
@@ -51,7 +56,6 @@ import androidx.wear.compose.navigation3.rememberSwipeDismissableSceneStrategy
 import com.google.android.gms.wearable.Wearable
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
@@ -95,8 +99,19 @@ class MainActivity : ComponentActivity() {
     internal const val EXTRA_OPEN_DECK_ID = "open_deck_id"
   }
 
-  internal var reviewSession by mutableStateOf<ReviewSession?>(null)
-  internal var cardCompletedTrigger by mutableStateOf(0)
+  // Deck-list, screen-stack and live-session state lives in the ViewModel so it survives
+  // recreation; this Activity stays the review/sync controller (TTS, Data Layer, receiver).
+  internal val vm: WatchViewModel by viewModels()
+
+  internal val reviewSession: ReviewSession?
+    get() = vm.reviewSession
+
+  internal var cardCompletedTrigger: Int
+    get() = vm.cardCompletedTrigger
+    set(value) {
+      vm.cardCompletedTrigger = value
+    }
+
   internal var outstandingAnswersCount by mutableStateOf(0)
   // Age (seconds) of the oldest un-synced review, to nudge the user when reviews go stale.
   internal var outstandingOldestSecs by mutableLongStateOf(0L)
@@ -105,8 +120,7 @@ class MainActivity : ComponentActivity() {
   internal var ttsEnabled by mutableStateOf(false)
 
   // User settings mirrored into Compose state (persisted via WatchSettings). Changing any of these
-  // recomposes the theme / card text immediately.
-  internal var themeMode by mutableStateOf(WatchSettings.ThemeMode.DARK)
+  // recomposes the card text immediately.
   internal var fontScale by mutableFloatStateOf(1.0f)
   internal var speechRate by mutableFloatStateOf(1.0f)
   internal var cardFont by mutableStateOf(WatchSettings.CardFont.DEFAULT)
@@ -115,26 +129,33 @@ class MainActivity : ComponentActivity() {
   internal var hideProgress by mutableStateOf(false)
   internal var coloredGradeButtons by mutableStateOf(true)
 
-  // Navigation state: the back stack of screens. Always starts on the root deck picker; descending
-  // into folders, opening settings, entering a review and its card screen each push an entry.
-  internal val backStack = mutableStateListOf<WatchScreen>(WatchScreen.Decks(""))
-
-  // Deck-list + settings state lives in the ViewModel (survives config changes); this Activity stays
-  // the review/sync controller (live session, TTS, Data Layer, receiver).
-  internal val vm: WatchViewModel by viewModels()
+  // The back stack of screens, rooted at the deck picker; descending into folders, opening settings,
+  // entering a review and its card screen each push an entry.
+  internal val backStack: MutableList<WatchScreen>
+    get() = vm.backStack
 
   // Deck the user tapped to download; loaded automatically once its batch arrives from the phone.
   // Compose state so the UI can show a sync-progress arc while a download is in flight.
   internal var pendingDeckId: Long? by mutableStateOf(null)
   // The deck currently open in a review session (for requesting more new cards of it).
-  internal var activeDeckId by mutableStateOf<Long?>(null)
+  internal val activeDeckId: Long?
+    get() = vm.activeDeckId
   // Whether the pending request was for new cards, so we can report when none came back.
   internal var pendingIsNew = false
   // Phone-communication failure to surface as a transient M3 dialog; null means no failure showing.
   internal var phoneFailure by mutableStateOf<String?>(null)
 
   internal var tts: TextToSpeech? = null
-  internal val scope = CoroutineScope(Dispatchers.Main)
+  internal val scope
+    get() = lifecycleScope
+
+  // The check reads fragment 1.1.0 off the compile classpath (via the complications library), but
+  // this is a ComponentActivity, not a FragmentActivity, so the old-fragment bug can't occur.
+  @SuppressLint("InvalidFragmentVersionForActivityResult")
+  private val notificationPermission =
+    registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+      if (granted) refreshOngoing()
+    }
 
   internal val syncReceiver =
     object : BroadcastReceiver() {
@@ -180,6 +201,7 @@ class MainActivity : ComponentActivity() {
     }
 
   override fun onCreate(savedInstanceState: Bundle?) {
+    installSplashScreen()
     super.onCreate(savedInstanceState)
 
     // Rust core database is initialised by WearApp.onCreate.
@@ -198,7 +220,6 @@ class MainActivity : ComponentActivity() {
       }
 
     // 2. Load persisted user settings (theme, card font) into Compose state.
-    themeMode = WatchSettings.themeMode(this)
     fontScale = WatchSettings.fontScale(this)
     cardFont = WatchSettings.cardFont(this)
     keepScreenOn = WatchSettings.keepScreenOn(this)
@@ -238,7 +259,8 @@ class MainActivity : ComponentActivity() {
     // AppScaffold paints the background; the window's own would be a second full-screen fill under
     // it on every frame. The starting window still uses the theme background.
     window.setBackgroundDrawable(null)
-    // A recreated activity already restored its screens; only a fresh launch opens the deck.
+    // After process death the relaunch intent still carries the deck extra; the ViewModel has
+    // already restored that session, so only a fresh launch opens the deck from it.
     if (savedInstanceState == null) openDeckFrom(intent)
   }
 
@@ -252,6 +274,8 @@ class MainActivity : ComponentActivity() {
     val deckId = intent.getLongExtra(EXTRA_OPEN_DECK_ID, -1L)
     if (deckId < 0) return
     intent.removeExtra(EXTRA_OPEN_DECK_ID)
+    // The ongoing-activity chip carries the deck too; tapping it must not restart a live session.
+    if (vm.hasSessionFor(deckId)) return
     loadDeckSession(deckId)
   }
 
@@ -260,9 +284,8 @@ class MainActivity : ComponentActivity() {
     unregisterReceiver(syncReceiver)
     tts?.stop()
     tts?.shutdown()
-    // ReviewSession is a UniFFI Object backed by a Rust handle the JVM GC can't size; free it
-    // explicitly rather than leaking the native allocation until a GC eventually runs.
-    clearSession()
+    // The ViewModel frees the native session; recreation must keep it.
+    if (isFinishing && !isChangingConfigurations) ReviewOngoing.hide(this)
   }
 
   override fun onStop() {
@@ -270,6 +293,9 @@ class MainActivity : ComponentActivity() {
     // Leaving the app mid-session still hands the buffered grades over, rather than waiting for the
     // next launch.
     AnswerUploadWorker.scheduleNow(this)
+    // Grades change the due counts the tile, complication and widget show; refresh them once on the
+    // way out instead of after every card.
+    WearSurfaceUpdater.requestRefresh(this)
   }
 
   /** Push a screen onto the back stack (folders, settings, session, review). */
@@ -292,9 +318,27 @@ class MainActivity : ComponentActivity() {
 
   /** Free the native [ReviewSession] and drop its [WatchScreen.Session]/[WatchScreen.Review] entries. */
   internal fun clearSession() {
-    reviewSession?.destroy()
-    reviewSession = null
+    vm.replaceSession(null, null)
     backStack.removeAll { it == WatchScreen.Session || it == WatchScreen.Review }
+    ReviewOngoing.hide(this)
+  }
+
+  /** Mirror the open session into the ongoing activity; hidden once the queue is done. */
+  internal fun refreshOngoing() {
+    val session = reviewSession
+    val deckId = activeDeckId
+    if (session == null || deckId == null || session.getCurrentCard() == null) {
+      ReviewOngoing.hide(this)
+    } else {
+      ReviewOngoing.show(this, deckId, session.getDeckName(), session.getProgressString())
+    }
+  }
+
+  /** Ask for notifications in context (starting a review), which the ongoing activity needs. */
+  internal fun requestReviewNotificationsIfNeeded() {
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !ReviewOngoing.canPost(this)) {
+      notificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
+    }
   }
 
   /**
@@ -303,17 +347,16 @@ class MainActivity : ComponentActivity() {
    * loaded.
    */
   private fun loadDeckSession(deckId: Long, toastIfEmptyNew: Boolean = false) {
-    scope.launch {
+    val app = applicationContext
+    // viewModelScope: a load in flight across a recreation still lands in the kept session.
+    vm.viewModelScope.launch {
       try {
         val nowMs = systemWatchClock.nowMs()
         val offset = utcOffsetSecs(nowMs)
         // Building today's queue from the pool is blocking SQLite work; keep it off the main thread.
         val session =
           withContext(Dispatchers.IO) { ReviewSession.fromPool(deckId, nowMs, offset) }
-        // Free any previous native session before replacing it.
-        reviewSession?.destroy()
-        reviewSession = session
-        activeDeckId = deckId
+        vm.replaceSession(session, deckId)
         // A fresh session lands on the deck overview: drop any Review entry left from the previous
         // one, then push Session unless it is already on top (a learn-new-cards reload).
         backStack.removeAll { it == WatchScreen.Review }
@@ -324,7 +367,7 @@ class MainActivity : ComponentActivity() {
         )
         if (toastIfEmptyNew && session.getTotalCards() == 0) {
           Toast.makeText(
-              this@MainActivity,
+              app,
               "No studyable new cards (multi-template notes are skipped).",
               Toast.LENGTH_LONG,
             )
@@ -334,7 +377,7 @@ class MainActivity : ComponentActivity() {
         throw e
       } catch (e: Exception) {
         Log.e(TAG, "Failed to load pooled deck $deckId: ${e.message}", e)
-        Toast.makeText(this@MainActivity, "Could not open deck.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(app, "Could not open deck.", Toast.LENGTH_SHORT).show()
       }
     }
   }
@@ -533,7 +576,9 @@ class MainActivity : ComponentActivity() {
   }
 
   fun answerCardSafely(session: ReviewSession, ease: Int, duration: Long, onDone: () -> Unit = {}) {
-    scope.launch {
+    val app = applicationContext
+    // viewModelScope so a grade in flight across a recreation still moves the kept session on.
+    vm.viewModelScope.launch {
       try {
         Log.d(TAG, "Answering card with ease: $ease, duration: $duration")
         kotlinx.coroutines.withContext(Dispatchers.IO) { session.answerCard(ease, duration) }
@@ -542,7 +587,7 @@ class MainActivity : ComponentActivity() {
         vm.loadDecks()
         // Hand the grade over soon without putting on every single answer (each put triggers a full
         // write-back pass on the phone).
-        AnswerUploadWorker.scheduleDebounced(this@MainActivity)
+        AnswerUploadWorker.scheduleDebounced(app)
         cardCompletedTrigger++ // Increment to force recomposition of the review screen!
       } catch (e: CancellationException) {
         throw e
@@ -550,10 +595,7 @@ class MainActivity : ComponentActivity() {
         // The core restores the card on a failed buffer write (loud-failure contract) so the user
         // can re-grade; tell them, otherwise the screen just sits on the same card looking dead.
         Log.e(TAG, "Failed to answer card securely via Rust FFI: ${e.message}", e)
-        launch(Dispatchers.Main) {
-          Toast.makeText(this@MainActivity, "Couldn't save review, try again", Toast.LENGTH_SHORT)
-            .show()
-        }
+        Toast.makeText(app, "Couldn't save review, try again", Toast.LENGTH_SHORT).show()
       } finally {
         onDone()
       }
@@ -564,7 +606,7 @@ class MainActivity : ComponentActivity() {
    * Undo the last grade: Rust steps the queue back and drops the buffered answer; refresh the UI.
    */
   fun undoLastAnswer(session: ReviewSession) {
-    scope.launch {
+    vm.viewModelScope.launch {
       try {
         withContext(Dispatchers.IO) { session.undoLastAnswer() }
         updateOutstandingCount()
@@ -587,7 +629,7 @@ class MainActivity : ComponentActivity() {
 
   @Composable
   fun WearAppScreen() {
-    AnkiWearTheme(themeMode) {
+    AnkiWearTheme {
       Box(modifier = Modifier.fillMaxSize()) {
         AppScaffold {
           // Swipe-right-to-dismiss + predictive back come from the Wear scene strategy; hardware and
@@ -609,6 +651,7 @@ class MainActivity : ComponentActivity() {
           // screen is on top.
           PhoneFailureDialog(phoneFailure) { phoneFailure = null }
         }
+        LaunchedEffect(reviewSession, cardCompletedTrigger) { refreshOngoing() }
         // While a deck/new-card batch is downloading from the phone, sweep an indeterminate arc
         // around the round edge (the Data Layer transfer exposes no fraction). Cleared when the
         // batch arrives or the request times out.
@@ -691,6 +734,7 @@ class MainActivity : ComponentActivity() {
     session: ReviewSession,
     card: WearosCard,
     displayFront: String,
+    spokenFront: String,
     curvedStyle: androidx.wear.compose.foundation.CurvedTextStyle,
     scrollState: androidx.compose.foundation.ScrollState,
     onReveal: () -> Unit,
@@ -703,6 +747,8 @@ class MainActivity : ComponentActivity() {
           .clickable(
             interactionSource = remember { MutableInteractionSource() },
             indication = null,
+            onClickLabel = "Show answer",
+            role = Role.Button,
           ) {
             onReveal()
           }
@@ -714,6 +760,7 @@ class MainActivity : ComponentActivity() {
         cardId = card.id,
         side = "front",
         fallbackHtml = displayFront,
+        spokenText = spokenFront,
         modifier = Modifier.fillMaxWidth(),
       )
     }
@@ -729,27 +776,13 @@ class MainActivity : ComponentActivity() {
         curvedText(text = "Tap to show answer", style = curvedStyle, color = hintColor)
       }
     }
-    // Undo the previous grade (steps back a card and drops its buffered answer). A bare icon with
-    // no background, tucked just left of the progress text at the top. Drawn LAST so it sits above
-    // the full-screen reveal-clickable Column, which would otherwise eat the tap. The padding both
-    // spaces the icon and widens the tap target. A vector rather than a text arrow, which pulled in
-    // a symbol fallback font on the first card's frame.
+    // Undo the previous grade, tucked just left of the progress text at the top. Drawn LAST so it
+    // sits above the full-screen reveal-clickable Column, which would otherwise eat the tap. The
+    // 48dp target is centered where the 16dp glyph always sat.
     if (session.canUndo()) {
-      Icon(
-        painter = painterResource(R.drawable.ic_undo),
-        contentDescription = "Undo",
-        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier =
-          Modifier.align(Alignment.TopCenter)
-            .offset(x = (-30).dp, y = 8.dp)
-            .clickable(
-              interactionSource = remember { MutableInteractionSource() },
-              indication = null,
-            ) {
-              undoLastAnswer(session)
-            }
-            .padding(8.dp)
-            .size(16.dp),
+      UndoButton(
+        onClick = { undoLastAnswer(session) },
+        modifier = Modifier.align(Alignment.TopCenter).offset(x = (-30).dp),
       )
     }
   }
@@ -761,6 +794,8 @@ class MainActivity : ComponentActivity() {
     card: WearosCard,
     displayFront: String,
     displayBack: String,
+    spokenFront: String,
+    spokenBack: String,
     scrollState: androidx.compose.foundation.ScrollState,
     cardStartTime: Long,
     gradeEnabled: Boolean,
@@ -782,6 +817,7 @@ class MainActivity : ComponentActivity() {
         cardId = card.id,
         side = "front",
         fallbackHtml = displayFront,
+        spokenText = spokenFront,
         modifier = Modifier.fillMaxWidth(),
       )
       Spacer(
@@ -795,6 +831,7 @@ class MainActivity : ComponentActivity() {
         cardId = card.id,
         side = "back",
         fallbackHtml = displayBack,
+        spokenText = spokenBack,
         modifier = Modifier.fillMaxWidth(),
       )
     }
@@ -811,13 +848,15 @@ class MainActivity : ComponentActivity() {
   /**
    * Renders the phone-rendered bitmap for a card side if the watch has one, else the HTML. The
    * bitmap is decoded off the main thread; until it is ready (only on a cache miss, prefetching
-   * usually covers it) the side draws nothing rather than flashing the HTML fallback.
+   * usually covers it) the side draws nothing rather than flashing the HTML fallback. [spokenText]
+   * is the side's plain text, which TalkBack reads for the image.
    */
   @Composable
   fun CardSideContent(
     cardId: Long,
     side: String,
     fallbackHtml: String,
+    spokenText: String,
     modifier: Modifier = Modifier,
   ) {
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -834,18 +873,7 @@ class MainActivity : ComponentActivity() {
         image = bitmap?.let { SideImage.Ready(it) } ?: SideImage.None
       }
     }
-    when (val current = image) {
-      is SideImage.Ready ->
-        androidx.compose.foundation.Image(
-          bitmap = current.bitmap,
-          contentDescription = "Card side $side",
-          modifier = modifier.fillMaxWidth(),
-          contentScale = androidx.compose.ui.layout.ContentScale.Fit,
-        )
-      SideImage.None ->
-        HtmlText(html = fallbackHtml, fontScale = fontScale, cardFont = cardFont, modifier = modifier)
-      SideImage.Loading -> Unit
-    }
+    CardSide(image, fallbackHtml, spokenText, fontScale, cardFont, modifier)
   }
 
   /** Width to decode card images at; the window size can still read 0 before the first layout. */

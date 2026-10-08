@@ -50,6 +50,9 @@ private const val GAP_SWEEP_DEG = 3f
 // The tap strip covers the bottom this fraction of the screen (where the arc sits), so it doesn't
 // swallow taps meant for the card text / reveal above it.
 private const val TAP_STRIP_FRACTION = 0.42f
+// Tint of the pill fill over the background. Kept low so the full-strength grade color on top
+// clears 4.5:1 even for Again's red at 11sp (it was 4.07:1 at 0.32).
+internal const val PILL_FILL_ALPHA = 0.2f
 
 /**
  * Grade buttons as curved segments hugging the bottom bezel: an arc background
@@ -123,14 +126,14 @@ fun GradeEdgeButtons(
             angularAlignment = CurvedAlignment.Angular.Center,
             modifier =
               CurvedModifier.background(
-                color = pill.copy(alpha = 0.32f).compositeOver(background),
+                color = pill.copy(alpha = PILL_FILL_ALPHA).compositeOver(background),
                 cap = StrokeCap.Butt,
               )
                 .padding(angular = 10.dp, radial = 4.dp),
           ) {
             curvedText(text = g.text, color = pill, fontSize = 13.sp)
             labels.getOrNull(i)?.let { label ->
-              curvedText(text = label, color = pill.copy(alpha = 0.8f), fontSize = 11.sp)
+              curvedText(text = label, color = pill, fontSize = 11.sp)
             }
           }
         }
