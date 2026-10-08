@@ -102,6 +102,7 @@ class AnkiDroidBridge(
         COL_FSRS_DIFFICULTY,
         COL_SM2_FACTOR,
         COL_LAST_REVIEW_SECS,
+        COL_REPS,
       )
 
     // Deck scheduling config lives in the deck's OPTIONS column as rslib's schema11 JSON.
@@ -309,7 +310,16 @@ class AnkiDroidBridge(
         },
       elapsedDays = elapsedDaysFor(cursor),
       lastReviewSecs = lastReviewSecsFor(cursor),
+      fuzzSeed = fuzzSeedFor(cursor),
     )
+  }
+
+  /** rslib's fuzz seed for the card's next answer, card id + reps; null when `reps` is missing. */
+  private fun fuzzSeedFor(cursor: Cursor): Long? {
+    fun longAt(name: String): Long? =
+      cursor.getColumnIndex(name).takeIf { it != -1 && !cursor.isNull(it) }?.let(cursor::getLong)
+    val id = longAt("_id") ?: return null
+    return longAt(COL_REPS)?.let { id + it }
   }
 
   /** The card's raw last-review epoch seconds, or 0 when unknown. */
