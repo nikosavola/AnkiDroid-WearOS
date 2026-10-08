@@ -1,5 +1,8 @@
 //! Offline per-grade interval previews from the deck's own scheduling config.
 //!
+//! Ports scheduling rules from Anki's rslib (`scheduler/states`, Copyright Ankitects Pty Ltd and
+//! contributors, AGPL-3.0-or-later).
+//!
 //! The phone ships AnkiDroid's real per-button interval labels with the due batch, and those are
 //! exact. They go stale the moment a card is graded and requeued inside the session, though: the
 //! requeued entry keeps the labels fetched before the grade, so a card that advanced a learning
