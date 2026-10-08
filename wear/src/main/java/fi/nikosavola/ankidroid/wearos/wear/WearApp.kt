@@ -2,6 +2,8 @@ package fi.nikosavola.ankidroid.wearos.wear
 
 import android.app.Application
 import android.util.Log
+import androidx.wear.compose.foundation.ExperimentalWearFoundationApi
+import androidx.wear.compose.foundation.WearComposeFoundationFlags
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -26,8 +28,12 @@ class WearApp : Application() {
   // so there is nothing to cancel it against.
   private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
+  @OptIn(ExperimentalWearFoundationApi::class)
   override fun onCreate() {
     super.onCreate()
+    // Warped curved text builds and fills a path per glyph; our short labels look the same drawn
+    // along the arc from the glyph cache, which costs far less on a watch CPU and GPU.
+    WearComposeFoundationFlags.isWarpingCurvedTextEnabled = false
     try {
       initDatabase(File(filesDir, BUFFER_DB_NAME).absolutePath)
     } catch (e: Exception) {
