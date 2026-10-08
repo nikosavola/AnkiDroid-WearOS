@@ -127,5 +127,10 @@ class DuePoolTest {
     assertEquals(8, effectiveNewPerDay(0, newQueuedToday = 5, introducedToday = 3, newAvailable = 50))
     assertEquals(20, effectiveNewPerDay(20, newQueuedToday = 2, introducedToday = 0, newAvailable = 2))
     assertEquals(20, effectiveNewPerDay(20, newQueuedToday = null, introducedToday = 3, newAvailable = 9))
+    assertEquals(
+      "a full review day says nothing about the new limit",
+      20,
+      effectiveNewPerDay(20, newQueuedToday = 0, introducedToday = 0, newAvailable = 50, reviewLimitReached = true),
+    )
   }
 }
