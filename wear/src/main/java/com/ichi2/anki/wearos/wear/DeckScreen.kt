@@ -7,6 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.padding
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
@@ -54,9 +55,13 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
         )
       }
       item {
+        // Leaf name only, capped: a long path at a large font size pushed the stats off screen.
         Text(
-          text = session.getDeckName(),
+          text = deckLeafName(session.getDeckName()),
           style = MaterialTheme.typography.titleMedium,
+          textAlign = TextAlign.Center,
+          maxLines = 3,
+          overflow = TextOverflow.Ellipsis,
           modifier = Modifier.padding(start = 12.dp, end = 12.dp, bottom = 4.dp),
         )
       }
