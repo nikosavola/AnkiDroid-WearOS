@@ -73,20 +73,27 @@
                 android:resource="@drawable/tile_preview" />
         </service>
 
-        <!-- Wear OS 7 widget (Glance Wear). Widget action only: the tile above already covers
-             older watches, so no BIND_TILE_PROVIDER compat action here. -->
+        <!-- Wear OS 7 widget (Glance Wear). The carousel's picker only lists BIND_TILE_PROVIDER
+             services, so the widget needs that action too; it stays disabled below API 37 so older
+             watches don't get it as a second tile next to the one above. -->
         <service
             android:name=".DueCardsWidgetService"
+            android:enabled="@bool/widgets_supported"
             android:exported="true"
             android:icon="@mipmap/ic_launcher"
             android:label="@string/due_widget_label"
             android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
             <intent-filter>
                 <action android:name="androidx.glance.wear.action.BIND_WIDGET_PROVIDER" />
+                <action android:name="androidx.wear.tiles.action.BIND_TILE_PROVIDER" />
             </intent-filter>
             <meta-data
                 android:name="androidx.glance.wear.widget.provider"
                 android:resource="@xml/due_cards_widget_info" />
+            <!-- The picker reads the tile preview key, not the provider XML's previewImage. -->
+            <meta-data
+                android:name="androidx.wear.tiles.PREVIEW"
+                android:resource="@drawable/due_widget_picker_preview" />
         </service>
 
         <!-- Watch-face complication showing the due-card count -->
