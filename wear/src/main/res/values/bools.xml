@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Wear OS 7 (API 37) is the first release whose carousel hosts widgets. -->
+    <bool name="widgets_supported">false</bool>
+</resources>
