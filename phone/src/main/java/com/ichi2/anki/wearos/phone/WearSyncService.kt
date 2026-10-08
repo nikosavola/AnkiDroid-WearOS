@@ -196,7 +196,7 @@ class WearSyncService : WearableListenerService() {
         runBlocking {
           try {
             val batch = bridge.fetchNewCards(deckId = DeckId(deckId), limit = count)
-            Log.d(TAG, "Fetched ${batch.cards.size} new cards for '${batch.deckName}'.")
+            Log.d(TAG, "Fetched ${batch.cards.size} new cards for '${redact(batch.deckName)}'.")
             val bytes = serializeDueBatch(AnkiDroidBridge.stripBase64Batch(batch))
 
             val dataClient = Wearable.getDataClient(this@WearSyncService)
@@ -255,7 +255,7 @@ class WearSyncService : WearableListenerService() {
     for (node in nodes) {
       try {
         messageClient.sendMessage(node.id, path, payload.toByteArray()).await()
-        Log.d(TAG, "Sent $path confirmation to node: ${node.displayName}")
+        Log.d(TAG, "Sent $path confirmation to node: ${redact(node.displayName)}")
       } catch (e: Exception) {
         Log.e(TAG, "Failed to send $path to node ${node.id}: ${e.message}")
       }

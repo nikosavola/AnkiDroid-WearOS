@@ -12,9 +12,13 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 
 /**
@@ -39,6 +43,9 @@ class SyncService : Service() {
     // One sync at a time; a second start while running is ignored.
     private val running = AtomicBoolean(false)
 
+    private const val SUCCESS_TIMEOUT_MS = 10 * 60 * 1000L
+    private const val FAILURE_TIMEOUT_MS = 60 * 60 * 1000L
+
     /**
      * Progress percent while pushing decks: setup work occupies 0–15%, then each of the
      * [prePushCap] decks advances the bar up to 95% (the final "done" step sets 100). Extracted as
@@ -53,6 +60,7 @@ class SyncService : Service() {
 
   private val job = SupervisorJob()
   private val scope = CoroutineScope(Dispatchers.IO + job)
+  private var syncJob: Job? = null
 
   override fun onBind(intent: Intent?): IBinder? = null
 
@@ -66,20 +74,38 @@ class SyncService : Service() {
       return START_NOT_STICKY
     }
 
-    scope.launch {
-      try {
-        runSync()
-      } catch (e: Exception) {
-        Log.e(TAG, "Sync failed: ${e.message}", e)
-        publish("Sync failed: ${e.message}", 0, done = true, error = true)
-        notify(buildNotification("Sync failed", 0, indeterminate = false, ongoing = false))
-      } finally {
-        running.set(false)
-        ServiceCompat.stopForeground(this@SyncService, ServiceCompat.STOP_FOREGROUND_DETACH)
-        stopSelf()
+    syncJob =
+      scope.launch {
+        try {
+          runSync()
+        } catch (e: CancellationException) {
+          // onTimeout/onDestroy already reported the stop; don't relabel it as a failure.
+          throw e
+        } catch (e: Exception) {
+          Log.e(TAG, "Sync failed: ${e.message}", e)
+          finish("Sync failed: ${e.message}", "Sync failed", error = true)
+        } finally {
+          running.set(false)
+          stopSelf()
+        }
       }
-    }
     return START_NOT_STICKY
+  }
+
+  /**
+   * dataSync foreground services get a 6h/day budget on targetSdk 35+; when it runs out the system
+   * calls this and expects the service to stop within seconds or it crashes the app.
+   */
+  override fun onTimeout(startId: Int, fgsType: Int) {
+    Log.w(TAG, "dataSync time limit reached; stopping sync.")
+    syncJob?.cancel()
+    finish(
+      "Sync paused: Android's background time limit was reached. Try again later.",
+      "Sync paused",
+      error = true,
+    )
+    running.set(false)
+    stopSelf()
   }
 
   private suspend fun runSync() {
@@ -88,13 +114,33 @@ class SyncService : Service() {
     val summary = DeckSync.run(applicationContext) { text, percent -> progress(text, percent) }
     val summaryText =
       summary?.message() ?: "Nothing to sync — AnkiDroid not reachable and mock mode off."
-    publish(summaryText, 100, done = true, error = false)
-    notify(buildNotification(summaryText, 100, indeterminate = false, ongoing = false))
+    currentCoroutineContext().ensureActive()
+    finish(summaryText, summaryText, error = false)
     Log.i(TAG, summaryText)
+  }
+
+  /**
+   * Drop the foreground state first, then post the result as an ordinary notification: the
+   * timeout and auto-cancel only apply once it is no longer the service's foreground notification.
+   */
+  private fun finish(inAppText: String, notificationText: String, error: Boolean) {
+    publish(inAppText, if (error) 0 else 100, done = true, error = error)
+    ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+    notify(
+      buildNotification(
+        notificationText,
+        100,
+        indeterminate = false,
+        ongoing = false,
+        timeoutMs = if (error) FAILURE_TIMEOUT_MS else SUCCESS_TIMEOUT_MS,
+      )
+    )
   }
 
   /** Update both the notification and the in-app broadcast for a mid-sync step. */
   private fun progress(text: String, percent: Int) {
+    // A step finishing after onTimeout must not re-post an ongoing notification nobody clears.
+    if (syncJob?.isActive != true) return
     notify(buildNotification(text, percent, indeterminate = false, ongoing = true))
     publish(text, percent, done = false, error = false)
   }
@@ -116,6 +162,7 @@ class SyncService : Service() {
     percent: Int,
     indeterminate: Boolean,
     ongoing: Boolean = true,
+    timeoutMs: Long? = null,
   ): Notification {
     val contentIntent =
       android.app.PendingIntent.getActivity(
@@ -129,7 +176,7 @@ class SyncService : Service() {
     return NotificationCompat.Builder(this, CHANNEL_ID)
       .setContentTitle("Syncing cards to watch")
       .setContentText(text)
-      .setSmallIcon(android.R.drawable.stat_sys_upload)
+      .setSmallIcon(R.drawable.ic_stat_sync)
       .setContentIntent(contentIntent)
       .setOngoing(ongoing)
       .setOnlyAlertOnce(true)
@@ -141,7 +188,9 @@ class SyncService : Service() {
           setStyle(progressStyle(percent, indeterminate))
         } else {
           setProgress(0, 0, false)
+          setAutoCancel(true)
         }
+        timeoutMs?.let { setTimeoutAfter(it) }
       }
       .build()
   }
