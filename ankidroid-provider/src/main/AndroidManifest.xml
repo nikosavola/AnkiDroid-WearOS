@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- AnkiDroid only serves its flashcard provider to apps holding this permission. -->
+    <uses-permission android:name="com.ichi2.anki.permission.READ_WRITE_DATABASE" />
+
+    <!-- Package visibility (API 30+): without it the provider can't be resolved. -->
+    <queries>
+        <package android:name="com.ichi2.anki" />
+    </queries>
+
+</manifest>

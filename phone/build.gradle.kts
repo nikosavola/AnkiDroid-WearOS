@@ -71,6 +71,7 @@ tasks
 ksp { arg("appfunctions:aggregateAppFunctions", "true") }
 
 dependencies {
+  implementation(project(":ankidroid-provider"))
   implementation(libs.kotlin.stdlib)
   implementation(libs.androidx.core.ktx)
   implementation(libs.androidx.lifecycle.runtime.ktx)

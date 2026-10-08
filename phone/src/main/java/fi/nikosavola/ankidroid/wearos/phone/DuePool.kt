@@ -1,5 +1,6 @@
 package fi.nikosavola.ankidroid.wearos.phone
 
+import fi.nikosavola.ankidroid.provider.DueCounts
 import uniffi.wearos_core.WearosCard
 import uniffi.wearos_core.WearosDueBatch
 
@@ -16,10 +17,7 @@ internal const val MAX_POOL_CARDS = 400
 internal const val MAX_TODAY_QUEUE = 200
 
 /** A deck's `deck_count` value (`[learn, review, new]`), or null if it isn't three integers. */
-internal fun parseDueCounts(raw: String?): List<Int>? {
-  val nums = Regex("-?\\d+").findAll(raw ?: return null).map { it.value.toInt() }.toList()
-  return nums.takeIf { it.size == 3 && it.all { n -> n >= 0 } }
-}
+internal fun parseDueCounts(raw: String?): List<Int>? = DueCounts.parse(raw)?.toList()
 
 /**
  * Whether a schedule fetch of [requested] cards that returned [fetched] holds AnkiDroid's whole
