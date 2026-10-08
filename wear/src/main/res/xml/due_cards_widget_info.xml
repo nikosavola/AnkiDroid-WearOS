@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Unprefixed attributes are what androidx.glance.wear's parser reads. -->
+<wearwidget-provider
+    description="@string/due_widget_description"
+    icon="@mipmap/ic_launcher"
+    label="@string/due_widget_label"
+    preferredType="SMALL">
+
+    <container
+        type="SMALL"
+        previewImage="@drawable/due_widget_preview_small" />
+
+    <container
+        type="LARGE"
+        previewImage="@drawable/due_widget_preview_large" />
+
+</wearwidget-provider>

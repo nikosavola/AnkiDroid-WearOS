@@ -40,5 +40,6 @@ internal object WearSurfaceUpdater {
     } catch (e: Exception) {
       Log.w(TAG, "Complication update request failed: ${e.message}")
     }
+    DueCardsWidget.requestUpdate(context)
   }
 }

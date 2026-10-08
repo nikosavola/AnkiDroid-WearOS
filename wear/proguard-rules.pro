@@ -8,3 +8,8 @@
 -keep class * implements com.sun.jna.Callback { *; }
 -keep class * extends com.sun.jna.Structure { *; }
 -dontwarn java.awt.*
+
+# Glance Wear ships no consumer rules and maps widget services to widgets by reading this
+# annotation reflectively (GlanceWearWidgetManager), so keep it on the services.
+-keep class androidx.glance.wear.AssociateWithGlanceWearWidget
+-keep @androidx.glance.wear.AssociateWithGlanceWearWidget class *

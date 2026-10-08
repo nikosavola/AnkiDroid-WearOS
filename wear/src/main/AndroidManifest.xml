@@ -66,6 +66,22 @@
                 android:resource="@mipmap/ic_launcher" />
         </service>
 
+        <!-- Wear OS 7 widget (Glance Wear). Widget action only: the tile above already covers
+             older watches, so no BIND_TILE_PROVIDER compat action here. -->
+        <service
+            android:name=".DueCardsWidgetService"
+            android:exported="true"
+            android:icon="@mipmap/ic_launcher"
+            android:label="@string/due_widget_label"
+            android:permission="com.google.android.wearable.permission.BIND_TILE_PROVIDER">
+            <intent-filter>
+                <action android:name="androidx.glance.wear.action.BIND_WIDGET_PROVIDER" />
+            </intent-filter>
+            <meta-data
+                android:name="androidx.glance.wear.widget.provider"
+                android:resource="@xml/due_cards_widget_info" />
+        </service>
+
         <!-- Watch-face complication showing the due-card count -->
         <service
             android:name=".AnkiComplicationService"

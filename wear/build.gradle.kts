@@ -95,6 +95,14 @@ dependencies {
   implementation(libs.wear.protolayout)
   implementation(libs.wear.protolayout.core)
   implementation(libs.wear.watchface.complications.data.source)
+  implementation(libs.glance.wear)
+  implementation(libs.glance.wear.core)
+  implementation(libs.remote.creation.compose)
+  implementation(libs.remote.core)
+  implementation(libs.wear.compose.remote.material3)
+  // Pulls ui-tooling (and its exported PreviewActivity), so keep it out of release builds.
+  debugImplementation(libs.glance.wear.tooling.preview)
+  testImplementation(libs.glance.wear.tooling.preview)
 
   implementation(libs.play.services.wearable)
   implementation(libs.androidx.work.runtime)

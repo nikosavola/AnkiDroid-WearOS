@@ -21,6 +21,9 @@ androidx-test-ext-junit = "1.2.1"
 compose = "1.13.0-alpha03"
 # Stable line; only needs Compose 1.9+, so it sits fine under the 1.13 alpha.
 material3-adaptive = "1.3.0"
+# Alpha: Wear OS 7 widgets (Glance Wear + Remote Compose); glance-wear pins remote-* to this.
+glance-wear = "1.0.0-alpha20"
+remote-compose = "1.0.0-alpha21"
 
 [libraries]
 androidx-appfunctions = { module = "androidx.appfunctions:appfunctions", version.ref = "appfunctions" }
@@ -62,6 +65,12 @@ wear-watchface-complications-data-source = { group = "androidx.wear.watchface", 
 # [1.4.2], so pin the core explicitly to keep resolution unambiguous against tiles' own core dep.
 wear-protolayout = { group = "androidx.wear.protolayout", name = "protolayout-material3", version = "1.4.2" }
 wear-protolayout-core = { group = "androidx.wear.protolayout", name = "protolayout", version = "1.4.2" }
+glance-wear = { group = "androidx.glance.wear", name = "wear", version.ref = "glance-wear" }
+glance-wear-core = { group = "androidx.glance.wear", name = "wear-core", version.ref = "glance-wear" }
+glance-wear-tooling-preview = { group = "androidx.glance.wear", name = "wear-tooling-preview", version.ref = "glance-wear" }
+remote-creation-compose = { group = "androidx.compose.remote", name = "remote-creation-compose", version.ref = "remote-compose" }
+remote-core = { group = "androidx.compose.remote", name = "remote-core", version.ref = "remote-compose" }
+wear-compose-remote-material3 = { group = "androidx.wear.compose.remote", name = "remote-material3", version = "1.0.0-alpha13" }
 
 # Testing
 junit = { group = "junit", name = "junit", version.ref = "junit" }
