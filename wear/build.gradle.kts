@@ -125,4 +125,6 @@ dependencies {
   // Compose UI testing (runs under Robolectric).
   testImplementation(libs.compose.ui.test.junit4)
   debugImplementation(libs.compose.ui.test.manifest)
+  androidTestImplementation(libs.androidx.test.ext.junit)
+  androidTestImplementation(libs.androidx.test.runner)
 }
