@@ -3,6 +3,7 @@ plugins {
   // kotlin.android removed: AGP 9 built-in Kotlin (version pinned in the root buildscript
   // classpath).
   alias(libs.plugins.compose.compiler)
+  alias(libs.plugins.ksp)
 }
 
 android {
@@ -71,8 +72,12 @@ kotlin { jvmToolchain(21) }
 // the KGP KotlinCompile type so it holds under AGP 9 built-in Kotlin (no KGP import on the
 // classpath).
 tasks
-  .matching { it.name.startsWith("compile") && it.name.endsWith("Kotlin") }
+  .matching {
+    (it.name.startsWith("compile") || it.name.startsWith("ksp")) && it.name.endsWith("Kotlin")
+  }
   .configureEach { dependsOn(":generateBindings") }
+
+ksp { arg("appfunctions:aggregateAppFunctions", "true") }
 
 dependencies {
   implementation(libs.kotlin.stdlib)
@@ -95,6 +100,8 @@ dependencies {
   implementation("net.java.dev.jna:jna:${libs.versions.jna.get()}@aar")
   implementation(libs.kotlinx.coroutines.android)
   implementation(libs.kotlinx.coroutines.play.services)
+  implementation(libs.androidx.appfunctions)
+  ksp(libs.androidx.appfunctions.compiler)
 
   testImplementation(libs.junit)
   testImplementation(libs.robolectric)

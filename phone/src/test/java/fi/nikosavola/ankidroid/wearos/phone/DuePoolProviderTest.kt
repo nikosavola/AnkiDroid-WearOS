@@ -220,6 +220,8 @@ data class FakeCardRow(
  */
 class FakeCardsProvider : ContentProvider() {
   var exposeCardsEndpoint = true
+  /** Off models an AnkiDroid that can't list its decks yet (collection not set up). */
+  var exposeDecks = true
   var learningCards: List<FakeCardRow> = emptyList()
   var dueCardsByOffset: Map<Long, List<FakeCardRow>> = emptyMap()
   var newCards: List<FakeCardRow> = emptyList()
@@ -240,7 +242,7 @@ class FakeCardsProvider : ContentProvider() {
     sortOrder: String?,
   ): Cursor? =
     when (uri.pathSegments.firstOrNull()) {
-      "decks" -> deckCursor()
+      "decks" -> if (exposeDecks) deckCursor() else null
       "schedule" -> scheduleCursor(selectionArgs)
       "cards" -> cardsSearchCursor(selection)
       "notes" -> cardCursor(uri)

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AppFunctionAppMetadata xmlns:appfn="http://schemas.android.com/apk/androidx.appfunctions"
+    appfn:description="Offline flashcard reviewing on the watch for decks synced from AnkiDroid on the paired phone. Decks are identified by AnkiDroid deck ID; list them first to resolve a deck name to its ID."
+    appfn:displayDescription="@string/app_functions_display_description" />

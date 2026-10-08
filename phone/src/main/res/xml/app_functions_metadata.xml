@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<AppFunctionAppMetadata xmlns:appfn="http://schemas.android.com/apk/androidx.appfunctions"
+    appfn:description="Phone companion that copies due flashcards from the user's AnkiDroid decks to their Wear OS watch for offline review. Decks are identified by AnkiDroid deck ID; list decks first to resolve a name to its ID. Settings changes apply on the next sync."
+    appfn:displayDescription="@string/app_functions_display_description" />

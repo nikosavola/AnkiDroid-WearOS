@@ -210,6 +210,9 @@ class AnkiDroidBridge(
   /** Each deck's `[learn, review, new]` due counts from the same listing, limits applied. */
   @Volatile private var deckCountsByDeck: Map<Long, List<Int>> = emptyMap()
 
+  /** [deckId]'s `[learn, review, new]` counts from the last [fetchAllDecks]; null if unknown. */
+  fun dueCounts(deckId: DeckId): List<Int>? = deckCountsByDeck[deckId.value]
+
   /**
    * The deck's scheduling config from the deck's OPTIONS column. AnkiDroid exposes deck options
    * only through the all-decks URI (there is no per-deck item URI), so this scans the deck list for
@@ -379,17 +382,25 @@ class AnkiDroidBridge(
 
   /** Query all available decks in AnkiDroid dynamically. */
   fun fetchAllDecks(): List<Pair<DeckId, String>> {
+    // Unavailable provider returns an empty list, never fake decks: substituting mocks would
+    // overwrite the user's real cached decks and offer phantom decks to sync.
+    if (!isAnkiDroidAvailable()) return emptyList()
+    return fetchDeckList().orEmpty().ifEmpty { listOf(Pair(DeckId(1L), "Default")) }
+  }
+
+  /**
+   * AnkiDroid's decks exactly as it lists them, or null when the listing failed (AnkiDroid not set
+   * up yet, provider error), with no stand-in deck either way.
+   */
+  fun fetchDeckList(): List<Pair<DeckId, String>>? {
     val list = mutableListOf<Pair<DeckId, String>>()
     // The deck listing already carries every column, including OPTIONS, so the scheduling config
     // costs no extra provider query: capture it here and let fetchDeckScheduleConfig reuse it.
     val options = mutableMapOf<Long, String?>()
     val counts = mutableMapOf<Long, List<Int>>()
-    // Unavailable provider returns an empty list, never fake decks: substituting mocks would
-    // overwrite the user's real cached decks and offer phantom decks to sync.
-    if (!isAnkiDroidAvailable()) return emptyList()
     try {
-      val cursor = context.contentResolver.query(DECKS_URI, null, null, null, null)
-      cursor?.use {
+      val cursor = context.contentResolver.query(DECKS_URI, null, null, null, null) ?: return null
+      cursor.use {
         val idIdx = it.getColumnIndex(COL_DECK_ID)
         val nameIdx = it.getColumnIndex(COL_DECK_NAME)
         val optionsIdx = it.getColumnIndex(COL_DECK_OPTIONS)
@@ -410,9 +421,7 @@ class AnkiDroidBridge(
       }
     } catch (e: Exception) {
       Log.e(TAG, "Failed to fetch all decks from AnkiDroid: ${e.message}", e)
-    }
-    if (list.isEmpty()) {
-      list.add(Pair(DeckId(1L), "Default"))
+      return null
     }
     deckOptionsByDeck = options
     deckCountsByDeck = counts

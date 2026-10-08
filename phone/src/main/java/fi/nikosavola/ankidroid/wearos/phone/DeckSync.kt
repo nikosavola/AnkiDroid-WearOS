@@ -55,6 +55,17 @@ object DeckSync {
   private const val MAX_SCAN_DECKS = 60
   private const val CARDS_PER_DECK = 20
 
+  /** Whether the user keeps [deckId] synced to the watch (the deck list's checkbox; on by default). */
+  fun isDeckSynced(context: Context, deckId: DeckId): Boolean =
+    deckPrefs(context).getBoolean("deck_${deckId.value}", true)
+
+  fun setDeckSynced(context: Context, deckId: DeckId, synced: Boolean) {
+    deckPrefs(context).edit().putBoolean("deck_${deckId.value}", synced).apply()
+  }
+
+  private fun deckPrefs(context: Context) =
+    context.getSharedPreferences(DECK_PREFS, Context.MODE_PRIVATE)
+
   suspend fun run(context: Context, onProgress: (String, Int) -> Unit = { _, _ -> }): SyncSummary? {
     val bridge = AnkiDroidBridge(context)
     val renderer = CardBitmapRenderer(context)

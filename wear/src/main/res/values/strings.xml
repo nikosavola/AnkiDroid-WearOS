@@ -4,4 +4,5 @@
         <item quantity="one">%1$d learning card due in %2$d min</item>
         <item quantity="other">%1$d learning cards due in %2$d min</item>
     </plurals>
+    <string name="app_functions_display_description">Check which flashcard decks are on your watch and how many cards are due.</string>
 </resources>
