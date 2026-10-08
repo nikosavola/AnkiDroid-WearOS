@@ -156,6 +156,12 @@ main-thread work and redrawing the same chrome every frame. The rules the review
   `adb shell setprop debug.hwui.overdraw show`).
 - **No native calls in draw lambdas.** Read session state once per grade
   (`remember(session, cardCompletedTrigger)`).
+- **Curved text without warping.** `WearApp` turns off
+  `WearComposeFoundationFlags.isWarpingCurvedTextEnabled`: warped curved text (the API 34+ default)
+  builds a `Path` per glyph on the main thread and fills it with stencil-and-cover on the GPU. Plain
+  curved text draws from the glyph cache and looks the same at our label sizes.
+- **No symbol glyphs in `Text`.** A character the default font lacks (an arrow, say) loads a
+  fallback font on the frame that first shows it; use a vector drawable instead.
 
 To profile, build `:wear:assembleBenchmark` (R8, not debuggable, debug-signed, `profileable`), seed
 a deck with `cargo run --example mock_deck` pushed as `files/deck_<id>.json` from the debug build
@@ -164,6 +170,16 @@ a deck with `cargo run --example mock_deck` pushed as `files/deck_<id>.json` fro
 and `cmd package compile -f -m speed-profile <pkg>`). Read `dumpsys gfxinfo <pkg>` and a perfetto
 trace (`gfx view input sched`); on the emulator, `dequeueBuffer` waits are the host compositor, not
 the app. Debug builds are far too slow to profile meaningfully.
+
+On a real watch (Galaxy Watch8: 60 Hz, Mali GPU, HWUI on Vulkan) the card transition is the one
+frame that still runs long (recompose plus the first draw of the new card), while scrolling holds
+vsync. Two harness gotchas there: a swipe that starts near the top edge opens the system panel and
+later taps land on system UI, so start swipes well inside the screen and check
+`dumpsys window | grep mCurrentFocus` between steps; and `simpleperf record --app <pkg> -g` works on
+the profileable build (de-obfuscate with `stackcollapse.py --proguard-mapping-file` and the
+benchmark `mapping.txt`). Card image fixtures should be 8-bit sRGB PNGs like the phone's
+`Bitmap.compress` output; a 16-bit or cHRM-tagged PNG adds a per-pixel color conversion that real
+cards never pay.
 
 ---
 
