@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">AnkiDroid WearOS</string>
-    <string name="tile_label">AnkiDroid today</string>
+    <string name="tile_label">AnkiDroid</string>
     <string name="tile_description">Cards due today, with a shortcut into your most-due deck.</string>
     <string name="complication_label">AnkiDroid due</string>
     <string name="review_channel_name">Review session</string>
