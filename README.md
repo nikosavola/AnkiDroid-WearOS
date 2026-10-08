@@ -124,11 +124,13 @@ The same tags also build on [JitPack](https://jitpack.io) without a token, once 
 public: add `maven("https://jitpack.io")` and depend on
 `com.github.nikosavola.AnkiDroid-WearOS:ankidroid-provider:v0.1.0`.
 
-The library is AGPL-3.0-or-later like the rest of this repository, so apps that include it take on
-the AGPL's terms.
+The library is LGPL-3.0-or-later (see `ankidroid-provider/COPYING.LESSER`), the same license as
+AnkiDroid's own API library, so apps of any license can use it.
 
 ## License
 
-AGPL-3.0-or-later, the same license as Anki itself; see [LICENSE](LICENSE). The offline scheduler in
+AGPL-3.0-or-later, the same license as Anki itself; see [LICENSE](LICENSE). The exception is the
+`ankidroid-provider/` library, which is LGPL-3.0-or-later (`ankidroid-provider/COPYING.LESSER`,
+which supplements the GPL in `ankidroid-provider/COPYING`). The offline scheduler in
 `core/src/sched.rs` and the queue builder in `core/src/pool.rs` port logic from Anki's `rslib`
 (Copyright Ankitects Pty Ltd and contributors, AGPL-3.0-or-later).

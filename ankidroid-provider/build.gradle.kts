@@ -40,8 +40,8 @@ publishing {
         url = "https://github.com/nikosavola/AnkiDroid-WearOS"
         licenses {
           license {
-            name = "AGPL-3.0-or-later"
-            url = "https://www.gnu.org/licenses/agpl-3.0.html"
+            name = "LGPL-3.0-or-later"
+            url = "https://www.gnu.org/licenses/lgpl-3.0.html"
           }
         }
         scm {
