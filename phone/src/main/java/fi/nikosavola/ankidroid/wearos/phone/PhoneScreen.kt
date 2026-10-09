@@ -178,7 +178,7 @@ private fun CompactLayout(vm: PhoneViewModel, actions: PhoneActions) {
         stickyHeader(key = "search") {
           SearchBar(vm, showProgress = true, modifier = Modifier.background(MaterialTheme.colorScheme.background))
         }
-        deckItems(vm)
+        deckItems(vm, actions)
       }
     }
   }
@@ -211,7 +211,7 @@ private fun TwoPaneLayout(vm: PhoneViewModel, actions: PhoneActions) {
     directive = navigator.scaffoldDirective,
     value = navigator.scaffoldValue,
     modifier = Modifier.safeDrawingPadding().padding(horizontal = PageGutter),
-    mainPane = { AnimatedPane { DeckPane(vm) } },
+    mainPane = { AnimatedPane { DeckPane(vm, actions) } },
     supportingPane = {
       AnimatedPane(modifier = Modifier.preferredWidth(SupportingPaneWidth)) {
         SupportingPane(vm, actions)
@@ -222,7 +222,7 @@ private fun TwoPaneLayout(vm: PhoneViewModel, actions: PhoneActions) {
 
 /** Main pane on wide windows: title, sticky search and the deck tree, capped to a readable width. */
 @Composable
-private fun DeckPane(vm: PhoneViewModel) {
+private fun DeckPane(vm: PhoneViewModel, actions: PhoneActions) {
   Box(Modifier.fillMaxSize(), contentAlignment = Alignment.TopCenter) {
     LazyColumn(
       modifier = Modifier.widthIn(max = MaxContentWidth).fillMaxSize().testTag(DECK_LIST_TAG),
@@ -232,7 +232,7 @@ private fun DeckPane(vm: PhoneViewModel) {
       stickyHeader(key = "search") {
         SearchBar(vm, showProgress = false, modifier = Modifier.background(MaterialTheme.colorScheme.background))
       }
-      deckItems(vm)
+      deckItems(vm, actions)
     }
   }
 }
@@ -293,7 +293,7 @@ private fun LazyListScope.cardAccessItem(vm: PhoneViewModel, actions: PhoneActio
 private fun CardAccess.needsAction() =
   this == CardAccess.DENIED || this == CardAccess.BLOCKED || this == CardAccess.ANKIDROID_MISSING
 
-private fun LazyListScope.deckItems(vm: PhoneViewModel) {
+private fun LazyListScope.deckItems(vm: PhoneViewModel, actions: PhoneActions) {
   val filtered = vm.filteredDecks()
   if (filtered.isEmpty()) {
     item(key = "empty") {
@@ -321,6 +321,15 @@ private fun LazyListScope.deckItems(vm: PhoneViewModel) {
     dueCountOf = { row ->
       row.deckIds.mapNotNull { vm.deckCounts[it] }.takeIf { it.isNotEmpty() }?.sum()
     },
+    menu =
+      DeckRowMenu(
+        onStudy = actions.onStudyDeck,
+        onBrowse = actions.onBrowseDeck,
+        onSyncOnly = { vm.syncOnly(it.deckIds) },
+        allExpanded =
+          if (searching) null else { row -> row.folderPaths().all { it in vm.expandedFolders } },
+        onExpandAll = { row, expand -> vm.setFoldersExpanded(row.folderPaths(), expand) },
+      ),
     itemModifier = Modifier.padding(bottom = ListItemDefaults.SegmentedGap),
   )
 }

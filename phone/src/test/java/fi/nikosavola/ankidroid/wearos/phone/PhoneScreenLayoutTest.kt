@@ -11,6 +11,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performTextInput
 import androidx.lifecycle.SavedStateHandle
@@ -119,5 +121,37 @@ class PhoneScreenLayoutTest {
     assertEquals("deck ", restored.deckFilter)
     assertEquals(setOf("Japani"), restored.expandedFolders)
     assertEquals(PhoneDialog.SETTINGS, restored.activeDialog)
+  }
+
+  @Test
+  @Config(qualifiers = "w320dp-h533dp-port")
+  fun longPress_opensDeckMenu() {
+    val vm = viewModel()
+    var studied: DeckId? = null
+    var browsed: String? = null
+    composeRule.setContent {
+      AnkiPhoneTheme {
+        PhoneScreen(vm, PhoneActions(onStudyDeck = { studied = it }, onBrowseDeck = { browsed = it }))
+      }
+    }
+    val list = composeRule.onNode(hasScrollToKeyAction())
+    list.performScrollToKey("deck:Japani")
+    val folder = composeRule.onNode(hasText("Japani") and hasClickAction())
+
+    folder.performTouchInput { longClick() }
+    composeRule.onNodeWithText("Expand all").performClick()
+    assertEquals(setOf("Japani"), vm.expandedFolders)
+
+    folder.performTouchInput { longClick() }
+    composeRule.onNodeWithText("Sync only this folder").performClick()
+    assertEquals(listOf(DeckId(99L)), vm.deckSelection.filterValues { it }.keys.toList())
+
+    list.performScrollToKey("deck:Japani::Kaishi 1.5k")
+    composeRule.onNode(hasText("Kaishi 1.5k") and hasClickAction()).performTouchInput { longClick() }
+    composeRule.onNodeWithText("Study in AnkiDroid").performClick()
+    assertEquals(DeckId(99L), studied)
+    composeRule.onNode(hasText("Kaishi 1.5k") and hasClickAction()).performTouchInput { longClick() }
+    composeRule.onNodeWithText("Browse cards").performClick()
+    assertEquals("Japani::Kaishi 1.5k", browsed)
   }
 }

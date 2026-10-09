@@ -40,4 +40,16 @@ class DeckTreeFlattenTest {
     assertEquals("Japani::文法::N2", rows.last().path)
     assertEquals(2, rows.last().depth)
   }
+
+  @Test
+  fun folderPaths_coverTheWholeBranch() {
+    val japani = flattenDeckTree(root, expanded = emptySet()).single { it.path == "Japani" }
+    assertEquals(listOf("Japani", "Japani::文法"), japani.folderPaths())
+  }
+
+  @Test
+  fun deckSearch_quotesAndEscapesLikeAnki() {
+    assertEquals("\"deck:Japani::Kaishi 1.5k\"", deckSearch("Japani::Kaishi 1.5k"))
+    assertEquals(""""deck:a\*b\_c\"d\\e"""", deckSearch("""a*b_c"d\e"""))
+  }
 }

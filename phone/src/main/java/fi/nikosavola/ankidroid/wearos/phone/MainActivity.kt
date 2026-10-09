@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -69,6 +70,8 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
       onOpenAppSettings = ::openAppSettings,
       onRefreshDecks = ::forceSyncWithAnkiDroid,
       onCopyReport = ::copyDebugInfo,
+      onStudyDeck = ::studyInAnkiDroid,
+      onBrowseDeck = ::browseInAnkiDroid,
     )
   }
 
@@ -145,6 +148,36 @@ class MainActivity : androidx.appcompat.app.AppCompatActivity() {
     startActivity(
       Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
     )
+  }
+
+  // AnkiDroid's own home-screen deck shortcut: selects the deck and opens its reviewer.
+  private fun studyInAnkiDroid(deckId: DeckId) =
+    openInAnkiDroid(
+      Intent()
+        .setClassName(ANKIDROID_PACKAGE, "com.ichi2.anki.IntentHandler")
+        .putExtra("EXTRA_DECK_ID", deckId.value)
+    )
+
+  private fun browseInAnkiDroid(deckName: String) =
+    openInAnkiDroid(
+      Intent(
+          Intent.ACTION_VIEW,
+          Uri.Builder()
+            .scheme("anki")
+            .authority("x-callback-url")
+            .path("/browser")
+            .appendQueryParameter("search", deckSearch(deckName))
+            .build(),
+        )
+        .setPackage(ANKIDROID_PACKAGE)
+    )
+
+  private fun openInAnkiDroid(intent: Intent) {
+    try {
+      startActivity(intent)
+    } catch (e: ActivityNotFoundException) {
+      Toast.makeText(this, "This AnkiDroid version can't open that", Toast.LENGTH_SHORT).show()
+    }
   }
 
   /**
