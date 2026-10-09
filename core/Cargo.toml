@@ -29,7 +29,7 @@ thiserror = "2.0.20"
 zstd = "0.13"
 # Protobuf encoding via derive macros only — no protoc / build.rs needed (messages are annotated
 # Rust structs). The due-batch wire format (see proto.rs).
-prost = "0.13"
+prost = "0.14"
 # The FSRS crate rslib uses (Anki 26.05 pins 5.2.0, same NextStates API); burn-free since 6.x.
 fsrs = { version = "6.6.2", default-features = false }
 # rslib draws its interval fuzz from rand's StdRng; same crate and version line, same numbers.
