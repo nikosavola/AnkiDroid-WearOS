@@ -27,6 +27,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.Dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
@@ -131,6 +133,8 @@ class MainActivity : ComponentActivity() {
   internal var hideClock by mutableStateOf(false)
   internal var hideProgress by mutableStateOf(false)
   internal var coloredGradeButtons by mutableStateOf(true)
+  // True while the review's type-in field is focused (the IME is up); see WearAppScreen.
+  internal var typeAnswerFocused by mutableStateOf(false)
 
   // The back stack of screens, rooted at the deck picker; descending into folders, opening settings,
   // entering a review and its card screen each push an entry.
@@ -679,10 +683,18 @@ class MainActivity : ComponentActivity() {
           // Swipe-right-to-dismiss + predictive back come from the Wear scene strategy; hardware and
           // gesture back both route through onBack, which pops the stack (and clears the session
           // when leaving the deck overview). At the root entry back is disabled and the system exits.
+          // While the type-in field is focused the gesture is off: an edge swipe mid-typing would
+          // pop the review and throw away the typed text. The Wear flag cannot separate swipe from
+          // back, so back goes with it; in practice BACK closes the IME first, which unfocuses the
+          // field and re-enables both before the pop lands, so back still leaves.
           NavDisplay(
             backStack = backStack,
             onBack = { popBackStackAndRunSideEffects() },
-            sceneStrategy = rememberSwipeDismissableSceneStrategy(),
+            sceneStrategy =
+              rememberSwipeDismissableSceneStrategy(
+                isUserSwipeEnabled =
+                  backStack.lastOrNull() != WatchScreen.Review || !typeAnswerFocused
+              ),
             entryProvider =
               entryProvider<WatchScreen> {
                 entry<WatchScreen.Decks> { WelcomeScreen(it.folderPath) }
@@ -785,6 +797,15 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
+   * Side inset for card text. A full-width line only clears a round display at the vertical center;
+   * everywhere else its ends sit under the bezel curve, so text gets extra air there. Square
+   * screens have flat edges and keep the width.
+   */
+  @Composable
+  private fun cardSidePadding(): Dp =
+    if (LocalConfiguration.current.isScreenRound) 20.dp else 14.dp
+
+  /**
    * Front of a review card: progress, an optional undo, the tappable card body, an optional
    * type-in field, and a reveal hint.
    */
@@ -799,6 +820,7 @@ class MainActivity : ComponentActivity() {
     typeExpected: String?,
     typed: String,
     onTyped: (String) -> Unit,
+    onTypeFocused: (Boolean) -> Unit,
     onReveal: () -> Unit,
   ) {
     Column(
@@ -814,7 +836,7 @@ class MainActivity : ComponentActivity() {
           ) {
             onReveal()
           }
-          .padding(start = 12.dp, end = 12.dp, top = 40.dp, bottom = 34.dp),
+          .padding(start = cardSidePadding(), end = cardSidePadding(), top = 40.dp, bottom = 34.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Center,
     ) {
@@ -827,7 +849,7 @@ class MainActivity : ComponentActivity() {
       )
       if (typeExpected != null) {
         Spacer(modifier = Modifier.height(10.dp))
-        TypeAnswerField(value = typed, onValueChange = onTyped)
+        TypeAnswerField(value = typed, onValueChange = onTyped, onFocusedChanged = onTypeFocused)
       }
     }
     val hintColor = MaterialTheme.colorScheme.onSurfaceVariant
@@ -881,7 +903,7 @@ class MainActivity : ComponentActivity() {
           // Extra bottom space so the answer can scroll past the overlay buttons and every line can
           // be brought fully into the clear above them.
           // Top inset clears the curved N/M progress label, which ends about 36dp down.
-          .padding(start = 14.dp, end = 14.dp, top = 40.dp, bottom = 96.dp),
+          .padding(start = cardSidePadding(), end = cardSidePadding(), top = 40.dp, bottom = 96.dp),
       horizontalAlignment = Alignment.CenterHorizontally,
       verticalArrangement = Arrangement.Center,
     ) {

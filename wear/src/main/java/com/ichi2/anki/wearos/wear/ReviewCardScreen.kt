@@ -78,6 +78,12 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
     }
   }
 
+  // The field recreates unfocused per card; without this a stale focused flag would keep the
+  // swipe/back gesture off for the next card's front.
+  DisposableEffect(card.id, card.ord) {
+    onDispose { typeAnswerFocused = false }
+  }
+
   // Hide-clock: override the app's TimeText with an empty one for the review card only (null keeps
   // the default clock from AppScaffold).
   val emptyTimeText: @Composable () -> Unit = {}
@@ -95,6 +101,7 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
         typeExpected = typeExpected,
         typed = typed,
         onTyped = { typed = it },
+        onTypeFocused = { typeAnswerFocused = it },
       ) {
         session.revealAnswer()
         isRevealed = true
@@ -137,6 +144,7 @@ internal fun TypeAnswerField(
   value: String,
   onValueChange: (String) -> Unit,
   modifier: Modifier = Modifier,
+  onFocusedChanged: (Boolean) -> Unit = {},
 ) {
   var focused by remember { mutableStateOf(false) }
   val style = MaterialTheme.typography.bodyMedium
@@ -163,7 +171,11 @@ internal fun TypeAnswerField(
         inner()
       }
     },
-    modifier = modifier.fillMaxWidth(0.9f).onFocusChanged { focused = it.isFocused },
+    modifier =
+      modifier.fillMaxWidth(0.9f).onFocusChanged {
+        focused = it.isFocused
+        onFocusedChanged(it.isFocused)
+      },
   )
 }
 
