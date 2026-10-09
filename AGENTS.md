@@ -139,11 +139,13 @@ frequently ship **no WebView provider** (e.g. Galaxy Watch), so constructing a `
   nested scrollable that passes infinite constraints). Grade buttons are opaque curved segments
   along the bottom bezel, tapped through one strip that shares its gestures with the scrolling
   answer, so a swipe starting over the buttons still scrolls.
-- **Rich fidelity via phone-rendered bitmaps:** CSS-styled pitch-accent overlines and images can't
+- **Rich fidelity via phone-rendered bitmaps:** images, inline SVG, CSS overlines and borders can't
   render natively, so cards that need them (`CardBitmapRenderer.needsRichRendering`) are rendered on
   the phone (which has a WebView) into a PNG, streamed to the watch as a per-card Data Layer asset,
   cached (`CardImageCache`), and shown by `CardSideContent` in place of the cleaned text. The native
-  text path above remains the fallback when no bitmap is cached.
+  text path above remains the fallback when no bitmap is cached. The decision reads CSS declarations
+  only (inline or the note type's stylesheet, which the provider sends with the card); never match a
+  deck, note type or class name.
 
 ### Keeping it smooth
 Compose already draws through the GPU (HWUI on the RenderThread); what costs frames on a watch is

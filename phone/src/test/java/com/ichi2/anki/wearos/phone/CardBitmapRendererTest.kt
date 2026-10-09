@@ -14,7 +14,7 @@ import org.robolectric.RobolectricTestRunner
 
 /**
  * [CardBitmapRenderer.needsRichRendering] is the gate that decides, per card side, whether we pay for
- * a phone-side WebView bitmap render (true fidelity: images, CSS, pitch-accent) or fall back to the
+ * a phone-side WebView bitmap render (true fidelity: images, borders, overlines) or fall back to the
  * cheap native text path. Getting it wrong is user-visible both ways: a false negative shows a rich
  * card as broken/stripped text on the watch; a false positive renders every plain card as a slow
  * bitmap. It's a pure string heuristic over [prepareForRender]'s output, so lock both contracts here.
@@ -50,20 +50,34 @@ class CardBitmapRendererTest {
   }
 
   @Test
-  fun pitchAccentCss_needsRichRendering() {
-    assertTrue(renderer.needsRichRendering("""<span class="overline">は</span>"""))
-    assertTrue(renderer.needsRichRendering("""<span style="border-top:1px solid">x</span>"""))
+  fun overlinesAndBorders_needRichRendering_inlineOrFromTheStylesheet() {
     assertTrue(renderer.needsRichRendering("""<span style="text-decoration:overline">x</span>"""))
-    // Kaishi pitch-accent note type is matched by name so its styled pitch line renders faithfully.
-    assertTrue(renderer.needsRichRendering("<div class=\"kaishi-pitch\">x</div>"))
+    assertTrue(renderer.needsRichRendering("""<span style="border-top:1px solid">x</span>"""))
+    assertTrue(renderer.needsRichRendering("""<table style="border: 1px solid">x</table>"""))
+    assertTrue(renderer.needsRichRendering("""<svg viewBox="0 0 1 1"></svg>"""))
+    // The provider sends the note type's stylesheet with the card.
+    val styled = "<style>.pitch { text-decoration-line: overline; }</style><span class=pitch>x</span>"
+    assertTrue(renderer.needsRichRendering(styled))
   }
 
   @Test
-  fun pitchAccentCss_staysRich_withoutMediaSupport() {
-    // Pitch-accent styling isn't an image, so dropping images must not drop the card with it.
-    val kaishi = """<div class="kaishi-pitch">x</div>"""
-    val overline = """<span class="overline">は</span>"""
-    assertTrue(renderer.needsRichRendering(kaishi, mediaReadable = false))
+  fun classAndNoteTypeNames_neverDecideOnTheirOwn() {
+    assertFalse(renderer.needsRichRendering("""<div class="kaishi-pitch">x</div>"""))
+    assertFalse(renderer.needsRichRendering("""<span class="overline">x</span>"""))
+  }
+
+  @Test
+  fun commonStylesheetResets_useTheTextPath() {
+    val resets =
+      "<style>a { text-decoration: none; } input { border: none; } td { border:0; }" +
+        " .card { border-radius: 4px; border-collapse: collapse; }</style>answer"
+    assertFalse(renderer.needsRichRendering(resets))
+  }
+
+  @Test
+  fun overline_staysRich_withoutMediaSupport() {
+    // Styling isn't an image, so dropping images must not drop the card with it.
+    val overline = """<span style="text-decoration:overline">x</span>"""
     assertTrue(renderer.needsRichRendering(overline, mediaReadable = false))
   }
 
@@ -72,7 +86,7 @@ class CardBitmapRendererTest {
     assertFalse(renderer.needsRichRendering("just a plain answer"))
     assertFalse(renderer.needsRichRendering("<b>bold</b> and <i>italic</i>"))
     assertFalse(renderer.needsRichRendering("<div>answer</div>"))
-    // A bare inline style with no pitch-accent marker is cosmetic; native text rendering is fine.
+    // A bare inline style is cosmetic; native text rendering is fine.
     assertFalse(renderer.needsRichRendering("""<div style="color:red">x</div>"""))
     assertFalse(renderer.needsRichRendering(""))
   }
