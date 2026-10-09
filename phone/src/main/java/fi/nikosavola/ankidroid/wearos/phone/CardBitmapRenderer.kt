@@ -37,7 +37,8 @@ class CardBitmapRenderer(private val context: Context) {
     // Bump when the render output changes (WebView wrapper, capture size, sanitizing) so existing
     // Data Items with an old content key are treated as stale and re-rendered. 2: wrapping body,
     // content-height capture, sound-ref stripping, images dropped when media can't be served.
-    private const val RENDER_VERSION = 2
+    // 3: no per-template rules or language-specific fonts in the wrapper.
+    private const val RENDER_VERSION = 3
 
     // Render at a width that covers the largest current Wear round displays (~450-480px) so the
     // watch downscales (ContentScale.Fit) to a crisp image on any device. True per-device sizing
@@ -110,7 +111,7 @@ class CardBitmapRenderer(private val context: Context) {
             body {
               background-color: transparent;
               color: #FFFFFF;
-              font-family: 'Roboto', 'Noto Sans CJK JP', sans-serif;
+              font-family: sans-serif;
               font-size: 18px;
               text-align: center;
               margin: 0;
@@ -126,19 +127,6 @@ class CardBitmapRenderer(private val context: Context) {
               height: auto;
               object-fit: contain;
               margin: 8px 0;
-            }
-            /* Pitch-accent (Kaishi) overline classes */
-            .overline {
-              text-decoration: overline;
-              border-top: 1px solid #FFFFFF;
-            }
-            /* Custom CSS rules typically used in Anki */
-            .card {
-              font-family: arial;
-              font-size: 20px;
-              text-align: center;
-              color: white;
-              background-color: transparent;
             }
           </style>
           </head>
@@ -298,19 +286,17 @@ class CardBitmapRenderer(private val context: Context) {
     hasRichSignals(prepareForRender(html, mediaReadable))
 
   /**
-   * Only signals native rendering genuinely can't reproduce: images and pitch-accent styling
-   * (overline / border-top / text-decoration), plus the Kaishi note type by name (its pitch line can
-   * arrive without any inline-style marker). A bare `style=` is deliberately NOT a trigger - nearly
-   * every card carries one, so matching it forced almost everything through the expensive
-   * WebView+PNG+asset path and defeated native rendering as the common case.
+   * Only what native text can't draw: images, inline SVG, overlines and borders. Matched on CSS
+   * declarations, in inline styles or the note type's stylesheet (the provider sends it with the
+   * card), never on class or note type names. A bare `style=` is deliberately not a trigger: nearly
+   * every card carries one, and the bitmap path is the expensive one.
    */
   private fun hasRichSignals(html: String): Boolean {
     val lower = html.lowercase()
     return lower.contains("<img") ||
-      lower.contains("overline") ||
-      lower.contains("kaishi") ||
-      lower.contains("border-top") ||
-      lower.contains("text-decoration")
+      lower.contains("<svg") ||
+      OVERLINE_REGEX.containsMatchIn(lower) ||
+      BORDER_REGEX.containsMatchIn(lower)
   }
 
   /** Whether this HTML's images can be loaded; the provider is probed only for a real filename. */
@@ -449,6 +435,9 @@ class CardBitmapRenderer(private val context: Context) {
   }
 }
 
+private val OVERLINE_REGEX = Regex("""text-decoration(-line)?\s*:[^;}"']*overline""")
+// Any border except an explicit none/0, which note types use to reset tables and inputs.
+private val BORDER_REGEX = Regex("""border(-(top|bottom|left|right))?\s*:(?!\s*(none|0(px)?\s*[;}"']))""")
 private val SOUND_REF_REGEX = Regex("""\[sound:[^\]]*\]""")
 private val IMG_TAG_REGEX = Regex("""<img\b[^>]*>""", RegexOption.IGNORE_CASE)
 private val IMG_SRC_REGEX =

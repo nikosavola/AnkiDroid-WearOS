@@ -114,7 +114,7 @@ mod tests {
         assert!(clean.contains("to answer"));
     }
 
-    // ---- Realistic Japanese-card rendering fidelity (the user's decks are Japani/Kaishi/RTK). ----
+    // ---- Rendering fidelity on real-world card HTML (furigana, sentences, hidden fields). ----
 
     #[test]
     fn test_clean_html_sentence_with_multiple_furigana() {
