@@ -301,6 +301,65 @@ class AnkiDroidProviderLiveTest {
     )
   }
 
+  /**
+   * AnkiDroid's provider hands `{{type:Field}}` over as a raw `[[type:Field]]` placeholder and
+   * leaves the note type's stylesheet out; the bridge fills in the one and inlines the other.
+   */
+  @Test
+  fun stockNoteTypesReadLikeAnkiDroid() {
+    val deckId = assumeAnkiDroid()
+    val cases =
+      listOf(
+        Triple("Basic (type in the answer)", "Capital of France?\u001f<b>Paris</b>", "Paris"),
+        Triple("Cloze", "{{c1::Paris}} is in {{c2::France}}\u001f", null),
+      )
+    for ((noteType, fields, expected) in cases) {
+      val modelId = noteTypeId(noteType)
+      assumeTrue("no stock '$noteType' note type", modelId != null)
+      val noteId = insertTestNote(deckId, modelId!!, fields)
+      assertNotNull("couldn't add a '$noteType' note", noteId)
+      try {
+        val card = fi.nikosavola.ankidroid.provider.AnkiDroidProvider(context).card(noteId!!, 0)!!
+        Log.i(TAG, "$noteType: ${bridge.sidesOf(card)}")
+        if (expected != null) {
+          assertTrue("raw question: ${card.question}", card.question!!.contains("[[type:Back]]"))
+          val (front, back) = bridge.sidesOf(card)
+          assertTrue("front still has the placeholder: $front", !front.contains("[[type:"))
+          assertTrue("back: $back", back.contains("<code id=typeans>$expected</code>"))
+        } else {
+          // Stock Cloze styles its deletion bold, light blue in night mode.
+          val (front, _) = bridge.sidesOf(card)
+          assertTrue("cloze not styled: $front", front.contains("<b>[...]</b>"))
+          assertTrue("cloze not styled: $front", front.contains("color:#add8e6"))
+        }
+      } finally {
+        deleteTestNote(noteId!!)
+      }
+    }
+  }
+
+  private fun noteTypeId(name: String): Long? {
+    val models = android.net.Uri.parse("content://com.ichi2.anki.flashcards/models")
+    return context.contentResolver.query(models, arrayOf("_id", "name"), null, null, null)?.use { c ->
+      var found: Long? = null
+      while (found == null && c.moveToNext()) {
+        if (c.getString(c.getColumnIndexOrThrow("name")) == name) found = c.getLong(0)
+      }
+      found
+    }
+  }
+
+  private fun insertTestNote(deckId: Long, modelId: Long, fields: String): Long? {
+    val notes = android.net.Uri.parse("content://com.ichi2.anki.flashcards/notes?deckId=$deckId")
+    val values =
+      android.content.ContentValues().apply {
+        put("mid", modelId)
+        put("flds", fields)
+        put("tags", TEST_TAG)
+      }
+    return context.contentResolver.insert(notes, values)?.lastPathSegment?.toLongOrNull()
+  }
+
   /** Insert a two-field note into [deckId]; returns its URI and id, or null if unsupported. */
   private fun createTestNote(deckId: Long): Pair<android.net.Uri, Long>? {
     val models = android.net.Uri.parse("content://com.ichi2.anki.flashcards/models")

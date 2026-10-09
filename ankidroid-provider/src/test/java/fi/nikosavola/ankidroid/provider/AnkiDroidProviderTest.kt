@@ -71,6 +71,13 @@ class AnkiDroidProviderTest {
   }
 
   @Test
+  fun noteFieldsAndNoteTypesAreRead() {
+    assertEquals(NoteFields(10L, 7L, listOf("Front", "Paris", "")), provider.noteFields(10L))
+    assertEquals(NoteType(7L, listOf("Front", "Back", "Extra"), ".cloze { color: blue }"), provider.noteType(7L))
+    assertNull(provider.noteType(8L))
+  }
+
+  @Test
   fun answersAreConfirmedByRepsAndRecorded() {
     val store =
       object : AppliedAnswerStore {
@@ -140,8 +147,20 @@ class FakeAnkiProvider : ContentProvider() {
           if (selection.orEmpty().startsWith("is:new")) addRow(arrayOf<Any>(5L, 3L))
         }
       }
+      "notes" if segments.size == 2 -> {
+        MatrixCursor(arrayOf("mid", "flds")).apply {
+          addRow(arrayOf<Any>(7L, "Front\u001fParis\u001f"))
+        }
+      }
       "notes" -> {
         MatrixCursor(arrayOf("reps")).apply { addRow(arrayOf<Any>(answered.toLong())) }
+      }
+      "models" -> {
+        MatrixCursor(arrayOf("field_names", "css")).apply {
+          if (segments.getOrNull(1) == "7") {
+            addRow(arrayOf<Any>("Front\u001fBack\u001fExtra", ".cloze { color: blue }"))
+          }
+        }
       }
       else -> {
         null
