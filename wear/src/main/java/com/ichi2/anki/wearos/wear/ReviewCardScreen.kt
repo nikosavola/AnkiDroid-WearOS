@@ -4,20 +4,25 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.foundation.CurvedTextStyle
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.Text
 import uniffi.wearos_core.*
 
 @Composable
@@ -38,9 +43,21 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
   // part after it so the answer view doesn't duplicate the front (whole back if no marker).
   val answerBack = remember(card.back) { answerHtml(card.back) }
 
+  // A {{type:Field}} card: the phone filled the back's typeans element with the expected answer,
+  // which is both what the user should type against and the proof this card wants typing at all.
+  val typeExpected = remember(card.id, card.ord) { typeAnswerExpected(card.back) }
+  var typed by remember(card.id, card.ord) { mutableStateOf("") }
+
+  // What the user typed, diffed against the expected answer by the core once revealed. Nothing
+  // typed keeps the plain expected answer AnkiDroid shows.
+  val typedDiff =
+    remember(answerBack, typed, isRevealed) {
+      if (!isRevealed || typed.isEmpty()) null else compareTypedAnswer(answerBack, typed)
+    }
+
   // Rich HTML for display; plain text for TTS.
   val displayFront = remember(card.front) { htmlForDisplay(card.front) }
-  val displayBack = remember(answerBack) { htmlForDisplay(answerBack) }
+  val displayBack = remember(typedDiff) { htmlForDisplay(typedDiff ?: answerBack) }
   val cleanFront = remember(card.front) { cleanHtml(card.front) }
   val cleanBack = remember(answerBack) { cleanHtml(answerBack) }
 
@@ -68,7 +85,17 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
   PrefetchUpcomingImages(session, card.id)
   ScreenScaffold(scrollState = scrollState, timeText = reviewTimeText) {
     if (!isRevealed) {
-      ReviewFront(session, card, displayFront, cleanFront, curvedStyle, scrollState) {
+      ReviewFront(
+        session,
+        card,
+        displayFront,
+        cleanFront,
+        curvedStyle,
+        scrollState,
+        typeExpected = typeExpected,
+        typed = typed,
+        onTyped = { typed = it },
+      ) {
         session.revealAnswer()
         isRevealed = true
       }
@@ -84,6 +111,8 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
         cardStartTime,
         gradeEnabled = !isAnswering,
         curvedStyle = curvedStyle,
+        // The back bitmap shows the nothing-typed answer; a diff must not sit under it.
+        suppressBackImage = typedDiff != null,
       ) { ease, duration ->
         if (!isAnswering) {
           isAnswering = true
@@ -96,6 +125,46 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
       }
     }
   }
+}
+
+/**
+ * The type-in answer field. Wear's Material has no text input component, so this is a plain
+ * [BasicTextField] whose focus opens the system IME (voice or keyboard); it consumes its own taps,
+ * so typing never triggers the surrounding tap-to-reveal. The placeholder clears on focus.
+ */
+@Composable
+internal fun TypeAnswerField(
+  value: String,
+  onValueChange: (String) -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  var focused by remember { mutableStateOf(false) }
+  val style = MaterialTheme.typography.bodyMedium
+  BasicTextField(
+    value = value,
+    onValueChange = onValueChange,
+    singleLine = true,
+    textStyle = style.copy(color = MaterialTheme.colorScheme.onSurface, textAlign = TextAlign.Center),
+    cursorBrush =
+      Brush.verticalGradient(
+        0f to MaterialTheme.colorScheme.primary,
+        1f to MaterialTheme.colorScheme.primary,
+      ),
+    decorationBox = { inner ->
+      if (value.isEmpty() && !focused) {
+        Text(
+          text = "Type answer",
+          style = style,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+          textAlign = TextAlign.Center,
+          modifier = Modifier.fillMaxWidth(),
+        )
+      } else {
+        inner()
+      }
+    },
+    modifier = modifier.fillMaxWidth(0.9f).onFocusChanged { focused = it.isFocused },
+  )
 }
 
 /** Undo the previous grade: a small glyph with a full 48dp touch target around it. */

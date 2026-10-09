@@ -9,6 +9,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.padding
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.foundation.lazy.items
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.ButtonDefaults
@@ -19,9 +20,81 @@ import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
+import androidx.wear.compose.material3.lazy.TransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.Text
 import uniffi.wearos_core.*
+
+/** The deck ids pooled under [path] (itself included when it is a deck), for folder menu actions. */
+private fun pooledDecksUnder(entries: List<DeckEntry>, path: String): List<Long> =
+  entries.filter { it.dueNow != null && (path.isEmpty() || it.name.startsWith("$path::")) }.map { it.id }
+
+/**
+ * A deck row's long-press, or null when its pool isn't on the watch: an unpooled deck's tap
+ * already downloads it, so a long-press would have nothing else to offer.
+ */
+private fun deckLongPress(
+  id: Long,
+  dueNow: Int?,
+  name: String,
+  open: (RowMenuTarget) -> Unit,
+): (() -> Unit)? = dueNow?.let { { open(RowMenuTarget.Deck(id, name)) } }
+
+/**
+ * The own-deck row ("Study ...", since Anki parent decks are real decks) and this level's folder
+ * and deck children. Every pooled row long-presses into the menu; a folder's menu covers the
+ * pooled decks nested under it.
+ */
+private fun TransformingLazyColumnScope.deckLevelRows(
+  level: DeckLevel,
+  entries: List<DeckEntry>,
+  countById: Map<Long, Int?>,
+  transformSpec: TransformationSpec,
+  selectDeck: (Long) -> Unit,
+  openFolder: (String) -> Unit,
+  openMenu: (RowMenuTarget) -> Unit,
+) {
+  level.ownDeck?.let { own ->
+    item {
+      DeckCard(
+        label = "Study ${own.name}",
+        dueNow = countById[own.id],
+        transformation = SurfaceTransformation(transformSpec),
+        modifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec),
+        onClick = { selectDeck(own.id) },
+        onLongClick = deckLongPress(own.id, countById[own.id], own.name, openMenu),
+      )
+    }
+  }
+
+  items(level.children) { node ->
+    val transformation = SurfaceTransformation(transformSpec)
+    val cardModifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec)
+    if (node.isFolder) {
+      val pooledUnder = remember(entries, node.path) { pooledDecksUnder(entries, node.path) }
+      FolderCard(
+        name = node.name,
+        transformation = transformation,
+        modifier = cardModifier,
+        onClick = { openFolder(node.path) },
+        // An unpooled folder has nothing to refresh or remove, so no menu.
+        onLongClick =
+          pooledUnder.takeIf { it.isNotEmpty() }?.let { decks ->
+            { openMenu(RowMenuTarget.Folder(node.name, decks)) }
+          },
+      )
+    } else {
+      DeckCard(
+        label = node.name,
+        dueNow = countById[node.id],
+        transformation = transformation,
+        modifier = cardModifier,
+        onClick = { selectDeck(node.id) },
+        onLongClick = deckLongPress(node.id, countById[node.id], node.name, openMenu),
+      )
+    }
+  }
+}
 
 /** The deck picker for one level of the `::` hierarchy; [folderPath] is "" at the root. */
 @Composable
@@ -40,6 +113,8 @@ internal fun MainActivity.WelcomeScreen(folderPath: String) {
     }
   // Reset scroll to the top whenever we descend into or pop out of a folder.
   LaunchedEffect(folderPath) { listState.scrollToItem(0) }
+
+  var rowMenu by remember { mutableStateOf<RowMenuTarget?>(null) }
 
   val title =
     if (folderPath.isEmpty()) "AnkiDroid WearOS" else folderPath.substringAfterLast("::")
@@ -112,39 +187,16 @@ internal fun MainActivity.WelcomeScreen(folderPath: String) {
           }
         }
 
-        // Studying the folder itself (Anki parent decks are real decks).
-        level.ownDeck?.let { own ->
-          item {
-            DeckCard(
-              label = "Study ${own.name}",
-              dueNow = countById[own.id],
-              transformation = SurfaceTransformation(transformSpec),
-              modifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec),
-              onClick = { selectDeck(own.id) },
-            )
-          }
-        }
-
-        items(level.children) { node ->
-          val transformation = SurfaceTransformation(transformSpec)
-          val cardModifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec)
-          if (node.isFolder) {
-            FolderCard(
-              name = node.name,
-              transformation = transformation,
-              modifier = cardModifier,
-              onClick = { pushScreen(WatchScreen.Decks(node.path)) },
-            )
-          } else {
-            DeckCard(
-              label = node.name,
-              dueNow = countById[node.id],
-              transformation = transformation,
-              modifier = cardModifier,
-              onClick = { selectDeck(node.id) },
-            )
-          }
-        }
+        // Studying the folder itself, then its children; pooled rows long-press into the menu.
+        deckLevelRows(
+          level = level,
+          entries = entries,
+          countById = countById,
+          transformSpec = transformSpec,
+          selectDeck = ::selectDeck,
+          openFolder = { pushScreen(WatchScreen.Decks(it)) },
+          openMenu = { rowMenu = it },
+        )
       }
 
       item {
@@ -158,5 +210,12 @@ internal fun MainActivity.WelcomeScreen(folderPath: String) {
         }
       }
     }
+    DeckPickerRowMenu(
+      target = rowMenu,
+      onDismiss = { rowMenu = null },
+      onRefreshDeck = { requestDeckFromPhone(it) },
+      onRefreshDecks = { refreshDecksSilently(it) },
+      onRemoveDecks = { removeDecksFromWatch(it) },
+    )
   }
 }
