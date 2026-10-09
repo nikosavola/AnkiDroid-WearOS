@@ -36,6 +36,10 @@ fsrs = { version = "6.6.2", default-features = false }
 rand = { version = "0.9.4", default-features = false, features = ["std_rng"] }
 # Anki's rslib scheduler states, vendored verbatim (vendor/anki) behind a type-check-only shim.
 anki-states = { path = "anki-states" }
+# rslib's typed-answer diff runs on difflib's SequenceMatcher; same crate, same token output.
+difflib = "0.4"
+# NFC normalization for the typed-answer diff, as rslib does before comparing.
+unicode-normalization = "0.1"
 
 # Release profile for the shipped Android .so. cargo-ndk builds --release, so this is what ships.
 # LTO + a single codegen unit let the optimizer inline across crates and drop dead code (zstd,
