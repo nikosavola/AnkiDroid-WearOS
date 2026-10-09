@@ -1,16 +1,21 @@
 //! The note type's stylesheet, applied to card HTML for the watch's native text renderer, which
 //! has no CSS engine. Only class rules and the properties Compose's HTML import can show (colour,
-//! bold, italic, underline, strike-through) are carried, read the way AnkiDroid's night mode reads
-//! them: the body has `card cardN nightMode night_mode`, so `.nightMode .cloze` beats `.cloze`.
-//! Rules for the card itself (`.card { color: black }`) are left out, as AnkiDroid's own night
-//! mode overrides them.
+//! size, bold, italic, underline, strike-through) are carried, read the way AnkiDroid's night mode
+//! reads them: the body has `card cardN nightMode night_mode`, so `.nightMode .cloze` beats
+//! `.cloze`. Rules for the card itself (`.card { color: black }`) are left out, as AnkiDroid's own
+//! night mode overrides them.
 
 use std::collections::HashMap;
 use std::fmt::Write;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// The font size the bitmap renderer's page body uses; relative sizes resolve against it.
+pub const BASE_PX: f32 = 18.0;
+
+#[derive(Debug, Clone, Default, PartialEq)]
 struct Style {
     color: Option<String>,
+    /// Absolute px, resolved against the 18px the bitmap renderer's body uses.
+    font_size: Option<f32>,
     bold: Option<bool>,
     italic: Option<bool>,
     underline: Option<bool>,
@@ -21,6 +26,9 @@ impl Style {
     fn merge(&mut self, other: &Self) {
         if other.color.is_some() {
             self.color.clone_from(&other.color);
+        }
+        if other.font_size.is_some() {
+            self.font_size = other.font_size;
         }
         self.bold = other.bold.or(self.bold);
         self.italic = other.italic.or(self.italic);
@@ -155,6 +163,7 @@ fn parse_declarations(body: &str) -> Style {
         let value = value.trim().trim_end_matches("!important").trim().to_ascii_lowercase();
         match prop.trim().to_ascii_lowercase().as_str() {
             "color" => style.color = normalize_color(&value),
+            "font-size" => style.font_size = font_size_px(&value),
             "font-weight" => {
                 style.bold = Some(
                     value == "bold"
@@ -171,6 +180,40 @@ fn parse_declarations(body: &str) -> Style {
         }
     }
     style
+}
+
+/// A font size in px, or `None` for values the watch can't honour.
+///
+/// `em` and `%` resolve against the 18px base the bitmap renderer's body uses, matching how the
+/// class rule sizes text there. A note CSS that sets its own `.card` font-size shifts the WebView's
+/// real base, so those decks' sizes can be a few percent off; the ladder keywords follow Chrome.
+pub fn font_size_px(value: &str) -> Option<f32> {
+    let lower = value.to_ascii_lowercase();
+    let number = |s: &str| s.trim().parse::<f32>().ok().filter(|v| v.is_finite() && *v > 0.0);
+    if let Some(rest) = lower.strip_suffix("px") {
+        return number(rest);
+    }
+    if let Some(rest) = lower.strip_suffix("pt") {
+        return number(rest).map(|v| v * 4.0 / 3.0);
+    }
+    if let Some(rest) = lower.strip_suffix("em") {
+        return number(rest).map(|v| v * BASE_PX);
+    }
+    if let Some(rest) = lower.strip_suffix('%') {
+        return number(rest).map(|v| v * BASE_PX / 100.0);
+    }
+    // Chrome's CSS keyword ladder.
+    let px = match lower.trim() {
+        "xx-small" => 10.0,
+        "x-small" => 13.0,
+        "small" => 16.0,
+        "medium" => 18.0,
+        "large" => 24.0,
+        "x-large" => 32.0,
+        "xx-large" => 48.0,
+        _ => return None,
+    };
+    Some(px)
 }
 
 /// A colour as `#rrggbb`, which every HTML importer understands, or `None` if it isn't one.
@@ -199,7 +242,7 @@ fn normalize_color(value: &str) -> Option<String> {
     named_color(value).map(str::to_string)
 }
 
-const VOID_ELEMENTS: &[&str] = &[
+pub const VOID_ELEMENTS: &[&str] = &[
     "area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track",
     "wbr",
 ];
@@ -259,7 +302,7 @@ fn apply(html: &str, rules: &[Rule]) -> String {
         let self_closing = inner.ends_with('/') || VOID_ELEMENTS.contains(&name.as_str());
         match style.filter(|s| !s.is_empty()) {
             Some(style) if !self_closing => {
-                out.push_str(&with_color(tag, style.color.as_deref()));
+                out.push_str(&with_inline_style(tag, style.color.as_deref(), style.font_size));
                 let wrappers: Vec<&'static str> = [
                     (style.bold == Some(true), "b"),
                     (style.italic == Some(true), "i"),
@@ -308,11 +351,14 @@ fn class_attr(inner: &str) -> Option<&str> {
     None
 }
 
-/// [`tag`] with `color` added to its inline style, unless the element already sets its own.
-fn with_color(tag: &str, color: Option<&str>) -> String {
-    let Some(color) = color else {
+/// [`tag`] with `color` and `font-size` added to its inline style, each skipped when the element
+/// already sets its own. `font-size` lands in `style=` so the watch's display pass can scale it.
+fn with_inline_style(tag: &str, color: Option<&str>, font_size: Option<f32>) -> String {
+    let mut color = color.map(|c| format!("color:{c}"));
+    let mut font_size = font_size.map(|px| format!("font-size:{px}px"));
+    if color.is_none() && font_size.is_none() {
         return tag.to_string();
-    };
+    }
     let lower = tag.to_ascii_lowercase();
     if let Some(at) = lower.find("style=") {
         let quote_at = at + "style=".len();
@@ -323,17 +369,36 @@ fn with_color(tag: &str, color: Option<&str>) -> String {
         let Some(len) = tag[value_start..].find(q) else {
             return tag.to_string();
         };
-        let existing = &lower[value_start..value_start + len];
-        let has_own = existing
-            .split(';')
-            .any(|d| d.split_once(':').is_some_and(|(p, _)| p.trim() == "color"));
-        if has_own {
+        let existing = &tag[value_start..value_start + len];
+        for decl in existing.split(';') {
+            let prop =
+                decl.split_once(':').map_or(String::new(), |(p, _)| p.trim().to_ascii_lowercase());
+            match prop.as_str() {
+                "color" => color = None,
+                "font-size" => font_size = None,
+                _ => {}
+            }
+        }
+        let additions: Vec<String> = [color, font_size].into_iter().flatten().collect();
+        if additions.is_empty() {
             return tag.to_string();
         }
-        return format!("{}color:{color};{}", &tag[..value_start], &tag[value_start..]);
+        let prefix = if existing.trim().is_empty() {
+            String::new()
+        } else {
+            format!("{};", existing.trim_end_matches(';'))
+        };
+        return format!(
+            "{}{}{}{}",
+            &tag[..value_start],
+            prefix,
+            additions.join(";"),
+            &tag[value_start + len..]
+        );
     }
     let end = if tag.ends_with("/>") { tag.len() - 2 } else { tag.len() - 1 };
-    format!("{} style=\"color:{color}\"{}", &tag[..end], &tag[end..])
+    let joined = [color, font_size].into_iter().flatten().collect::<Vec<_>>().join(";");
+    format!("{} style=\"{}\"{}", &tag[..end], joined, &tag[end..])
 }
 
 fn strip_comments(css: &str) -> String {
@@ -550,7 +615,31 @@ mod tests {
         let other = r#"<span class="x" style="font-size:2em">t</span>"#;
         assert_eq!(
             inline_card_css(other.into(), css.into(), 0),
-            r#"<span class="x" style="color:#ff0000;font-size:2em">t</span>"#
+            r#"<span class="x" style="font-size:2em;color:#ff0000">t</span>"#
+        );
+        // The element's own font-size wins over the class rule's, like its own colour does.
+        let sized = ".k { font-size: 40px; color: blue }";
+        assert_eq!(
+            inline_card_css(
+                r#"<span class="k" style="font-size:20px">漢</span>"#.into(),
+                sized.into(),
+                0
+            ),
+            r#"<span class="k" style="font-size:20px;color:#0000ff">漢</span>"#
+        );
+    }
+
+    #[test]
+    fn font_size_rules_are_inlined_as_px() {
+        let css = ".kanji { font-size: 40px } .big { font-size: 2em } .pct { font-size: 150% }";
+        let html = r#"<span class="kanji">漢</span><span class="big">大</span><span class="pct">字</span>"#;
+        assert_eq!(
+            inline_card_css(html.into(), css.into(), 0),
+            concat!(
+                r#"<span class="kanji" style="font-size:40px">漢</span>"#,
+                r#"<span class="big" style="font-size:36px">大</span>"#,
+                r#"<span class="pct" style="font-size:27px">字</span>"#,
+            )
         );
     }
 
