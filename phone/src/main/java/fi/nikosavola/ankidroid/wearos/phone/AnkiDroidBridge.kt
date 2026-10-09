@@ -153,6 +153,15 @@ class AnkiDroidBridge(
     return question to answer
   }
 
+  /** The stylesheet of [noteId]'s note type, for the phone-side card render; null if unknown. */
+  fun noteTypeCss(noteId: Long): String? =
+    try {
+      provider.noteFields(noteId)?.let { noteTypeOf(it.modelId) }?.css
+    } catch (e: Exception) {
+      Log.w(TAG, "Couldn't read note $noteId's note type: ${e.message}")
+      null
+    }
+
   private fun noteTypeOf(modelId: Long): NoteType? =
     synchronized(noteTypes) { noteTypes.getOrPut(modelId) { provider.noteType(modelId) } }
 

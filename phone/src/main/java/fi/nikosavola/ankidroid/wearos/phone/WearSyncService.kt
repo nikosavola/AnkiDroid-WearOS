@@ -143,7 +143,10 @@ class WearSyncService : WearableListenerService() {
             // Sync card bitmaps independently, path-separated, asynchronously. Only the near horizon
             // is worth rendering: bitmaps are the expensive leg over Bluetooth, so a whole week up
             // front would flood the Data Layer for cards the watch won't reach for days.
-            renderer.syncBitmapsForBatch(bitmapHorizonBatch(batch, bridge.todayDayIndex()))
+            renderer.syncBitmapsForBatch(
+              bitmapHorizonBatch(batch, bridge.todayDayIndex()),
+              bridge::noteTypeCss,
+            )
           } catch (e: Exception) {
             Log.e(TAG, "Failed to compile and sync requested deck $deckId: ${e.message}", e)
           }
@@ -211,7 +214,7 @@ class WearSyncService : WearableListenerService() {
             Log.i(TAG, "Synced ${batch.cards.size} new cards for deck $deckId back to watch.")
 
             // Sync card bitmaps independently, path-separated, asynchronously
-            renderer.syncBitmapsForBatch(batch)
+            renderer.syncBitmapsForBatch(batch, bridge::noteTypeCss)
           } catch (e: Exception) {
             Log.e(TAG, "Failed to fetch/sync new cards for deck $deckId: ${e.message}", e)
           }

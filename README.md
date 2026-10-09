@@ -135,3 +135,6 @@ which supplements the GPL in `ankidroid-provider/COPYING`). `core/vendor/anki/` 
 `rslib` verbatim (Copyright Ankitects Pty Ltd and contributors, AGPL-3.0-or-later; pinned in
 `core/vendor/anki/UPSTREAM.toml`, checked by `scripts/vendor-rslib.sh --check`), and the queue
 builder in `core/src/pool.rs` ports logic from it.
+
+The phone app bundles [MathJax](https://www.mathjax.org/) 3.2.2 (Apache-2.0, see
+`phone/src/main/assets/mathjax/LICENSE`).

@@ -55,7 +55,7 @@ class CardBitmapRendererTest {
     assertTrue(renderer.needsRichRendering("""<span style="border-top:1px solid">x</span>"""))
     assertTrue(renderer.needsRichRendering("""<table style="border: 1px solid">x</table>"""))
     assertTrue(renderer.needsRichRendering("""<svg viewBox="0 0 1 1"></svg>"""))
-    // The provider sends the note type's stylesheet with the card.
+    // A <style> block inside the card HTML itself, e.g. from a field.
     val styled = "<style>.pitch { text-decoration-line: overline; }</style><span class=pitch>x</span>"
     assertTrue(renderer.needsRichRendering(styled))
   }
@@ -115,5 +115,44 @@ class CardBitmapRendererTest {
     assertEquals(html, prepareForRender(html, mediaReadable = true))
     // Uppercase and self-closing tags are removed the same way.
     assertEquals("x", prepareForRender("""<IMG SRC="a.png"/>x""", mediaReadable = false))
+  }
+
+  @Test
+  fun mathJax_needsRichRendering_onlyWithAnkisDelimiters() {
+    assertTrue(renderer.needsRichRendering("""Euler: \(e^{i\pi}+1=0\)"""))
+    assertTrue(renderer.needsRichRendering("""\[\int_0^1 x\,dx\]"""))
+    // Anki doesn't treat dollars as math, and stray backslashes or parentheses aren't math either.
+    assertFalse(renderer.needsRichRendering("""costs ${'$'}5 (or ${'$'}x${'$'})"""))
+    assertFalse(renderer.needsRichRendering("""C:\Users\anki (path)"""))
+  }
+
+  @Test
+  fun cardPageHtml_loadsMathJaxOnlyWhenTheSideUsesIt() {
+    val math = cardPageHtml("""\(x^2\)""", ord = 0)
+    assertTrue(math.contains("""<script src="mathjax/tex-svg-full.js"></script>"""))
+    assertTrue(math.contains("mathjax-needs-to-render"))
+    assertTrue(math.contains("typesetPromise"))
+
+    val plain = cardPageHtml("<b>plain</b>", ord = 0)
+    assertFalse(plain.contains("mathjax"))
+    assertFalse(plain.contains("MathJax"))
+  }
+
+  @Test
+  fun cardPageHtml_usesAnkiDroidsNightModeBodyClasses() {
+    assertTrue(cardPageHtml("x", ord = 0).contains("""<body class="card card1 nightMode night_mode">"""))
+    assertTrue(cardPageHtml("x", ord = 2).contains("""<body class="card card3 nightMode night_mode">"""))
+  }
+
+  @Test
+  fun cardPageHtml_injectsTheNoteTypeCssAfterTheBaseStyles() {
+    val css = ".card { color: black; } .nightMode .cloze { color: lightblue; }"
+    val page = cardPageHtml("x", ord = 0, css = css)
+    // Same order as AnkiDroid's card_template.html: base (flashcard.css) styles, then the note's.
+    assertTrue(page.indexOf("body.night_mode") < page.indexOf(css))
+    assertTrue(page.contains("<style>$css</style>"))
+    assertFalse(cardPageHtml("x", ord = 0).contains("lightblue"))
+    // A stray closing tag can't end the block early.
+    assertFalse(cardPageHtml("x", ord = 0, css = "a{}</style><b>").contains("</style><b>"))
   }
 }

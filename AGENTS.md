@@ -149,8 +149,17 @@ frequently ship **no WebView provider** (e.g. Galaxy Watch), so constructing a `
   the phone (which has a WebView) into a PNG, streamed to the watch as a per-card Data Layer asset,
   cached (`CardImageCache`), and shown by `CardSideContent` in place of the cleaned text. The native
   text path above remains the fallback when no bitmap is cached. The decision reads CSS declarations
-  only (inline or the note type's stylesheet, which the provider sends with the card); never match a
-  deck, note type or class name.
+  in the card HTML only (inline styles or a `<style>` block in a field; the provider does not send
+  the note type's stylesheet); never match a deck, note type or class name.
+- **Bitmap page matches AnkiDroid's card WebView:** the body gets `card card{ord+1} nightMode
+  night_mode` (the watch is always dark) and the note type's CSS (not in the provider's card HTML;
+  the caller passes it to `syncBitmapsForBatch(batch, noteCss)`) is injected after the base styles
+  as in AnkiDroid's card template, so its `.nightMode` overrides apply while AnkiDroid's
+  `body.night_mode` colors win over `.card`, on a transparent background. The note CSS never
+  feeds the bitmap gate. Sides with Anki's MathJax delimiters (`\(..\)`, `\[..\]`, never `$`) go
+  through the bitmap path and load the bundled MathJax 3 SVG build
+  (`phone/src/main/assets/mathjax/`, no fonts needed); capture waits until the
+  `mathjax-needs-to-render` body class is removed after typesetting.
 
 ### Keeping it smooth
 Compose already draws through the GPU (HWUI on the RenderThread); what costs frames on a watch is
