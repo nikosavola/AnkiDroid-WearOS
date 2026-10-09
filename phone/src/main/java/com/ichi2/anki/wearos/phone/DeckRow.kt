@@ -35,3 +35,22 @@ fun flattenDeckTree(root: DeckNode, expanded: Set<String>, expandAll: Boolean = 
     }
     walk(root, null, 0)
   }
+
+/** Paths of this folder and every folder below it, for expanding or collapsing a whole branch. */
+fun DeckRow.folderPaths(): List<String> = buildList {
+  fun walk(node: DeckNode, path: String) {
+    if (node.children.isEmpty()) return
+    add(path)
+    for (child in node.children.values) walk(child, "$path::${child.name}")
+  }
+  walk(node, path)
+}
+
+/**
+ * Card browser search for a deck and its subdecks, quoted and escaped like Anki's own search writer:
+ * `*` and `_` are wildcards in deck names and `"` would end the term.
+ */
+fun deckSearch(fullName: String): String {
+  val escaped = fullName.replace(Regex("""[\\*_"]""")) { "\\" + it.value }
+  return "\"deck:$escaped\""
+}

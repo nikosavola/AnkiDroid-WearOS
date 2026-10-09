@@ -7,4 +7,6 @@ class PhoneActions(
   val onOpenAppSettings: () -> Unit = {},
   val onRefreshDecks: () -> Unit = {},
   val onCopyReport: (String) -> Unit = {},
+  val onStudyDeck: (DeckId) -> Unit = {},
+  val onBrowseDeck: (String) -> Unit = {},
 )

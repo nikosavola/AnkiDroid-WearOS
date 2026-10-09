@@ -1,6 +1,7 @@
 package com.ichi2.anki.wearos.phone
 
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -12,6 +13,9 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -21,6 +25,9 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TriStateCheckbox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -33,9 +40,21 @@ import androidx.compose.ui.unit.dp
 private val ChevronSlot = 28.dp
 
 /**
+ * What a long-press on a row offers. [allExpanded] is null while a search forces every folder open,
+ * which hides the expand/collapse entry.
+ */
+class DeckRowMenu(
+  val onStudy: (DeckId) -> Unit = {},
+  val onBrowse: (String) -> Unit = {},
+  val onSyncOnly: (DeckRow) -> Unit = {},
+  val allExpanded: ((DeckRow) -> Boolean)? = null,
+  val onExpandAll: (DeckRow, Boolean) -> Unit = { _, _ -> },
+)
+
+/**
  * The deck tree as lazy items, so it scrolls with the rest of the page instead of fighting a nested
  * scroller for height. Folder rows spring-rotate their chevron; rows animate in and out with
- * [LazyItemScope.animateItem].
+ * [LazyItemScope.animateItem]. A long-press opens the row's [DeckRowMenu].
  */
 fun LazyListScope.deckTreeItems(
   rows: List<DeckRow>,
@@ -45,22 +64,54 @@ fun LazyListScope.deckTreeItems(
   onDeckChecked: (DeckId, Boolean) -> Unit,
   onFolderChecked: (DeckRow, Boolean) -> Unit,
   dueCountOf: (DeckRow) -> Int?,
+  menu: DeckRowMenu = DeckRowMenu(),
   itemModifier: Modifier = Modifier,
 ) {
   items(rows, key = { "deck:${it.path}" }) { row ->
-    val modifier = itemModifier.animateItem()
-    if (row.isFolder) {
-      FolderRow(
-        row,
-        isExpanded(row.path),
-        { onToggleFolder(row.path) },
-        checkedOf,
-        onFolderChecked,
-        dueCountOf(row),
-        modifier,
+    var menuOpen by remember { mutableStateOf(false) }
+    Box(itemModifier.animateItem().fillMaxWidth().padding(start = (row.depth * 16).dp)) {
+      if (row.isFolder) {
+        FolderRow(
+          row,
+          isExpanded(row.path),
+          { onToggleFolder(row.path) },
+          checkedOf,
+          onFolderChecked,
+          dueCountOf(row),
+          onLongClick = { menuOpen = true },
+        )
+      } else {
+        DeckLeafRow(row, checkedOf, onDeckChecked, dueCountOf(row), onLongClick = { menuOpen = true })
+      }
+      DeckRowMenuPopup(row, menu, menuOpen, onDismiss = { menuOpen = false })
+    }
+  }
+}
+
+@Composable
+private fun DeckRowMenuPopup(row: DeckRow, menu: DeckRowMenu, open: Boolean, onDismiss: () -> Unit) {
+  fun pick(action: () -> Unit) {
+    onDismiss()
+    action()
+  }
+  DropdownMenu(expanded = open, onDismissRequest = onDismiss) {
+    // A folder built from search matches alone has no deck of its own to study.
+    row.node.deckId?.let { id ->
+      DropdownMenuItem(text = { Text("Study in AnkiDroid") }, onClick = { pick { menu.onStudy(id) } })
+    }
+    DropdownMenuItem(text = { Text("Browse cards") }, onClick = { pick { menu.onBrowse(row.path) } })
+    HorizontalDivider()
+    DropdownMenuItem(
+      text = { Text(if (row.isFolder) "Sync only this folder" else "Sync only this deck") },
+      onClick = { pick { menu.onSyncOnly(row) } },
+    )
+    val allExpanded = menu.allExpanded
+    if (row.isFolder && allExpanded != null) {
+      val expanded = allExpanded(row)
+      DropdownMenuItem(
+        text = { Text(if (expanded) "Collapse all" else "Expand all") },
+        onClick = { pick { menu.onExpandAll(row, !expanded) } },
       )
-    } else {
-      DeckLeafRow(row, checkedOf, onDeckChecked, dueCountOf(row), modifier)
     }
   }
 }
@@ -73,7 +124,7 @@ private fun FolderRow(
   checkedOf: (DeckId) -> Boolean,
   onFolderChecked: (DeckRow, Boolean) -> Unit,
   due: Int?,
-  modifier: Modifier,
+  onLongClick: () -> Unit,
 ) {
   val chevron by
     animateFloatAsState(
@@ -90,9 +141,11 @@ private fun FolderRow(
     }
   SegmentedListItem(
     onClick = onToggle,
+    onLongClick = onLongClick,
+    onLongClickLabel = "More options",
     shapes = ListItemDefaults.segmentedShapes(row.index, row.siblingCount),
     colors = segmentColors(),
-    modifier = modifier.fillMaxWidth().padding(start = (row.depth * 16).dp),
+    modifier = Modifier.fillMaxWidth(),
     leadingContent = {
       Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
@@ -129,15 +182,17 @@ private fun DeckLeafRow(
   checkedOf: (DeckId) -> Boolean,
   onDeckChecked: (DeckId, Boolean) -> Unit,
   due: Int?,
-  modifier: Modifier,
+  onLongClick: () -> Unit,
 ) {
   val id = row.node.deckId ?: return
   SegmentedListItem(
     checked = checkedOf(id),
     onCheckedChange = { onDeckChecked(id, it) },
+    onLongClick = onLongClick,
+    onLongClickLabel = "More options",
     shapes = ListItemDefaults.segmentedShapes(row.index, row.siblingCount),
     colors = segmentColors(),
-    modifier = modifier.fillMaxWidth().padding(start = (row.depth * 16).dp),
+    modifier = Modifier.fillMaxWidth(),
     leadingContent = {
       // Pad inside the row so it shares its left edge with sibling folders while the checkbox
       // still lines up with theirs.

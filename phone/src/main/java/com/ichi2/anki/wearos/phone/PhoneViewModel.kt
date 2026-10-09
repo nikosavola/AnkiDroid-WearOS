@@ -103,7 +103,6 @@ class PhoneViewModel(app: Application, private val savedState: SavedStateHandle)
     const val KEY_FILTER = "deck_filter"
     const val KEY_EXPANDED = "expanded_folders"
     const val KEY_DIALOG = "active_dialog"
-    const val ANKIDROID_PACKAGE = "com.ichi2.anki"
     const val DONE_HOLD_MS = 1500L
   }
 
@@ -185,6 +184,12 @@ class PhoneViewModel(app: Application, private val savedState: SavedStateHandle)
     savedState[KEY_EXPANDED] = ArrayList(expandedFolders)
   }
 
+  /** Open or close [paths] together, e.g. a folder and every folder below it. */
+  fun setFoldersExpanded(paths: List<String>, expanded: Boolean) {
+    expandedFolders = if (expanded) expandedFolders + paths else expandedFolders - paths.toSet()
+    savedState[KEY_EXPANDED] = ArrayList(expandedFolders)
+  }
+
   fun openDialog(dialog: PhoneDialog) {
     activeDialog = dialog
     savedState[KEY_DIALOG] = dialog.name
@@ -249,6 +254,16 @@ class PhoneViewModel(app: Application, private val savedState: SavedStateHandle)
   fun setAllDecksSelected(selected: Boolean) {
     deckPrefs().edit().apply { for ((id, _) in allDecks) putBoolean("deck_${id.value}", selected) }.apply()
     for ((id, _) in allDecks) deckSelection[id] = selected
+  }
+
+  /** Select exactly [ids] for syncing and clear every other deck. */
+  fun syncOnly(ids: Collection<DeckId>) {
+    val keep = ids.toSet()
+    deckPrefs()
+      .edit()
+      .apply { for ((id, _) in allDecks) putBoolean("deck_${id.value}", id in keep) }
+      .apply()
+    for ((id, _) in allDecks) deckSelection[id] = id in keep
   }
 
   /** Refresh the "Last synced …" caption from the stored timestamp. */
@@ -414,3 +429,4 @@ class PhoneViewModel(app: Application, private val savedState: SavedStateHandle)
 }
 
 const val ANKIDROID_PERMISSION = "com.ichi2.anki.permission.READ_WRITE_DATABASE"
+const val ANKIDROID_PACKAGE = "com.ichi2.anki"
