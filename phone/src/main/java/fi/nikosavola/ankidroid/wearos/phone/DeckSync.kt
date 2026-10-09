@@ -6,6 +6,8 @@ import android.util.Log
 import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
 import uniffi.wearos_core.serializeDueBatch
 
@@ -66,7 +68,14 @@ object DeckSync {
   private fun deckPrefs(context: Context) =
     context.getSharedPreferences(DECK_PREFS, Context.MODE_PRIVATE)
 
-  suspend fun run(context: Context, onProgress: (String, Int) -> Unit = { _, _ -> }): SyncSummary? {
+  // A sync-now request and the periodic auto-sync can start together (both fire after an app
+  // update); run one after the other so each deck is fetched and rendered once at a time.
+  private val running = Mutex()
+
+  suspend fun run(context: Context, onProgress: (String, Int) -> Unit = { _, _ -> }): SyncSummary? =
+    running.withLock { runExclusive(context, onProgress) }
+
+  private suspend fun runExclusive(context: Context, onProgress: (String, Int) -> Unit): SyncSummary? {
     val bridge = AnkiDroidBridge(context)
     val renderer = CardBitmapRenderer(context)
     val settings = context.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
