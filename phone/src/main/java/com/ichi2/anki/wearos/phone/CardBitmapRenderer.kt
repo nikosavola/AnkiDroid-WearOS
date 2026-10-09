@@ -21,6 +21,7 @@ import com.google.android.gms.wearable.Wearable
 import java.io.ByteArrayOutputStream
 import java.io.FileNotFoundException
 import java.security.MessageDigest
+import java.util.Optional
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.tasks.await
@@ -38,7 +39,8 @@ class CardBitmapRenderer(private val context: Context) {
     // Data Items with an old content key are treated as stale and re-rendered. 2: wrapping body,
     // content-height capture, sound-ref stripping, images dropped when media can't be served.
     // 3: no per-template rules or language-specific fonts in the wrapper.
-    private const val RENDER_VERSION = 3
+    // 4: AnkiDroid-style body classes and night mode, MathJax.
+    private const val RENDER_VERSION = 4
 
     // Render at a width that covers the largest current Wear round displays (~450-480px) so the
     // watch downscales (ContentScale.Fit) to a crisp image on any device. True per-device sizing
@@ -53,20 +55,29 @@ class CardBitmapRenderer(private val context: Context) {
 
     // Bounded poll for readiness (DOM complete + images loaded) instead of a flat post-load delay.
     private const val MAX_CAPTURE_ATTEMPTS = 20
+    // MathJax has to parse a 2MB script and typeset before the side is ready, so math sides get a
+    // longer (still bounded) wait.
+    private const val MAX_MATHJAX_CAPTURE_ATTEMPTS = 100
     private const val CAPTURE_POLL_MS = 30L
+    private const val PAINT_TIMEOUT_MS = 500L
 
     // Schemes the offscreen render is allowed to load; anything else is blocked as egress. `about`
     // covers WebView's own about:blank bootstrap.
     private val ALLOWED_SCHEMES = setOf("file", "data", "content", "about")
   }
 
-  suspend fun render(html: String, width: Int = RENDER_SIZE_PX): ByteArray? {
+  suspend fun render(
+    html: String,
+    ord: Int = 0,
+    css: String? = null,
+    width: Int = RENDER_SIZE_PX,
+  ): ByteArray? {
     // WebView drawing has to happen on the main thread; PNG encoding is slow and must not.
-    val bitmap = drawOnMain(html, width) ?: return null
+    val bitmap = drawOnMain(html, ord, css, width) ?: return null
     return withContext(Dispatchers.Default) { encodePng(bitmap) }
   }
 
-  private suspend fun drawOnMain(html: String, width: Int): Bitmap? {
+  private suspend fun drawOnMain(html: String, ord: Int, css: String?, width: Int): Bitmap? {
     return withContext(Dispatchers.Main) {
       if (!slowDrawEnabled) {
         try {
@@ -98,44 +109,9 @@ class CardBitmapRenderer(private val context: Context) {
 
         webView.setBackgroundColor(Color.TRANSPARENT)
 
-        val wrappedHtml =
-          """
-          <html>
-          <head>
-          <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-          <style>
-            * {
-              max-width: 100%;
-              box-sizing: border-box;
-            }
-            body {
-              background-color: transparent;
-              color: #FFFFFF;
-              font-family: sans-serif;
-              font-size: 18px;
-              text-align: center;
-              margin: 0;
-              padding: 16px;
-              /* Block layout, not a centred flex column: a flex item is sized to its max-content
-                 width, so a long sentence never wrapped and ran off both edges of the capture. */
-              overflow-wrap: anywhere;
-              word-break: normal;
-            }
-            img {
-              max-width: 90%;
-              max-height: 70%;
-              height: auto;
-              object-fit: contain;
-              margin: 8px 0;
-            }
-          </style>
-          </head>
-          <body>
-            $html
-          </body>
-          </html>
-        """
-            .trimIndent()
+        val wrappedHtml = cardPageHtml(html, ord, css)
+        val maxAttempts =
+          if (containsMathJax(html)) MAX_MATHJAX_CAPTURE_ATTEMPTS else MAX_CAPTURE_ATTEMPTS
 
         webView.webViewClient =
           object : WebViewClient() {
@@ -185,7 +161,7 @@ class CardBitmapRenderer(private val context: Context) {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
-              captureWhenReady(webView, width, 0) { deferred.complete(it) }
+              captureWhenReady(webView, width, 0, maxAttempts) { deferred.complete(it) }
             }
           }
 
@@ -209,28 +185,32 @@ class CardBitmapRenderer(private val context: Context) {
   }
 
   /**
-   * Capture once the page is genuinely ready: DOM complete AND every <img> has finished loading
-   * (naturalHeight > 0), polled on a short interval. Falls back to capturing anyway after
-   * [MAX_CAPTURE_ATTEMPTS] so a stuck/missing image can't hang the render. Replaces the old flat
-   * 60ms delay, which could fire mid-reflow or before media arrived.
+   * Capture once the page is genuinely ready: DOM complete, every <img> has finished loading
+   * (naturalHeight > 0) and MathJax, if any, has typeset, polled on a short interval. Falls back to
+   * capturing anyway after [maxAttempts] so a stuck/missing image can't hang the render.
    */
   private fun captureWhenReady(
     webView: WebView,
     width: Int,
     attempt: Int,
+    maxAttempts: Int,
     onReady: (Bitmap?) -> Unit,
   ) {
     val readinessJs =
       "(function(){return document.readyState==='complete'&&" +
+        "!document.body.classList.contains('$MATHJAX_PENDING_CLASS')&&" +
         "Array.prototype.every.call(document.images,function(i){" +
         "return i.complete&&i.naturalHeight>0;});})()"
     webView.evaluateJavascript(readinessJs) { result ->
-      if (result == "true" || attempt >= MAX_CAPTURE_ATTEMPTS) {
+      if (result == "true" || attempt >= maxAttempts) {
+        if (result != "true") {
+          Log.w(TAG, "Capturing before the page reported ready")
+        }
         captureFullHeight(webView, width, onReady)
       } else {
         Handler(Looper.getMainLooper())
           .postDelayed(
-            { captureWhenReady(webView, width, attempt + 1, onReady) },
+            { captureWhenReady(webView, width, attempt + 1, maxAttempts, onReady) },
             CAPTURE_POLL_MS,
           )
       }
@@ -244,15 +224,42 @@ class CardBitmapRenderer(private val context: Context) {
    * clips at the old height. Clamped so a pathological layout can't allocate an enormous bitmap.
    */
   private fun captureFullHeight(webView: WebView, width: Int, onReady: (Bitmap?) -> Unit) {
-    val heightJs = "(function(){return document.documentElement.scrollHeight;})()"
+    // The body, not the document: the document is never shorter than the square viewport, which
+    // left a one-line card as a line of text at the top of a mostly empty image.
+    val heightJs =
+      "(function(){var b=document.body.getBoundingClientRect();" +
+        "return Math.max(b.bottom,document.body.scrollHeight)+window.scrollY;})()"
     webView.evaluateJavascript(heightJs) { result ->
       val density = context.resources.displayMetrics.density
       // A failed or empty probe keeps the old square capture rather than guessing at a tiny one.
       val cssHeight = result?.trim('"')?.toFloatOrNull()?.takeIf { it > 0f } ?: width / density
-      val contentHeight = (cssHeight * density).toInt().coerceIn(width / 2, width * 4)
+      val contentHeight = (cssHeight * density).toInt().coerceIn(1, width * 4)
       webView.layout(0, 0, width, contentHeight)
-      onReady(captureBitmap(webView, width, contentHeight))
+      drawWhenPainted(webView) { onReady(captureBitmap(webView, width, contentHeight)) }
     }
+  }
+
+  /**
+   * A ready DOM isn't painted yet: drawing straight away gave fully transparent captures for every
+   * side that didn't happen to poll for a while (only MathJax ones waited long enough). The visual
+   * state callback fires once the current DOM is ready to draw; the timeout bounds it since an
+   * offscreen WebView isn't guaranteed to deliver it.
+   */
+  private fun drawWhenPainted(webView: WebView, draw: () -> Unit) {
+    var drawn = false
+    val once = {
+      if (!drawn) {
+        drawn = true
+        draw()
+      }
+    }
+    webView.postVisualStateCallback(
+      0L,
+      object : WebView.VisualStateCallback() {
+        override fun onComplete(requestId: Long) = once()
+      },
+    )
+    Handler(Looper.getMainLooper()).postDelayed(once, PAINT_TIMEOUT_MS)
   }
 
   private fun captureBitmap(webView: WebView, width: Int, height: Int): Bitmap? =
@@ -286,17 +293,19 @@ class CardBitmapRenderer(private val context: Context) {
     hasRichSignals(prepareForRender(html, mediaReadable))
 
   /**
-   * Only what native text can't draw: images, inline SVG, overlines and borders. Matched on CSS
-   * declarations, in inline styles or the note type's stylesheet (the provider sends it with the
-   * card), never on class or note type names. A bare `style=` is deliberately not a trigger: nearly
-   * every card carries one, and the bitmap path is the expensive one.
+   * Only what native text can't draw: images, inline SVG, overlines, borders and MathJax. Matched on
+   * CSS declarations in the card HTML itself (inline styles or a `<style>` block in a field; the
+   * provider does not send the note type's stylesheet), never on class or note type names. A bare
+   * `style=` is deliberately not a trigger: nearly every card carries one, and the bitmap path is
+   * the expensive one.
    */
   private fun hasRichSignals(html: String): Boolean {
     val lower = html.lowercase()
     return lower.contains("<img") ||
       lower.contains("<svg") ||
       OVERLINE_REGEX.containsMatchIn(lower) ||
-      BORDER_REGEX.containsMatchIn(lower)
+      BORDER_REGEX.containsMatchIn(lower) ||
+      containsMathJax(html)
   }
 
   /** Whether this HTML's images can be loaded; the provider is probed only for a real filename. */
@@ -337,10 +346,11 @@ class CardBitmapRenderer(private val context: Context) {
       true
     }
 
-  /** Stable hex SHA-256 of a side's HTML plus the renderer version. */
-  private fun contentKey(html: String): String {
+  /** Stable hex SHA-256 of everything that shapes the render: version, ord, note type CSS, HTML. */
+  private fun contentKey(html: String, ord: Int, css: String?): String {
     val digest = MessageDigest.getInstance("SHA-256")
-    val bytes = digest.digest("$RENDER_VERSION:$html".toByteArray(Charsets.UTF_8))
+    val input = "$RENDER_VERSION:$ord:${css?.length ?: -1}:${css.orEmpty()}:$html"
+    val bytes = digest.digest(input.toByteArray(Charsets.UTF_8))
     return bytes.joinToString("") { "%02x".format(it) }
   }
 
@@ -369,10 +379,12 @@ class CardBitmapRenderer(private val context: Context) {
     dataClient: DataClient,
     existing: Map<String, String>,
     cardId: Long,
+    ord: Int,
+    css: String?,
     side: String,
     html: String,
   ): Boolean {
-    val key = contentKey(html)
+    val key = contentKey(html, ord, css)
     val imagePath = "$IMAGE_PATH_PREFIX$cardId/$side"
     if (existing[imagePath] == key) {
       Log.d(TAG, "Skipping unchanged $side image for card $cardId")
@@ -380,7 +392,7 @@ class CardBitmapRenderer(private val context: Context) {
     }
 
     Log.d(TAG, "Card $cardId ($side) needs rich rendering. Rendering offscreen...")
-    val bytes = render(html)
+    val bytes = render(html, ord, css)
     if (bytes == null) {
       return false
     }
@@ -409,18 +421,29 @@ class CardBitmapRenderer(private val context: Context) {
       false
     }
 
-  suspend fun syncBitmapsForBatch(batch: uniffi.wearos_core.WearosDueBatch) {
+  /**
+   * [noteCss] maps a note id to its note type's CSS. AnkiDroid's provider leaves the stylesheet out
+   * of the card HTML, so the caller looks it up; null renders with the wrapper styles only. Called
+   * at most once per note, and only for notes with a side that renders.
+   */
+  suspend fun syncBitmapsForBatch(
+    batch: uniffi.wearos_core.WearosDueBatch,
+    noteCss: (noteId: Long) -> String? = { null },
+  ) {
     val dataClient = Wearable.getDataClient(context)
     val existing = existingContentKeys(dataClient)
     var rendered = 0
     var unchanged = 0
     var removed = 0
+    val cssByNote = HashMap<Long, Optional<String>>()
     for (card in batch.cards) {
+      // The gate reads the card HTML only; note CSS shapes the render, never the decision.
+      val css by lazy { cssByNote.getOrPut(card.noteId) { Optional.ofNullable(noteCss(card.noteId)) } }
       for ((side, rawHtml) in listOf("front" to card.front, "back" to card.back)) {
         val html = prepareForRender(rawHtml, isMediaReadable(rawHtml))
         val path = "$IMAGE_PATH_PREFIX${card.id}/$side"
         if (hasRichSignals(html)) {
-          if (syncSide(dataClient, existing, card.id, side, html)) {
+          if (syncSide(dataClient, existing, card.id, card.ord, css.orElse(null), side, html)) {
             rendered++
           } else {
             unchanged++
@@ -434,6 +457,8 @@ class CardBitmapRenderer(private val context: Context) {
     Log.i(TAG, "Bitmap sync done: $rendered rendered, $unchanged unchanged, $removed removed")
   }
 }
+
+private const val MATHJAX_PENDING_CLASS = "mathjax-needs-to-render"
 
 private val OVERLINE_REGEX = Regex("""text-decoration(-line)?\s*:[^;}"']*overline""")
 // Any border except an explicit none/0, which note types use to reset tables and inputs.
@@ -464,4 +489,108 @@ private fun mediaFileName(html: String): String? {
     return null
   }
   return src.substringAfterLast('/').substringBefore('?').takeIf { it.isNotEmpty() }
+}
+
+/** AnkiDroid loads MathJax only for cards using Anki's delimiters; `$` is not one of them. */
+internal fun containsMathJax(html: String): Boolean = html.contains("\\(") || html.contains("\\[")
+
+// Anki's delimiters only. The full build bundles every TeX package, so nothing is fetched later.
+private const val MATHJAX_HEAD =
+  """
+  <script>
+    window.MathJax = {
+      tex: {
+        inlineMath: [["\\(", "\\)"]],
+        displayMath: [["\\[", "\\]"]],
+        processEscapes: false,
+        processEnvironments: false,
+      },
+      options: { enableMenu: false, enableAssistiveMml: false },
+      startup: { typeset: false },
+    };
+  </script>
+  <script src="mathjax/tex-svg-full.js"></script>
+  """
+
+// Like AnkiDroid's reviewer: typeset after startup, then drop the pending class the capture polls.
+private const val MATHJAX_TYPESET =
+  """
+  <script>
+    (function () {
+      var done = function () {
+        document.body.classList.remove("$MATHJAX_PENDING_CLASS");
+      };
+      if (window.MathJax && MathJax.startup && MathJax.startup.promise) {
+        MathJax.startup.promise
+          .then(function () { return MathJax.typesetPromise([document.body]); })
+          .then(done, done);
+      } else {
+        done();
+      }
+    })();
+  </script>
+  """
+
+/**
+ * The page the offscreen WebView loads for one card side. Mirrors AnkiDroid's card WebView: body
+ * classes `card card{ord+1}` plus night mode (the watch is always dark) so the note type's [css],
+ * including its `.nightMode` overrides, applies; and MathJax only when the side uses it. As in
+ * AnkiDroid's card_template.html the note's style comes after the base styles, whose night mode
+ * colors still win over `.card` by specificity.
+ */
+internal fun cardPageHtml(html: String, ord: Int, css: String? = null): String {
+  val math = containsMathJax(html)
+  val bodyClasses =
+    "card card${ord + 1} nightMode night_mode" + if (math) " $MATHJAX_PENDING_CLASS" else ""
+  // A stray </style> in the note CSS must not end the block and spill the rest into the body.
+  val noteStyle =
+    css?.let { "<style>${it.replace("</style", "<\\/style", ignoreCase = true)}</style>" }.orEmpty()
+  return """
+    <!doctype html>
+    <html>
+    <head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <style>
+      * {
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+      body {
+        font-family: sans-serif;
+        font-size: 18px;
+        text-align: center;
+        margin: 0;
+        padding: 16px;
+        /* Block layout, not a centred flex column: a flex item is sized to its max-content
+           width, so a long sentence never wrapped and ran off both edges of the capture. */
+        overflow-wrap: anywhere;
+        word-break: normal;
+      }
+      /* AnkiDroid's flashcard.css night mode, which beats the note type's .card colors by
+         specificity. Transparent instead of black: the capture keeps the watch background. */
+      body.night_mode {
+        color: white;
+        background-color: transparent;
+      }
+      .nightMode .latex {
+        filter: invert(100%);
+      }
+      img {
+        max-width: 90%;
+        max-height: 70%;
+        height: auto;
+        object-fit: contain;
+        margin: 8px 0;
+      }
+    </style>
+    $noteStyle
+    ${if (math) MATHJAX_HEAD else ""}
+    </head>
+    <body class="$bodyClasses">
+      $html
+    ${if (math) MATHJAX_TYPESET else ""}
+    </body>
+    </html>
+  """
+    .trimIndent()
 }

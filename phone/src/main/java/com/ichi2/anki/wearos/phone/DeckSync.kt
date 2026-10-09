@@ -131,7 +131,10 @@ object DeckSync {
       // render() switches to the main thread internally, so this is safe from any coroutine. Only the
       // near horizon gets bitmaps: they're the expensive leg over Bluetooth, so rendering the whole
       // week up front would flood the Data Layer for cards the watch won't reach for days.
-      renderer.syncBitmapsForBatch(bitmapHorizonBatch(batch, bridge.todayDayIndex()))
+      renderer.syncBitmapsForBatch(
+              bitmapHorizonBatch(batch, bridge.todayDayIndex()),
+              bridge::noteTypeCss,
+            )
 
       pushed++
       totalCards += batch.cards.size
