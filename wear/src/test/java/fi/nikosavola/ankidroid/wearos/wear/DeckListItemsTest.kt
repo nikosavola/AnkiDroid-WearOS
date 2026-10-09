@@ -8,6 +8,8 @@ import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.longClick
 import androidx.wear.compose.material3.MaterialTheme
 import org.junit.Assert.assertEquals
 import org.junit.Rule
@@ -86,5 +88,63 @@ class DeckListItemsTest {
     }
     composeRule.onNodeWithText("DUE").assertIsDisplayed()
     composeRule.onNodeWithText("12").assertIsDisplayed()
+  }
+
+  @Test
+  fun deckCard_longPressFiresOnLongClick() {
+    var longPresses = 0
+    composeRule.setContent {
+      MaterialTheme {
+        DeckCard(
+          label = "Kaishi 1.5k",
+          dueNow = 5,
+          modifier = Modifier.testTag("deck"),
+          onClick = {},
+          onLongClick = { longPresses++ },
+        )
+      }
+    }
+    composeRule.onNodeWithTag("deck").performTouchInput { longClick() }
+    assertEquals(1, longPresses)
+  }
+
+  @Test
+  fun folderCard_longPressFiresOnLongClick() {
+    var longPresses = 0
+    composeRule.setContent {
+      MaterialTheme {
+        FolderCard(
+          name = "文法",
+          modifier = Modifier.testTag("folder"),
+          onClick = {},
+          onLongClick = { longPresses++ },
+        )
+      }
+    }
+    composeRule.onNodeWithTag("folder").performTouchInput { longClick() }
+    assertEquals(1, longPresses)
+  }
+
+  @Test
+  fun deckRowMenu_showsTitleAndFiresThePickedAction() {
+    var picked: String? = null
+    composeRule.setContent {
+      MaterialTheme {
+        DeckRowMenu(
+          title = "Kaishi 1.5k",
+          actions =
+            listOf(
+              "Refresh from phone" to { picked = "refresh" },
+              "Remove from watch" to { picked = "remove" },
+            ),
+          onDismissRequest = {},
+        )
+      }
+    }
+    composeRule.onNodeWithText("Kaishi 1.5k").assertIsDisplayed()
+    composeRule.onNodeWithText("Refresh from phone").performClick()
+    assertEquals("refresh", picked)
+    composeRule.onNodeWithText("Remove from watch").performClick()
+    assertEquals("remove", picked)
   }
 }

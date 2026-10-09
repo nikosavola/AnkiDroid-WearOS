@@ -467,7 +467,7 @@ class MainActivity : ComponentActivity() {
     sendToPhone("/request_deck", deckId.toString().toByteArray())
   }
 
-  private fun requestDeckFromPhone(deckId: Long) {
+  internal fun requestDeckFromPhone(deckId: Long) {
     pendingDeckId = deckId
     pendingIsNew = false
     sendToPhone(
@@ -496,6 +496,47 @@ class MainActivity : ComponentActivity() {
         pendingDeckId = null
         pendingIsNew = false
         phoneFailure = "Phone didn't respond"
+      }
+    }
+  }
+
+  /**
+   * Refresh several decks' pools from the phone without opening sessions or the one-deck sync arc
+   * (a folder refresh). Each arriving batch lands in the pool on its own; failures surface on the
+   * next single-deck refresh.
+   */
+  internal fun refreshDecksSilently(deckIds: List<Long>) {
+    if (deckIds.isEmpty()) return
+    deckIds.forEach { id -> sendToPhone("/request_deck", id.toString().toByteArray()) }
+    toast("Refreshing ${deckIds.size} decks...")
+  }
+
+  /**
+   * Drop the decks' pooled copies from the watch. They stay in the known list as "Tap to
+   * download", so this frees the pool's storage without hiding the decks; a deck with its session
+   * open has that session closed too.
+   */
+  internal fun removeDecksFromWatch(deckIds: List<Long>) {
+    if (deckIds.isEmpty()) return
+    scope.launch {
+      try {
+        val nowMs = systemWatchClock.nowMs()
+        // The keep list is read fresh from the pool: a stale cached list could forget a deck the
+        // user never asked to remove.
+        val keep =
+          withContext(Dispatchers.IO) {
+            poolDeckSummaries(nowMs, utcOffsetSecs(nowMs)).map { it.deckId }.filterNot { it in deckIds }
+          }
+        withContext(Dispatchers.IO) { poolForgetDecks(keep) }
+        val active = activeDeckId
+        if (active != null && deckIds.contains(active)) clearSession()
+        vm.loadDecks()
+        toast(if (deckIds.size == 1) "Removed from watch" else "Removed ${deckIds.size} decks")
+      } catch (e: CancellationException) {
+        throw e
+      } catch (e: Exception) {
+        Log.e(TAG, "Couldn't remove decks $deckIds: ${e.message}", e)
+        toast("Couldn't remove")
       }
     }
   }
@@ -744,7 +785,8 @@ class MainActivity : ComponentActivity() {
   }
 
   /**
-   * Front of a review card: progress, an optional undo, the tappable card body, and a reveal hint.
+   * Front of a review card: progress, an optional undo, the tappable card body, an optional
+   * type-in field, and a reveal hint.
    */
   @Composable
   internal fun BoxScope.ReviewFront(
@@ -754,6 +796,9 @@ class MainActivity : ComponentActivity() {
     spokenFront: String,
     curvedStyle: androidx.wear.compose.foundation.CurvedTextStyle,
     scrollState: androidx.compose.foundation.ScrollState,
+    typeExpected: String?,
+    typed: String,
+    onTyped: (String) -> Unit,
     onReveal: () -> Unit,
   ) {
     Column(
@@ -780,6 +825,10 @@ class MainActivity : ComponentActivity() {
         spokenText = spokenFront,
         modifier = Modifier.fillMaxWidth(),
       )
+      if (typeExpected != null) {
+        Spacer(modifier = Modifier.height(10.dp))
+        TypeAnswerField(value = typed, onValueChange = onTyped)
+      }
     }
     val hintColor = MaterialTheme.colorScheme.onSurfaceVariant
     Box(modifier = Modifier.fillMaxSize().cachedLayer()) {
@@ -790,7 +839,11 @@ class MainActivity : ComponentActivity() {
         anchorType = AnchorType.Center,
         angularDirection = CurvedDirection.Angular.Reversed,
       ) {
-        curvedText(text = "Tap to show answer", style = curvedStyle, color = hintColor)
+        curvedText(
+          text = if (typeExpected != null) "Type, then tap to check" else "Tap to show answer",
+          style = curvedStyle,
+          color = hintColor,
+        )
       }
     }
     // Undo the previous grade, tucked just left of the progress text at the top. Drawn LAST so it
@@ -817,6 +870,7 @@ class MainActivity : ComponentActivity() {
     cardStartTime: Long,
     gradeEnabled: Boolean,
     curvedStyle: CurvedTextStyle,
+    suppressBackImage: Boolean,
     onGrade: (ease: Int, durationMs: Long) -> Unit,
   ) {
     Column(
@@ -850,6 +904,7 @@ class MainActivity : ComponentActivity() {
         side = "back",
         fallbackHtml = displayBack,
         spokenText = spokenBack,
+        forceNative = suppressBackImage,
         modifier = Modifier.fillMaxWidth(),
       )
     }
@@ -875,15 +930,23 @@ class MainActivity : ComponentActivity() {
     side: String,
     fallbackHtml: String,
     spokenText: String,
+    forceNative: Boolean = false,
     modifier: Modifier = Modifier,
   ) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val widthPx = decodeWidthPx()
     // Keyed state rather than produceState, which would keep showing the previous card's image
-    // until the new decode lands.
+    // until the new decode lands. forceNative skips a stale bitmap entirely: the typed-answer diff
+    // replaces the back's nothing-typed image, and the HTML in front of it is the real content.
     var image by
-      remember(cardId, side) {
-        mutableStateOf(CardBitmaps.cached(cardId, side)?.let { SideImage.Ready(it) } ?: SideImage.Loading)
+      remember(cardId, side, forceNative) {
+        mutableStateOf<SideImage>(
+          if (forceNative) {
+            SideImage.None
+          } else {
+            CardBitmaps.cached(cardId, side)?.let { SideImage.Ready(it) } ?: SideImage.Loading
+          }
+        )
       }
     if (image == SideImage.Loading) {
       LaunchedEffect(cardId, side) {

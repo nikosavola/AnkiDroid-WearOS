@@ -29,9 +29,16 @@ fun FolderCard(
   name: String,
   modifier: Modifier,
   onClick: () -> Unit,
+  onLongClick: (() -> Unit)? = null,
   transformation: SurfaceTransformation? = null,
 ) {
-  Card(onClick = onClick, transformation = transformation, modifier = modifier) {
+  Card(
+    onClick = onClick,
+    onLongClick = onLongClick,
+    onLongClickLabel = onLongClick?.let { "More options" },
+    transformation = transformation,
+    modifier = modifier,
+  ) {
     Row(verticalAlignment = Alignment.CenterVertically) {
       Icon(
         painter = painterResource(id = R.drawable.ic_folder),
@@ -67,9 +74,16 @@ fun DeckCard(
   dueNow: Int?,
   modifier: Modifier,
   onClick: () -> Unit,
+  onLongClick: (() -> Unit)? = null,
   transformation: SurfaceTransformation? = null,
 ) {
-  Card(onClick = onClick, transformation = transformation, modifier = modifier) {
+  Card(
+    onClick = onClick,
+    onLongClick = onLongClick,
+    onLongClickLabel = onLongClick?.let { "More options" },
+    transformation = transformation,
+    modifier = modifier,
+  ) {
     Column {
       Text(
         text = label,
