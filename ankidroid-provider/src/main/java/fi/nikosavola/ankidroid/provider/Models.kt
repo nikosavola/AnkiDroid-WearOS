@@ -61,6 +61,12 @@ data class ProviderCard(
   val lastReviewSecs: Long?,
 )
 
+/** A note's field values in note-type order, and the note type they belong to. */
+data class NoteFields(val noteId: Long, val modelId: Long, val values: List<String>)
+
+/** A note type's field names in order and its stylesheet (null when the provider has none). */
+data class NoteType(val id: Long, val fieldNames: List<String>, val css: String?)
+
 /** A card id and its raw `due`, which for a new card is its queue position. */
 data class CardPosition(val cardId: Long, val position: Long)
 

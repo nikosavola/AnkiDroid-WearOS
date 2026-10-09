@@ -18,6 +18,13 @@ object AnkiDroidContract {
   /** Cards search: the selection is an Anki browser query (`col.findCards`). Newer AnkiDroid only. */
   val CARDS_URI: Uri = Uri.parse("content://$AUTHORITY/cards")
 
+  fun noteUri(noteId: Long): Uri = Uri.parse("content://$AUTHORITY/notes/$noteId")
+
+  fun noteTypeUri(modelId: Long): Uri = Uri.parse("content://$AUTHORITY/models/$modelId")
+
+  /** Separates a note's field values and a note type's field names. */
+  const val FIELD_SEPARATOR = "\u001f"
+
   fun noteCardsUri(noteId: Long): Uri = Uri.parse("content://$AUTHORITY/notes/$noteId/cards")
 
   fun cardUri(noteId: Long, ord: Int): Uri =
@@ -32,6 +39,16 @@ object AnkiDroidContract {
 
     /** JSON `[learn, review, new]`, daily limits applied. */
     const val COUNTS = "deck_count"
+  }
+
+  object NoteColumns {
+    const val MODEL_ID = "mid"
+    const val FIELDS = "flds"
+  }
+
+  object NoteTypeColumns {
+    const val FIELD_NAMES = "field_names"
+    const val CSS = "css"
   }
 
   object ScheduleColumns {

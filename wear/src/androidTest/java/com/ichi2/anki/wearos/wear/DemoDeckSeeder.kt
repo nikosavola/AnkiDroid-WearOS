@@ -115,6 +115,23 @@ class DemoDeckSeeder {
           DemoCard("sin embargo", "however"),
         ),
       ),
+      // As the phone sends stock Cloze and type-in cards, captured from AnkiDroid.
+      DemoDeck(
+        1_700_000_000_005,
+        "Note types",
+        listOf(
+          DemoCard(
+            "<span class=\"cloze\" data-ordinal=\"1\" style=\"color:#add8e6\"><b>[...]</b></span>" +
+              " is in <span class=\"cloze-inactive\" data-ordinal=\"2\">France</span>",
+            "<span class=\"cloze\" data-ordinal=\"1\" style=\"color:#add8e6\"><b>Paris</b></span>" +
+              " is in <span class=\"cloze-inactive\" data-ordinal=\"2\">France</span><br>",
+          ),
+          DemoCard(
+            "Capital of France?\n\n",
+            "Capital of France?\n\n<hr id=answer>\n\n<code id=typeans>Paris</code>",
+          ),
+        ),
+      ),
       DemoDeck(1_700_000_000_004, "Geography::European capitals", emptyList()),
     )
 }

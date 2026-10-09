@@ -6,6 +6,7 @@ import fi.nikosavola.ankidroid.provider.AnkiDroidProvider
 import fi.nikosavola.ankidroid.provider.AppliedAnswerStore
 import fi.nikosavola.ankidroid.provider.CardPosition
 import fi.nikosavola.ankidroid.provider.DeckSelector
+import fi.nikosavola.ankidroid.provider.NoteType
 import fi.nikosavola.ankidroid.provider.ProviderCard
 import fi.nikosavola.ankidroid.provider.ReviewAnswer
 import java.util.TimeZone
@@ -16,9 +17,13 @@ import uniffi.wearos_core.WearosCard
 import uniffi.wearos_core.WearosDueBatch
 import uniffi.wearos_core.dayIndex
 import uniffi.wearos_core.defaultRolloverHour
+import uniffi.wearos_core.contentForCloze
 import uniffi.wearos_core.elapsedDaysBetween
+import uniffi.wearos_core.fillTypeAnswer
+import uniffi.wearos_core.inlineCardCss
 import uniffi.wearos_core.parseDeckScheduleConfig
 import uniffi.wearos_core.parseReviewTimes
+import uniffi.wearos_core.typeAnswerField
 
 /**
  * Result of a write-back pass. `settled` are the ids safe to clear from the watch buffer (applied, or
@@ -94,16 +99,62 @@ class AnkiDroidBridge(
     val state: CardScheduleState?,
   )
 
-  private fun rowOf(card: ProviderCard, config: DeckScheduleConfig?): CardRow =
-    CardRow(
+  private fun rowOf(card: ProviderCard, config: DeckScheduleConfig?): CardRow {
+    val (front, back) = sidesOf(card)
+    return CardRow(
       id = card.id ?: 0L,
       noteId = card.noteId,
       ord = card.ord,
-      front = card.question ?: "No Front Text",
-      back = card.answer ?: "No Back Text",
+      front = front,
+      back = back,
       due = card.due,
       state = stateOf(card, config),
     )
+  }
+
+  /** Note types read so far: only cards with a type-in answer or classes to style need them. */
+  private val noteTypes = mutableMapOf<Long, NoteType?>()
+
+  /**
+   * The card's question and answer as AnkiDroid's reviewer would show them in night mode, as far
+   * as plain HTML allows: a `{{type:Field}}` placeholder filled the way it is when nothing was typed
+   * (gone from the question, the expected answer on the back), and the note type's class rules
+   * written inline for the watch's CSS-less text renderer.
+   */
+  internal fun sidesOf(card: ProviderCard): Pair<String, String> {
+    var question = card.question ?: return "No Front Text" to (card.answer ?: "No Back Text")
+    var answer = card.answer ?: "No Back Text"
+    val typeField = typeAnswerField(question)
+    if (typeField == null && !question.contains("class") && !answer.contains("class")) {
+      return question to answer
+    }
+    val (fields, noteType) =
+      try {
+        val note = provider.noteFields(card.noteId)
+        note to note?.let { noteTypeOf(it.modelId) }
+      } catch (e: Exception) {
+        Log.w(TAG, "Couldn't read note ${card.noteId}: ${e.message}")
+        null to null
+      }
+    if (typeField != null) {
+      val expected =
+        noteType
+          ?.fieldNames
+          ?.indexOf(typeField.field)
+          ?.let { fields?.values?.getOrNull(it) }
+          ?.let { if (typeField.cloze) contentForCloze(it, (card.ord + 1).toUInt()) else it }
+      question = fillTypeAnswer(question, null)
+      answer = fillTypeAnswer(answer, expected)
+    }
+    noteType?.css?.let { css ->
+      question = inlineCardCss(question, css, card.ord.toUInt())
+      answer = inlineCardCss(answer, css, card.ord.toUInt())
+    }
+    return question to answer
+  }
+
+  private fun noteTypeOf(modelId: Long): NoteType? =
+    synchronized(noteTypes) { noteTypes.getOrPut(modelId) { provider.noteType(modelId) } }
 
   /**
    * Deck OPTIONS payloads captured while listing decks, keyed by deck id (null = that deck row has
@@ -521,12 +572,13 @@ class AnkiDroidBridge(
   private fun fetchSingleNewCard(noteId: Long): WearosCard? {
     val ord = provider.cardOrds(noteId).singleOrNull() ?: return null
     val card = provider.card(noteId, ord, includeScheduling = false)
+    val (front, back) = card?.let(::sidesOf) ?: "No Front Text" to "No Back Text"
     return WearosCard(
       id = card?.id ?: 0L,
       noteId = noteId,
       ord = ord,
-      front = card?.question ?: "No Front Text",
-      back = card?.answer ?: "No Back Text",
+      front = front,
+      back = back,
       buttonCount = 4,
       // New cards aren't in the scheduler queue, so we don't have per-ease previews.
       nextReviewTimes = listOf("1m", "10m", "1d", "4d"),

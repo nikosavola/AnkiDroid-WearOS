@@ -139,6 +139,11 @@ frequently ship **no WebView provider** (e.g. Galaxy Watch), so constructing a `
   nested scrollable that passes infinite constraints). Grade buttons are opaque curved segments
   along the bottom bezel, tapped through one strip that shares its gestures with the scrolling
   answer, so a swipe starting over the buttons still scrolls.
+- **Reviewer filters, as AnkiDroid applies them (phone side, `AnkiDroidBridge.sidesOf`):** the
+  provider leaves `{{type:Field}}` as a raw `[[type:Field]]` and sends no note type stylesheet. The
+  bridge fills the placeholder from the note's field the way AnkiDroid does when nothing was typed
+  (`core/src/typeanswer.rs`), and writes the note type's simple class rules inline, night-mode
+  rules first (`core/src/css.rs`), so the CSS-less watch renderer still shows cloze styling.
 - **Rich fidelity via phone-rendered bitmaps:** images, inline SVG, CSS overlines and borders can't
   render natively, so cards that need them (`CardBitmapRenderer.needsRichRendering`) are rendered on
   the phone (which has a WebView) into a PNG, streamed to the watch as a per-card Data Layer asset,

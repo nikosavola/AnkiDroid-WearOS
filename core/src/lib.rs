@@ -4,6 +4,7 @@
 
 uniffi::setup_scaffolding!();
 
+mod css;
 mod day;
 mod db;
 mod decks;
@@ -15,6 +16,7 @@ mod sched;
 mod session;
 mod sync;
 mod tile;
+mod typeanswer;
 mod util;
 
 // Flatten the crate's Rust surface so tests and any internal callers see everything at the root.
@@ -23,6 +25,7 @@ mod util;
 // db is re-exported by name rather than with `*` so its crate-internal DB_CONN/get_db_connection
 // stay unexported (reached via `crate::db::...`) — that keeps them plain `pub` in a private module
 // without tripping `redundant_pub_crate`.
+pub use css::*;
 pub use day::*;
 pub use db::{
     BufferStats, average_answer_time_ms, buffered_answer_stats, get_buffered_answers,
@@ -36,6 +39,7 @@ pub use sched::*;
 pub use session::*;
 pub use sync::*;
 pub use tile::*;
+pub use typeanswer::*;
 
 #[cfg(test)]
 mod tests {

@@ -63,6 +63,56 @@ class DuePoolProviderTest {
   }
 
   @Test
+  fun `type-in answers show the expected answer on the back, like AnkiDroid`() {
+    provider.todayQuestion = "Capital of France?<br>[[type:Back]]"
+    provider.todayAnswer = "Capital of France?<hr id=answer>[[type:Back]]"
+    provider.noteFields = 7L to "Capital of France?\u001f<b>Paris</b>"
+    provider.fieldNames = "Front\u001fBack"
+
+    val card = bridge().fetchDueBatch(DeckId(DECK_ID), limit = 1).cards.single()
+
+    assertEquals("Capital of France?<br>", card.front)
+    assertEquals("Capital of France?<hr id=answer><code id=typeans>Paris</code>", card.back)
+  }
+
+  @Test
+  fun `type-in cloze answers narrow to the card's own deletion`() {
+    provider.todayQuestion = "{{c1::[...]}} [[type:cloze:Text]]"
+    provider.todayAnswer = "Paris<hr id=answer>[[type:cloze:Text]]"
+    provider.noteFields = 7L to "{{c1::Paris}} is in {{c2::France}}\u001f"
+    provider.fieldNames = "Text\u001fBack Extra"
+
+    val card = bridge().fetchDueBatch(DeckId(DECK_ID), limit = 1).cards.single()
+
+    assertEquals("Paris<hr id=answer><code id=typeans>Paris</code>", card.back)
+  }
+
+  @Test
+  fun `the note type's class rules are written inline, night mode first`() {
+    provider.todayQuestion = "<span class=\"cloze\">[...]</span> is in France"
+    provider.todayAnswer = "<span class=\"cloze\">Paris</span> is in France"
+    provider.noteTypeCss = ".cloze { font-weight: bold; color: blue } .nightMode .cloze { color: lightblue }"
+
+    val card = bridge().fetchDueBatch(DeckId(DECK_ID), limit = 1).cards.single()
+
+    assertEquals(
+      "<span class=\"cloze\" style=\"color:#add8e6\"><b>[...]</b></span> is in France",
+      card.front,
+    )
+  }
+
+  @Test
+  fun `an unknown type-in field just drops the placeholder`() {
+    provider.todayQuestion = "Q [[type:Missing]]"
+    provider.todayAnswer = "Q<hr id=answer>[[type:Missing]]"
+
+    val card = bridge().fetchDueBatch(DeckId(DECK_ID), limit = 1).cards.single()
+
+    assertEquals("Q ", card.front)
+    assertEquals("Q<hr id=answer>", card.back)
+  }
+
+  @Test
   fun `elapsed days count Anki day rollovers, not wall-clock time`() {
     // A minute before the rollover 19 Anki days ago: barely 18 days of wall clock, 19 for Anki.
     val todayStartSecs = todayIndex() * 86_400L + defaultRolloverHour() * 3_600L
@@ -246,6 +296,12 @@ class FakeCardsProvider : ContentProvider() {
   var positionRowsServed = 0
   /** The `limit` the bridge asked the schedule for. */
   var scheduleLimit: Int? = null
+  var todayQuestion = "<b>Front</b>"
+  var todayAnswer = "Back"
+  /** The today card's note: its note type id and `\u001f`-joined field values. */
+  var noteFields = 7L to "Front\u001fBack"
+  var fieldNames = "Front\u001fBack"
+  var noteTypeCss = ""
 
   override fun onCreate() = true
 
@@ -260,7 +316,17 @@ class FakeCardsProvider : ContentProvider() {
       "decks" -> if (exposeDecks) deckCursor() else null
       "schedule" -> scheduleCursor(selectionArgs)
       "cards" -> cardsSearchCursor(selection)
+      "notes" if uri.pathSegments.size == 2 ->
+        MatrixCursor(arrayOf("mid", "flds")).apply {
+          addRow(arrayOf<Any>(noteFields.first, noteFields.second))
+        }
       "notes" -> cardCursor(uri)
+      "models" ->
+        MatrixCursor(arrayOf("field_names", "css")).apply {
+          if (uri.lastPathSegment == noteFields.first.toString()) {
+            addRow(arrayOf<Any>(fieldNames, noteTypeCss))
+          }
+        }
       else -> null
     }
 
@@ -295,8 +361,8 @@ class FakeCardsProvider : ContentProvider() {
           TODAY_CARD,
           noteId,
           ord,
-          "<b>Front</b>",
-          "Back",
+          todayQuestion,
+          todayAnswer,
           2,
           2,
           10.0,

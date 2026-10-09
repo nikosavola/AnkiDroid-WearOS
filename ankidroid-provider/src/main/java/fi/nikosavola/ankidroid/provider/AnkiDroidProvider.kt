@@ -6,6 +6,8 @@ import android.database.Cursor
 import android.util.Log
 import fi.nikosavola.ankidroid.provider.AnkiDroidContract.CardColumns
 import fi.nikosavola.ankidroid.provider.AnkiDroidContract.DeckColumns
+import fi.nikosavola.ankidroid.provider.AnkiDroidContract.NoteColumns
+import fi.nikosavola.ankidroid.provider.AnkiDroidContract.NoteTypeColumns
 import fi.nikosavola.ankidroid.provider.AnkiDroidContract.ScheduleColumns
 
 /**
@@ -288,6 +290,30 @@ class AnkiDroidProvider(private val resolver: ContentResolver) {
     return ids
   }
 
+  /** [noteId]'s field values, or null when the provider has no such note. Errors propagate. */
+  fun noteFields(noteId: Long): NoteFields? {
+    val projection = arrayOf(NoteColumns.MODEL_ID, NoteColumns.FIELDS)
+    resolver.query(AnkiDroidContract.noteUri(noteId), projection, null, null, null)?.use { c ->
+      val mid = c.getColumnIndex(NoteColumns.MODEL_ID)
+      val flds = c.getColumnIndex(NoteColumns.FIELDS)
+      if (!c.moveToFirst() || mid == -1 || flds == -1) return null
+      return NoteFields(noteId, c.getLong(mid), splitFields(c.getString(flds)))
+    }
+    return null
+  }
+
+  /** Note type [modelId]'s field names and stylesheet, or null if unknown. Errors propagate. */
+  fun noteType(modelId: Long): NoteType? {
+    val projection = arrayOf(NoteTypeColumns.FIELD_NAMES, NoteTypeColumns.CSS)
+    resolver.query(AnkiDroidContract.noteTypeUri(modelId), projection, null, null, null)?.use { c ->
+      val names = c.getColumnIndex(NoteTypeColumns.FIELD_NAMES)
+      val css = c.getColumnIndex(NoteTypeColumns.CSS)
+      if (!c.moveToFirst() || names == -1) return null
+      return NoteType(modelId, splitFields(c.getString(names)), css.takeIf { it != -1 }?.let(c::getString))
+    }
+    return null
+  }
+
   /** The ordinals of [noteId]'s cards. Provider errors propagate. */
   fun cardOrds(noteId: Long): List<Int> {
     val ords = mutableListOf<Int>()
@@ -308,6 +334,9 @@ class AnkiDroidProvider(private val resolver: ContentResolver) {
 
   internal companion object {
     const val TAG = "AnkiDroidProvider"
+
+    fun splitFields(raw: String?): List<String> =
+      raw?.split(AnkiDroidContract.FIELD_SEPARATOR).orEmpty()
 
     // New cards are listed in `prop:pos` windows starting at this size.
     private const val NEW_POSITION_WINDOW = 64L
