@@ -7,6 +7,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.em
 import androidx.wear.compose.material3.MaterialTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -69,6 +70,18 @@ class HtmlTextTest {
     val text = cardTextFromHtml("""see <a href="https://jisho.org">jisho</a> <img src="x.png"> here""")
     assertEquals("see jisho here", text.text)
     assertTrue(text.getLinkAnnotations(0, text.length).isEmpty())
+  }
+
+  @Test
+  fun fontSizeAnnotationsBecomeSpans() {
+    // The core's font-size pass wraps sized runs in <annotation fs="scale">; the importer turns
+    // them into string annotations and this is where they become font-size spans.
+    val text = cardTextFromHtml("""<annotation fs="2.222">漢</annotation> plain""")
+    assertEquals("漢 plain", text.text)
+    assertEquals(1, text.spanStyles.size)
+    assertEquals(2.222f.em, text.spanStyles[0].item.fontSize)
+    assertEquals(0, text.spanStyles[0].start)
+    assertEquals(1, text.spanStyles[0].end)
   }
 
   @Test

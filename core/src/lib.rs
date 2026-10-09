@@ -105,6 +105,49 @@ mod tests {
     }
 
     #[test]
+    fn test_html_for_display_scales_font_sizes() {
+        // Inline px sizes become annotation scales against the 18px bitmap base; unscaled text
+        // is left alone. 40/18 = 2.222.
+        let out =
+            html_for_display("<div style=\"font-size:40px\">漢</div><div>読み</div>".to_string());
+        assert_eq!(
+            out,
+            "<div style=\"font-size:40px\"><annotation fs=\"2.222\">漢</annotation></div><div>読み</div>"
+        );
+        // em and % multiply through nesting, and runs flatten to sequential annotations.
+        let nested = "<div style=\"font-size:2em\"><span style=\"font-size:150%\">x</span>y</div>"
+            .to_string();
+        assert_eq!(
+            html_for_display(nested),
+            "<div style=\"font-size:2em\"><span style=\"font-size:150%\">\
+                <annotation fs=\"3\">x</annotation></span><annotation fs=\"2\">y</annotation></div>"
+        );
+        // The legacy font-size attribute ladder (Chrome's, over the same base).
+        let legacy = "<font size=\"7\">大</font>".to_string();
+        assert_eq!(
+            html_for_display(legacy),
+            "<font size=\"7\"><annotation fs=\"2.667\">大</annotation></font>"
+        );
+    }
+
+    #[test]
+    fn test_math_renders_as_readable_text() {
+        // Both delimiters, structures and symbols; the bitmap path typesets the real thing, this
+        // keeps the native fallback and TTS off raw TeX.
+        let display = "面積 \\(x^2 + \\frac{a}{b} = \\alpha\\) ?".to_string();
+        assert_eq!(clean_html(display), "面積 x^2 + a/b = α ?");
+        let block = "\\[E = mc^2\\]".to_string();
+        assert_eq!(clean_html(block), "E = mc^2");
+        let roots = "<div>\\(\\frac{x+1}{2} \\times \\sqrt{2} \\le 3\\)</div>".to_string();
+        assert_eq!(clean_html(roots), "(x+1)/2 × √(2) ≤ 3");
+        // Unknown commands fall back to their bare name; display keeps the rest of the markup.
+        let back = "Q<hr id=answer>\\(\\unknown{7}\\)".to_string();
+        assert_eq!(html_for_display(back), "Q<hr id=answer>unknown7");
+        // Unterminated math is left verbatim rather than eating the rest of the card.
+        assert_eq!(clean_html("a \\(b".to_string()), "a \\(b");
+    }
+
+    #[test]
     fn test_clean_html_strips_comments_and_sound() {
         // HTML comments (even when they contain tags/fields) and [sound:] refs must not leak.
         let html =
