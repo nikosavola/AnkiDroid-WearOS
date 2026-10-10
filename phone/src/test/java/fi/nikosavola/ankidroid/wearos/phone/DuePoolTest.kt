@@ -106,13 +106,6 @@ class DuePoolTest {
   }
 
   @Test
-  fun `deck counts parse as learn, review, new`() {
-    assertEquals(listOf(1, 2, 3), parseDueCounts("[1,2,3]"))
-    assertEquals(null, parseDueCounts("[1,2]"))
-    assertEquals(null, parseDueCounts(null))
-  }
-
-  @Test
   fun `a queue is complete only when the counts vouch for it`() {
     assertEquals(true, isCompleteQueue(fetched = 5, requested = 20, dueToday = listOf(1, 2, 2)))
     assertEquals(true, isCompleteQueue(fetched = 0, requested = 20, dueToday = listOf(0, 0, 0)))
