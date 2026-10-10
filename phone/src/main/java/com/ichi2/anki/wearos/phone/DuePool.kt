@@ -1,6 +1,5 @@
 package com.ichi2.anki.wearos.phone
 
-import fi.nikosavola.ankidroid.provider.DueCounts
 import uniffi.wearos_core.WearosCard
 import uniffi.wearos_core.WearosDueBatch
 
@@ -15,9 +14,6 @@ internal const val MAX_POOL_CARDS = 400
  * while the watch waits on its download timeout, so a huge backlog is shipped in part.
  */
 internal const val MAX_TODAY_QUEUE = 200
-
-/** A deck's `deck_count` value (`[learn, review, new]`), or null if it isn't three integers. */
-internal fun parseDueCounts(raw: String?): List<Int>? = DueCounts.parse(raw)?.toList()
 
 /**
  * Whether a schedule fetch of [requested] cards that returned [fetched] holds AnkiDroid's whole
