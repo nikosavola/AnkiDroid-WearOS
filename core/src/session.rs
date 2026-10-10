@@ -416,18 +416,17 @@ impl ReviewSession {
             return (WearosCard { due_day, due_at_secs, ..card.clone() }, due_day, due_at_secs);
         };
 
-        let slot = usize::try_from(ease - 1).unwrap_or(0).min(3);
+        let slot = ease_slot(ease);
         let secs = preview_interval_secs(config, state, now_ms).get(slot).copied().unwrap_or(0.0);
-        let next_state = CardScheduleState {
-            last_review_secs: now_secs,
-            ..advance_state(config, state, ease, now_ms)
-        };
+        let (mut next_state, labels) =
+            advanced_state_and_labels(config, state, ease, now_ms, card.button_count);
+        // The stored row remembers when the grade happened (what the undo snapshot restores).
+        next_state.last_review_secs = now_secs;
         let (due_day, due_at_secs) = if secs < SECS_PER_DAY {
             (None, Some(now_secs + secs.round() as i64))
         } else {
             (Some(today + next_state.interval_days.round().max(1.0) as i64), None)
         };
-        let labels = preview_labels_for_buttons(config, &next_state, now_ms, card.button_count);
         let stored = WearosCard {
             next_review_times: labels,
             state: Some(next_state),
@@ -458,9 +457,8 @@ impl ReviewSession {
         if let (Some(config), Some(state)) = (&self.schedule_config, &card.state) {
             // The computed previews are always in ease order (Again/Hard/Good/Easy), unlike the
             // shipped label list, which drops Hard for 3-button cards.
-            let slot = usize::try_from(ease - 1).unwrap_or(0).min(3);
             let secs = preview_interval_secs(config, state, unix_millis() as i64);
-            return secs.get(slot).is_some_and(|secs| *secs < SECS_PER_DAY);
+            return secs.get(ease_slot(ease)).is_some_and(|secs| *secs < SECS_PER_DAY);
         }
         interval_label(card, ease).map_or(ease == 1, label_is_subday)
     }
@@ -474,12 +472,31 @@ impl ReviewSession {
         };
         // unix_millis() is u128 for the answer id; the scheduler takes i64 milliseconds.
         let now_ms = unix_millis() as i64;
-        let next_state = advance_state(config, state, ease, now_ms);
-        // Labels keep the card's own button shape (3-button cards have no Hard), so the watch UI can
-        // render them against its buttons whether they were recomputed here or shipped by the phone.
-        let labels = preview_labels_for_buttons(config, &next_state, now_ms, card.button_count);
+        let (next_state, labels) =
+            advanced_state_and_labels(config, state, ease, now_ms, card.button_count);
         WearosCard { next_review_times: labels, state: Some(next_state), ..card.clone() }
     }
+}
+
+/// The button slot a grade reads off the preview list (Again/Hard/Good/Easy, in that order).
+fn ease_slot(ease: i32) -> usize {
+    usize::try_from(ease - 1).unwrap_or(0).min(3)
+}
+
+/// The scheduler state after this grade plus its recomputed button labels; the shared core of the
+/// requeue placement and the preview refresh. Labels keep the card's own button shape (3-button
+/// cards have no Hard), so the watch UI can render them against its buttons whether they were
+/// recomputed here or shipped by the phone.
+fn advanced_state_and_labels(
+    config: &DeckScheduleConfig,
+    state: &CardScheduleState,
+    ease: i32,
+    now_ms: i64,
+    button_count: i32,
+) -> (CardScheduleState, Vec<String>) {
+    let next_state = advance_state(config, state, ease, now_ms);
+    let labels = preview_labels_for_buttons(config, &next_state, now_ms, button_count);
+    (next_state, labels)
 }
 
 #[uniffi::export]

@@ -29,10 +29,10 @@ use anki_states::{
 use fsrs::{FSRS, MemoryState, NextStates};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
-
-pub const SECS_PER_DAY: f64 = 86_400.0;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+pub const SECS_PER_DAY: f64 = 86_400.0;
 
 /// Scheduling config for one deck, as AnkiDroid exposes it through `FlashCardsContract.Deck.OPTIONS`.
 ///
@@ -191,12 +191,9 @@ pub fn parse_deck_schedule_config(options_json: String) -> Result<DeckScheduleCo
         hard_multiplier: read_f64(rev, "hardFactor").unwrap_or(defaults.hard_multiplier),
         interval_multiplier: read_f64(rev, "ivlFct").unwrap_or(defaults.interval_multiplier),
         easy_bonus: read_f64(rev, "ease4").unwrap_or(defaults.easy_bonus),
-        max_interval_days: read_f64(rev, "maxIvl")
-            .and_then(|v| number_as_i32(&serde_json::json!(v)))
-            .unwrap_or(defaults.max_interval_days),
+        max_interval_days: read_i32(rev, "maxIvl").unwrap_or(defaults.max_interval_days),
         lapse_multiplier: read_f64(lapse, "mult").unwrap_or(defaults.lapse_multiplier),
-        lapse_min_interval_days: read_f64(lapse, "minInt")
-            .and_then(|v| number_as_i32(&serde_json::json!(v)))
+        lapse_min_interval_days: read_i32(lapse, "minInt")
             .unwrap_or(defaults.lapse_min_interval_days),
         fsrs_weights: read_fsrs_weights(&root),
         desired_retention: read_desired_retention(&root).unwrap_or(defaults.desired_retention),
@@ -254,6 +251,11 @@ fn read_desired_retention(root: &Value) -> Option<f64> {
 
 fn read_f64(obj: Option<&Value>, key: &str) -> Option<f64> {
     obj?.get(key)?.as_f64().filter(|v| v.is_finite())
+}
+
+/// Read a JSON number that schema11 stores as a float but means as an integer (e.g. `maxIvl`).
+fn read_i32(obj: Option<&Value>, key: &str) -> Option<i32> {
+    read_f64(obj, key).map(|v| v.round() as i32)
 }
 
 fn number_as_i32(v: &Value) -> Option<i32> {

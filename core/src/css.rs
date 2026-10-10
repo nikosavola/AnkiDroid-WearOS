@@ -331,24 +331,7 @@ fn apply(html: &str, rules: &[Rule]) -> String {
 
 /// The value of a tag's `class` attribute, quoted or not.
 fn class_attr(inner: &str) -> Option<&str> {
-    let lower = inner.to_ascii_lowercase();
-    let mut search = 0;
-    while let Some(found) = lower[search..].find("class") {
-        let at = search + found;
-        search = at + 5;
-        let preceded = at > 0 && lower.as_bytes()[at - 1].is_ascii_whitespace();
-        let after = lower[at + 5..].trim_start();
-        if !preceded || !after.starts_with('=') {
-            continue;
-        }
-        let value_start = inner.len() - after.len() + 1;
-        let value = inner[value_start..].trim_start();
-        return Some(match value.chars().next()? {
-            q @ ('"' | '\'') => value[1..].split(q).next()?,
-            _ => value.split(|c: char| c.is_whitespace() || c == '/').next()?,
-        });
-    }
-    None
+    crate::util::attr_value(inner, "class")
 }
 
 /// [`tag`] with `color` and `font-size` added to its inline style, each skipped when the element
