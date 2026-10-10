@@ -11,14 +11,11 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.viewModelScope
-import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import uniffi.wearos_core.PoolDeckSummary
 import uniffi.wearos_core.ReviewSession
-import uniffi.wearos_core.deserializeDecks
-import uniffi.wearos_core.poolDeckSummaries
 
 /**
  * UI state that has to outlive the Activity: the deck list (pooled + known decks), the screen stack
@@ -118,10 +115,8 @@ class WatchViewModel(app: Application, private val savedState: SavedStateHandle)
   fun loadDecks() {
     viewModelScope.launch {
       val app = getApplication<Application>()
-      val nowMs = systemWatchClock.nowMs()
-      val offset = utcOffsetSecs(nowMs)
       try {
-        val cached = withContext(Dispatchers.IO) { poolDeckSummaries(nowMs, offset) }
+        val cached = withContext(Dispatchers.IO) { poolSummariesNow() }
         val known = withContext(Dispatchers.IO) { loadKnownDecks(app.filesDir) }
         cachedDecks = cached
         knownDecks = known
@@ -163,34 +158,4 @@ internal fun decodeScreen(encoded: String): WatchScreen? =
     encoded == "session" -> WatchScreen.Session
     encoded == "review" -> WatchScreen.Review
     else -> null
-  }
-
-/**
- * Reads the watch's known-decks list: prefers the protobuf cache, falling back to the legacy
- * "id:name" text cache only when the protobuf file doesn't exist (e.g. the phone hasn't been
- * updated to send it yet). Pure/synchronous so it's testable without a coroutine or ViewModel.
- */
-internal fun loadKnownDecks(filesDir: File): List<Pair<Long, String>> =
-  try {
-    val protoFile = File(filesDir, "decks_cache.pb")
-    val legacyFile = File(filesDir, "decks_cache.txt")
-    when {
-      protoFile.exists() -> deserializeDecks(protoFile.readBytes()).map { it.id to it.fullName }
-      legacyFile.exists() ->
-        legacyFile
-          .readText(Charsets.UTF_8)
-          .split("\n")
-          .filter { it.isNotEmpty() }
-          // Skip only the malformed line, not the whole list: a single un-parseable id used to
-          // throw and blank every known deck until the next successful phone refresh.
-          .mapNotNull {
-            val parts = it.split(":", limit = 2)
-            val id = parts[0].toLongOrNull() ?: return@mapNotNull null
-            Pair(id, parts.getOrElse(1) { "Deck $id" })
-          }
-      else -> emptyList()
-    }
-  } catch (e: Exception) {
-    Log.e("WatchViewModel", "Failed to load decks list: ${e.message}", e)
-    emptyList()
   }

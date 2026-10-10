@@ -11,12 +11,10 @@ import androidx.appfunctions.AppFunctionService
 import androidx.appfunctions.AppFunctionServiceEntryPoint
 import com.ichi2.anki.wearos.wear.MainActivity
 import com.ichi2.anki.wearos.wear.WearPaths
+import com.ichi2.anki.wearos.wear.poolSummariesNow
 import com.ichi2.anki.wearos.wear.sendToConnectedPhones
-import com.ichi2.anki.wearos.wear.systemWatchClock
-import com.ichi2.anki.wearos.wear.utcOffsetSecs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import uniffi.wearos_core.poolDeckSummaries
 import uniffi.wearos_core.poolHasDeck
 
 /** A flashcard deck stored on the watch for offline review. */
@@ -54,8 +52,7 @@ abstract class BaseWatchAppFunctionService : AppFunctionService() {
   @AppFunctionDeclaration(isDescribedByKDoc = true)
   suspend fun listCachedDecks(): List<WatchDeck> =
     withContext(Dispatchers.IO) {
-      val nowMs = systemWatchClock.nowMs()
-      poolDeckSummaries(nowMs, utcOffsetSecs(nowMs)).map {
+      poolSummariesNow().map {
         WatchDeck(
           deckId = it.deckId,
           name = it.name,

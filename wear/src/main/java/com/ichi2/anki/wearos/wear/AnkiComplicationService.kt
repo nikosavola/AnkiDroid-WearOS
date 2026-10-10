@@ -12,13 +12,10 @@ import androidx.wear.watchface.complications.data.RangedValueComplicationData
 import androidx.wear.watchface.complications.data.ShortTextComplicationData
 import androidx.wear.watchface.complications.datasource.ComplicationRequest
 import androidx.wear.watchface.complications.datasource.SuspendingComplicationDataSourceService
-import java.time.LocalDate
-import java.time.ZoneId
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import uniffi.wearos_core.averageAnswerTimeMs
 import uniffi.wearos_core.formatQueueEta
-import uniffi.wearos_core.poolDeckSummaries
 import uniffi.wearos_core.reviewsSince
 
 /** Watch-face complication showing the due-card count, same source of truth as [AnkiTileService]. */
@@ -36,12 +33,11 @@ class AnkiComplicationService : SuspendingComplicationDataSourceService() {
   private fun loadState(): DueState {
     val due =
       try {
-        val nowMs = systemWatchClock.nowMs()
-        poolDeckSummaries(nowMs, utcOffsetSecs(nowMs)).sumOf { it.dueNow }
+        poolSummariesNow().sumOf { it.dueNow }
       } catch (e: Exception) {
         0
       }
-    val midnight = LocalDate.now().atStartOfDay(ZoneId.systemDefault()).toEpochSecond()
+    val midnight = localMidnightSecs()
     val reviewed = runCatching { reviewsSince(midnight) }.getOrDefault(0)
     val avgMs = runCatching { averageAnswerTimeMs() }.getOrNull()
     return DueState(due, reviewed, if (due > 0) formatQueueEta(due, avgMs) else "")

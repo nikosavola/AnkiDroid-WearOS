@@ -490,13 +490,10 @@ class MainActivity : ComponentActivity() {
     if (deckIds.isEmpty()) return
     scope.launch {
       try {
-        val nowMs = systemWatchClock.nowMs()
         // The keep list is read fresh from the pool: a stale cached list could forget a deck the
         // user never asked to remove.
         val keep =
-          withContext(Dispatchers.IO) {
-            poolDeckSummaries(nowMs, utcOffsetSecs(nowMs)).map { it.deckId }.filterNot { it in deckIds }
-          }
+          withContext(Dispatchers.IO) { poolSummariesNow().map { it.deckId }.filterNot { it in deckIds } }
         withContext(Dispatchers.IO) { poolForgetDecks(keep) }
         val active = activeDeckId
         if (active != null && deckIds.contains(active)) clearSession()
@@ -538,7 +535,7 @@ class MainActivity : ComponentActivity() {
         val stats = bufferedAnswerStats()
         outstandingAnswersCount = stats.count
         outstandingOldestSecs = stats.oldestAgeSecs
-        reviewedToday = reviewsSince(todayMidnightSecs())
+        reviewedToday = reviewsSince(localMidnightSecs())
         Log.d(TAG, "Outstanding buffered reviews: ${stats.count}, oldest ${stats.oldestAgeSecs}s")
       } catch (e: Exception) {
         Log.e(TAG, "Failed to query buffered answers: ${e.message}")
