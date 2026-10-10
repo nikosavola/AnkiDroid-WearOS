@@ -9,6 +9,7 @@ import com.google.android.gms.wearable.Wearable
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.tasks.await
+import uniffi.wearos_core.WearosDueBatch
 import uniffi.wearos_core.serializeDueBatch
 
 /** Outcome of a deck sync run, used to build the final progress/notification summary. */
@@ -21,7 +22,8 @@ data class SyncSummary(val decksPushed: Int, val cardsPushed: Int, val decksRema
 
 /**
  * The shared "push due decks to the watch" routine, used by both the user-initiated [SyncService]
- * (foreground, with a progress notification) and the background [AutoSyncWorker] (WorkManager).
+ * (foreground, with a progress notification) and the background [AutoSyncWorker] (WorkManager), plus
+ * the wire-push helpers the watch's on-demand requests go through.
  *
  * It reads the deck selection + settings, pushes the filtered deck list and each non-empty due
  * batch to the watch as a zstd-compressed Asset (compression lives in the Rust `serializeDueBatch`),
@@ -33,16 +35,19 @@ data class SyncSummary(val decksPushed: Int, val cardsPushed: Int, val decksRema
  */
 object DeckSync {
   private const val TAG = "DeckSync"
-  private const val PATH_DUE_BATCH = "/due_batch"
-  private const val KEY_BATCH_ASSET = "batch_asset"
   private const val PATH_DECKS = "/decks"
+
+  /** The Data Layer path every due batch lands on; per-deck requests suffix the deck id. */
+  const val PATH_DUE_BATCH = "/due_batch"
+
+  private const val KEY_BATCH_ASSET = "batch_asset"
 
   /** Epoch-millis of the last completed sync (foreground or background); 0 if never. */
   const val KEY_LAST_SYNC_MS = "last_sync_ms"
 
-  private const val SETTINGS_PREFS = "settings_prefs"
   private const val DECK_PREFS = "deck_sync_prefs"
-  private const val KEY_FORCE_MOCK = "force_mock"
+  private const val MAX_SCAN_DECKS = 60
+  private const val CARDS_PER_DECK = 20
 
   /**
    * Default for the mock-mode preference when the user has never toggled it. Debuggable builds
@@ -52,21 +57,62 @@ object DeckSync {
   fun defaultForceMock(context: Context, ankiDroidAvailable: Boolean): Boolean =
     context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0 && !ankiDroidAvailable
 
-  private const val KEY_PREPUSH_CAP = "prepush_cap"
-  private const val DEFAULT_PREPUSH_DECKS = 15
-  private const val MAX_SCAN_DECKS = 60
-  private const val CARDS_PER_DECK = 20
-
   /** Whether the user keeps [deckId] synced to the watch (the deck list's checkbox; on by default). */
   fun isDeckSynced(context: Context, deckId: DeckId): Boolean =
-    deckPrefs(context).getBoolean("deck_${deckId.value}", true)
+    deckPrefs(context).getBoolean(deckKey(deckId), true)
 
   fun setDeckSynced(context: Context, deckId: DeckId, synced: Boolean) {
-    deckPrefs(context).edit().putBoolean("deck_${deckId.value}", synced).apply()
+    deckPrefs(context).edit().putBoolean(deckKey(deckId), synced).apply()
   }
 
-  private fun deckPrefs(context: Context) =
+  // Key is the raw long ("deck_<id>"), matching DeckId.value, not the wrapper toString.
+  fun deckKey(deckId: DeckId): String = "deck_${deckId.value}"
+
+  internal fun deckPrefs(context: Context) =
     context.getSharedPreferences(DECK_PREFS, Context.MODE_PRIVATE)
+
+  /**
+   * Push [batch] to the watch on [path] (a plain [PATH_DUE_BATCH] or its per-deck form). The batch
+   * is sent as an Asset (streamed over a side channel) rather than a DataMap byte array: a
+   * putByteArray counts against the ~100KB DataItem limit and dense decks overflow it
+   * (DATA_ITEM_TOO_LARGE). Assets have no such cap. The bytes are zstd-compressed inside
+   * serializeDueBatch (Rust), so no compression happens here.
+   */
+  internal suspend fun pushDueBatch(context: Context, path: String, batch: WearosDueBatch) {
+    val bytes = serializeDueBatch(AnkiDroidBridge.stripBase64Batch(batch))
+    Wearable.getDataClient(context)
+      .putDataItem(
+        PutDataMapRequest.create(path)
+          .apply {
+            dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(bytes))
+            // Vary the item so an identical re-request still propagates to the watch.
+            dataMap.putLong("synced_at", System.currentTimeMillis())
+            setUrgent()
+          }
+          .asPutDataRequest()
+      )
+      .await()
+  }
+
+  /**
+   * Push the deck list the watch's picker shows. Legacy KEY_DECKS_BYTES text is intentionally not
+   * sent: dual-writing it alongside the protobuf payload roughly doubles the size of this DataMap,
+   * and this codebase has already hit DATA_ITEM_TOO_LARGE once (see the batch Asset comment above).
+   * The watch still knows how to read the legacy key if it ever receives it from an older-built
+   * phone.
+   */
+  internal suspend fun pushDecksList(context: Context, decks: List<Pair<DeckId, String>>) {
+    Wearable.getDataClient(context)
+      .putDataItem(
+        PutDataMapRequest.create(PATH_DECKS)
+          .apply {
+            dataMap.putByteArray(KEY_DECKS_PROTO_BYTES, encodeDecksProto(decks))
+            setUrgent()
+          }
+          .asPutDataRequest()
+      )
+      .await()
+  }
 
   // A sync-now request and the periodic auto-sync can start together (both fire after an app
   // update); run one after the other so each deck is fetched and rendered once at a time.
@@ -78,38 +124,21 @@ object DeckSync {
   private suspend fun runExclusive(context: Context, onProgress: (String, Int) -> Unit): SyncSummary? {
     val bridge = AnkiDroidBridge(context)
     val renderer = CardBitmapRenderer(context)
-    val settings = context.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
-    val deckPrefs = context.getSharedPreferences(DECK_PREFS, Context.MODE_PRIVATE)
 
     val available = bridge.isAnkiDroidAvailable()
-    val isForced = settings.getBoolean(KEY_FORCE_MOCK, defaultForceMock(context, available))
-    if (!available && !isForced) {
+    // PhoneSettings owns the settings store; its load() reuses defaultForceMock for the mock flag.
+    val settings = PhoneSettings.load(context, available)
+    if (!available && !settings.forceMock) {
       Log.i(TAG, "AnkiDroid not reachable and mock mode not forced; skipping sync.")
       return null
     }
-    val prePushCap = settings.getInt(KEY_PREPUSH_CAP, DEFAULT_PREPUSH_DECKS)
-    val dataClient = Wearable.getDataClient(context)
+    val prePushCap = settings.prePushCap
 
     onProgress("Syncing deck list…", 5)
 
     val decks = bridge.fetchAllDecks()
-    // .value everywhere: the prefs key ("deck_<id>") must use the raw long, not DeckId.toString().
-    val filteredDecks = decks.filter { deckPrefs.getBoolean("deck_${it.first.value}", true) }
-    dataClient
-      .putDataItem(
-        PutDataMapRequest.create(PATH_DECKS)
-          .apply {
-            // Legacy KEY_DECKS_BYTES text is intentionally not sent: dual-writing it alongside the
-            // protobuf payload roughly doubles the size of this DataMap, and this codebase has
-            // already hit DATA_ITEM_TOO_LARGE once (see the batch Asset comment above). The watch
-            // still knows how to read the legacy key if it ever receives it from an older-built
-            // phone.
-            dataMap.putByteArray(KEY_DECKS_PROTO_BYTES, encodeDecksProto(filteredDecks))
-            setUrgent()
-          }
-          .asPutDataRequest()
-      )
-      .await()
+    val filteredDecks = decks.filter { isDeckSynced(context, it.first) }
+    pushDecksList(context, filteredDecks)
 
     onProgress("Fetching due cards…", 15)
 
@@ -120,30 +149,18 @@ object DeckSync {
       if (pushed >= prePushCap || scanned >= MAX_SCAN_DECKS) break
       scanned++
       val batch =
-        bridge.fetchDuePool(deckId = deckId, todayLimit = CARDS_PER_DECK, forceMock = isForced)
+        bridge.fetchDuePool(deckId = deckId, todayLimit = CARDS_PER_DECK, forceMock = settings.forceMock)
       if (batch.cards.isEmpty()) continue
 
-      val bytes = serializeDueBatch(AnkiDroidBridge.stripBase64Batch(batch))
-      dataClient
-        .putDataItem(
-          PutDataMapRequest.create("$PATH_DUE_BATCH/${deckId.value}")
-            .apply {
-              // serializeDueBatch already zstd-compresses; ship the bytes straight into the Asset.
-              dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(bytes))
-              dataMap.putLong("synced_at", System.currentTimeMillis())
-              setUrgent()
-            }
-            .asPutDataRequest()
-        )
-        .await()
+      pushDueBatch(context, "$PATH_DUE_BATCH/${deckId.value}", batch)
 
       // render() switches to the main thread internally, so this is safe from any coroutine. Only the
       // near horizon gets bitmaps: they're the expensive leg over Bluetooth, so rendering the whole
       // week up front would flood the Data Layer for cards the watch won't reach for days.
       renderer.syncBitmapsForBatch(
-              bitmapHorizonBatch(batch, bridge.todayDayIndex()),
-              bridge::noteTypeCss,
-            )
+          bitmapHorizonBatch(batch, bridge.todayDayIndex()),
+          bridge::noteTypeCss,
+        )
 
       pushed++
       totalCards += batch.cards.size
@@ -154,7 +171,11 @@ object DeckSync {
       Log.d(TAG, "Pushed deck $deckId ('${redact(deckName)}') with ${batch.cards.size} cards.")
     }
 
-    settings.edit().putLong(KEY_LAST_SYNC_MS, System.currentTimeMillis()).apply()
+    context
+      .getSharedPreferences(PhoneSettings.PREFS, Context.MODE_PRIVATE)
+      .edit()
+      .putLong(KEY_LAST_SYNC_MS, System.currentTimeMillis())
+      .apply()
     val summary = SyncSummary(pushed, totalCards, filteredDecks.size - scanned)
     Log.i(TAG, "Sync complete: ${summary.message()}")
     return summary

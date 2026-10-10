@@ -21,7 +21,6 @@ import java.util.concurrent.TimeUnit
  */
 object AutoSync {
   const val WORK_NAME = "auto_deck_sync"
-  private const val SETTINGS_PREFS = "settings_prefs"
   private const val KEY_AUTO_SYNC = "auto_sync"
   private const val KEY_INTERVAL_HOURS = "auto_sync_interval_hours"
   const val DEFAULT_ENABLED = true
@@ -34,7 +33,7 @@ object AutoSync {
   const val MAX_INTERVAL_HOURS = 24
 
   private fun prefs(context: Context) =
-    context.getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE)
+    context.getSharedPreferences(PhoneSettings.PREFS, Context.MODE_PRIVATE)
 
   fun isEnabled(context: Context): Boolean =
     prefs(context).getBoolean(KEY_AUTO_SYNC, DEFAULT_ENABLED)
