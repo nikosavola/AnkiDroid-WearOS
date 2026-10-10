@@ -14,33 +14,18 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.unit.Dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
-import androidx.wear.compose.foundation.AnchorType
-import androidx.wear.compose.foundation.CurvedDirection
 import androidx.compose.foundation.layout.size
-import androidx.wear.compose.foundation.CurvedLayout
-import androidx.wear.compose.foundation.CurvedModifier
-import androidx.wear.compose.foundation.CurvedTextStyle
 import androidx.wear.compose.foundation.padding
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.material3.AppScaffold
@@ -56,7 +41,6 @@ import androidx.wear.compose.material3.TextToggleButton
 import androidx.wear.compose.material3.TextToggleButtonDefaults
 import androidx.wear.compose.material3.lazy.TransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
-import androidx.wear.compose.material3.curvedText
 import androidx.wear.compose.navigation3.rememberSwipeDismissableSceneStrategy
 import com.google.android.gms.wearable.Wearable
 import java.util.Locale
@@ -66,15 +50,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import uniffi.wearos_core.*
-
-/** A card side's phone-rendered image, as far as it has loaded. */
-internal sealed interface SideImage {
-  data object Loading : SideImage
-
-  data object None : SideImage
-
-  data class Ready(val bitmap: androidx.compose.ui.graphics.ImageBitmap) : SideImage
-}
 
 /** A deck shown in the picker; [dueNow] is null when the deck has not been pooled on the watch yet. */
 data class DeckEntry(val id: Long, val name: String, val dueNow: Int?)
@@ -745,255 +720,6 @@ class MainActivity : ComponentActivity() {
       // Every presentation starts fresh (unrevealed, scrolled to the top, timer reset), even when
       // a requeued card comes straight back with the same id.
       key(session, cardCompletedTrigger) { ReviewCardScreen(session, currentCard) }
-    }
-  }
-
-  /**
-   * Session progress: a determinate ring hugging the round edge, filling clockwise in proportion to
-   * cards graduated this session, with the N/M label curved along the top. Callers draw it inside
-   * their single cached overlay layer, above the card body so an opaque card image can't cover it.
-   */
-  @Composable
-  private fun ReviewProgress(session: ReviewSession, style: CurvedTextStyle) {
-    // Native calls once per grade rather than on every draw of the ring.
-    val fraction = remember(session, cardCompletedTrigger) { session.getProgressFraction() }
-    val label = remember(session, cardCompletedTrigger) { session.getProgressString() }
-    // Card text scrolled up fades out under the label rather than running through it.
-    val background = MaterialTheme.colorScheme.background
-    Box(
-      modifier =
-        Modifier.fillMaxWidth()
-          .height(44.dp)
-          .background(Brush.verticalGradient(0.5f to background, 1f to Color.Transparent))
-    )
-    androidx.wear.compose.material3.CircularProgressIndicator(
-      progress = { fraction },
-      modifier = Modifier.fillMaxSize().padding(2.dp),
-    )
-    TopCurvedProgress(label, style)
-  }
-
-  /**
-   * The N/M session progress as curved text hugging the top arc (matching the curved answer hint +
-   * grade buttons), inset radially so it clears the ScreenScaffold clock at the very top.
-   */
-  @Composable
-  private fun TopCurvedProgress(text: String, style: CurvedTextStyle) {
-    val color = MaterialTheme.colorScheme.onSurfaceVariant
-    // TalkBack otherwise reads the bare "N/M".
-    val spoken = text.replace("/", " of ") + " done"
-    CurvedLayout(
-      modifier = Modifier.fillMaxSize().clearAndSetSemantics { contentDescription = spoken },
-      anchor = 270f,
-      anchorType = AnchorType.Center,
-    ) {
-      curvedText(
-        text = text,
-        style = style,
-        color = color,
-        modifier = CurvedModifier.padding(outer = 22.dp, inner = 0.dp, before = 0.dp, after = 0.dp),
-      )
-    }
-  }
-
-  /**
-   * Side inset for card text. A full-width line only clears a round display at the vertical center;
-   * everywhere else its ends sit under the bezel curve, so text gets extra air there. Square
-   * screens have flat edges and keep the width.
-   */
-  @Composable
-  private fun cardSidePadding(): Dp =
-    if (LocalConfiguration.current.isScreenRound) 20.dp else 14.dp
-
-  /**
-   * Front of a review card: progress, an optional undo, the tappable card body, an optional
-   * type-in field, and a reveal hint.
-   */
-  @Composable
-  internal fun BoxScope.ReviewFront(
-    session: ReviewSession,
-    card: WearosCard,
-    displayFront: String,
-    spokenFront: String,
-    curvedStyle: androidx.wear.compose.foundation.CurvedTextStyle,
-    scrollState: androidx.compose.foundation.ScrollState,
-    typeExpected: String?,
-    typed: String,
-    onTyped: (String) -> Unit,
-    onTypeFocused: (Boolean) -> Unit,
-    onReveal: () -> Unit,
-  ) {
-    Column(
-      modifier =
-        Modifier.fillMaxSize()
-          .verticalScroll(scrollState)
-          .rotaryScroll(scrollState)
-          .clickable(
-            interactionSource = remember { MutableInteractionSource() },
-            indication = null,
-            onClickLabel = "Show answer",
-            role = Role.Button,
-          ) {
-            onReveal()
-          }
-          .padding(start = cardSidePadding(), end = cardSidePadding(), top = 40.dp, bottom = 34.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.Center,
-    ) {
-      CardSideContent(
-        cardId = card.id,
-        side = "front",
-        fallbackHtml = displayFront,
-        spokenText = spokenFront,
-        modifier = Modifier.fillMaxWidth(),
-      )
-      if (typeExpected != null) {
-        Spacer(modifier = Modifier.height(10.dp))
-        TypeAnswerField(value = typed, onValueChange = onTyped, onFocusedChanged = onTypeFocused)
-      }
-    }
-    val hintColor = MaterialTheme.colorScheme.onSurfaceVariant
-    Box(modifier = Modifier.fillMaxSize().cachedLayer()) {
-      if (!hideProgress) ReviewProgress(session, curvedStyle)
-      CurvedLayout(
-        modifier = Modifier.fillMaxSize(),
-        anchor = 90f,
-        anchorType = AnchorType.Center,
-        angularDirection = CurvedDirection.Angular.Reversed,
-      ) {
-        curvedText(
-          text = if (typeExpected != null) "Type, then tap to check" else "Tap to show answer",
-          style = curvedStyle,
-          color = hintColor,
-        )
-      }
-    }
-    // Undo the previous grade, tucked just left of the progress text at the top. Drawn LAST so it
-    // sits above the full-screen reveal-clickable Column, which would otherwise eat the tap. The
-    // 48dp target is centered where the 16dp glyph always sat.
-    if (session.canUndo()) {
-      UndoButton(
-        onClick = { undoLastAnswer(session) },
-        modifier = Modifier.align(Alignment.TopCenter).offset(x = (-30).dp),
-      )
-    }
-  }
-
-  /** Revealed card: front + answer scrolling under the curved grade buttons. */
-  @Composable
-  internal fun BoxScope.ReviewAnswer(
-    session: ReviewSession,
-    card: WearosCard,
-    displayFront: String,
-    displayBack: String,
-    spokenFront: String,
-    spokenBack: String,
-    scrollState: androidx.compose.foundation.ScrollState,
-    cardStartTime: Long,
-    gradeEnabled: Boolean,
-    curvedStyle: CurvedTextStyle,
-    suppressBackImage: Boolean,
-    onGrade: (ease: Int, durationMs: Long) -> Unit,
-  ) {
-    Column(
-      modifier =
-        Modifier.fillMaxSize()
-          .verticalScroll(scrollState)
-          .rotaryScroll(scrollState)
-          // Extra bottom space so the answer can scroll past the overlay buttons and every line can
-          // be brought fully into the clear above them.
-          // Top inset clears the curved N/M progress label, which ends about 36dp down.
-          .padding(start = cardSidePadding(), end = cardSidePadding(), top = 40.dp, bottom = 96.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.Center,
-    ) {
-      CardSideContent(
-        cardId = card.id,
-        side = "front",
-        fallbackHtml = displayFront,
-        spokenText = spokenFront,
-        modifier = Modifier.fillMaxWidth(),
-      )
-      Spacer(
-        modifier =
-          Modifier.padding(vertical = 6.dp)
-            .fillMaxWidth(0.5f)
-            .height(1.dp)
-            .background(Color.DarkGray)
-      )
-      CardSideContent(
-        cardId = card.id,
-        side = "back",
-        fallbackHtml = displayBack,
-        spokenText = spokenBack,
-        forceNative = suppressBackImage,
-        modifier = Modifier.fillMaxWidth(),
-      )
-    }
-    GradeEdgeButtons(
-      card = card,
-      enabled = gradeEnabled,
-      colored = coloredGradeButtons,
-      chrome = { if (!hideProgress) ReviewProgress(session, curvedStyle) },
-    ) { ease ->
-      onGrade(ease, System.currentTimeMillis() - cardStartTime)
-    }
-  }
-
-  /**
-   * Renders the phone-rendered bitmap for a card side if the watch has one, else the HTML. The
-   * bitmap is decoded off the main thread; until it is ready (only on a cache miss, prefetching
-   * usually covers it) the side draws nothing rather than flashing the HTML fallback. [spokenText]
-   * is the side's plain text, which TalkBack reads for the image.
-   */
-  @Composable
-  fun CardSideContent(
-    cardId: Long,
-    side: String,
-    fallbackHtml: String,
-    spokenText: String,
-    forceNative: Boolean = false,
-    modifier: Modifier = Modifier,
-  ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val widthPx = decodeWidthPx()
-    // Keyed state rather than produceState, which would keep showing the previous card's image
-    // until the new decode lands. forceNative skips a stale bitmap entirely: the typed-answer diff
-    // replaces the back's nothing-typed image, and the HTML in front of it is the real content.
-    var image by
-      remember(cardId, side, forceNative) {
-        mutableStateOf<SideImage>(
-          if (forceNative) {
-            SideImage.None
-          } else {
-            CardBitmaps.cached(cardId, side)?.let { SideImage.Ready(it) } ?: SideImage.Loading
-          }
-        )
-      }
-    if (image == SideImage.Loading) {
-      LaunchedEffect(cardId, side) {
-        val bitmap = withContext(Dispatchers.IO) { CardBitmaps.load(context, cardId, side, widthPx) }
-        image = bitmap?.let { SideImage.Ready(it) } ?: SideImage.None
-      }
-    }
-    CardSide(image, fallbackHtml, spokenText, fontScale, cardFont, modifier)
-  }
-
-  /** Width to decode card images at; the window size can still read 0 before the first layout. */
-  @Composable
-  private fun decodeWidthPx(): Int =
-    androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.width.takeIf { it > 0 }
-      ?: resources.displayMetrics.widthPixels
-
-  /** Decode the next cards' images in the background so moving on doesn't wait on a decode. */
-  @Composable
-  internal fun PrefetchUpcomingImages(session: ReviewSession, cardId: Long) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val widthPx = decodeWidthPx()
-    LaunchedEffect(session, cardId, cardCompletedTrigger) {
-      withContext(Dispatchers.IO) {
-        CardBitmaps.prefetch(context, listOf(cardId) + session.upcomingCardIds(2u), widthPx)
-      }
     }
   }
 

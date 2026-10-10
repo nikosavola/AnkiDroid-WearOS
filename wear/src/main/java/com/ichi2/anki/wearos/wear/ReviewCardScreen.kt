@@ -88,7 +88,7 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
   // the default clock from AppScaffold).
   val emptyTimeText: @Composable () -> Unit = {}
   val reviewTimeText = if (hideClock) emptyTimeText else null
-  PrefetchUpcomingImages(session, card.id)
+  PrefetchUpcomingImages(session, card.id, cardCompletedTrigger)
   ScreenScaffold(scrollState = scrollState, timeText = reviewTimeText) {
     if (!isRevealed) {
       ReviewFront(
@@ -98,6 +98,11 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
         cleanFront,
         curvedStyle,
         scrollState,
+        fontScale = fontScale,
+        cardFont = cardFont,
+        showProgress = !hideProgress,
+        progressTrigger = cardCompletedTrigger,
+        onUndoLast = { undoLastAnswer(it) },
         typeExpected = typeExpected,
         typed = typed,
         onTyped = { typed = it },
@@ -117,6 +122,11 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
         scrollState,
         cardStartTime,
         gradeEnabled = !isAnswering,
+        fontScale = fontScale,
+        cardFont = cardFont,
+        coloredButtons = coloredGradeButtons,
+        showProgress = !hideProgress,
+        progressTrigger = cardCompletedTrigger,
         curvedStyle = curvedStyle,
         // The back bitmap shows the nothing-typed answer; a diff must not sit under it.
         suppressBackImage = typedDiff != null,
