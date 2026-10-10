@@ -46,11 +46,13 @@ import androidx.compose.material3.LinearWavyProgressIndicator
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialShapes
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MediumFlexibleTopAppBar
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.currentWindowAdaptiveInfo
 import androidx.compose.material3.adaptive.layout.AnimatedPane
@@ -75,6 +77,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
@@ -99,9 +102,9 @@ const val DECK_LIST_TAG = "deck_list"
 const val SUPPORTING_PANE_TAG = "supporting_pane"
 
 /**
- * The whole phone screen. Compact widths get one scrolling list (header, status and hero scroll
- * away, search sticks, Sync floats); medium and wider windows (tablets, phone landscape) put the
- * deck tree beside a supporting pane with status, settings and Sync.
+ * The whole phone screen. Compact widths get a collapsing flexible top app bar over one scrolling
+ * list (status and hero scroll away, search sticks, Sync floats); medium and wider windows (tablets,
+ * phone landscape) put the deck tree beside a supporting pane with status, settings and Sync.
  */
 @Composable
 fun PhoneScreen(vm: PhoneViewModel, actions: PhoneActions) {
@@ -138,9 +141,21 @@ private fun CompactLayout(vm: PhoneViewModel, actions: PhoneActions) {
   val fabExpanded by remember {
     derivedStateOf { !listState.canScrollBackward || listState.lastScrolledBackward }
   }
+  // Collapses to the small bar as the list scrolls, so brand and overflow stay reachable.
+  val scrollBehavior = TopAppBarDefaults.exitUntilCollapsedScrollBehavior()
   Scaffold(
+    modifier = Modifier.nestedScroll(scrollBehavior.nestedScrollConnection),
     contentWindowInsets = WindowInsets.safeDrawing,
     containerColor = MaterialTheme.colorScheme.background,
+    topBar = {
+      MediumFlexibleTopAppBar(
+        title = { Text("AnkiDroid") },
+        subtitle = { Text("WearOS Companion") },
+        navigationIcon = { BrandMark() },
+        actions = { OverflowMenu(vm, actions) },
+        scrollBehavior = scrollBehavior,
+      )
+    },
     floatingActionButton = {
       if (vm.syncEnabled || vm.progressVisible) {
         SyncFab(vm, actions, expanded = fabExpanded && !imeVisible)
@@ -148,8 +163,6 @@ private fun CompactLayout(vm: PhoneViewModel, actions: PhoneActions) {
     },
   ) { inner ->
     val dir = LocalLayoutDirection.current
-    // Top inset goes on the viewport, not contentPadding, so the sticky search pins below the
-    // status bar instead of under it.
     Box(
       modifier =
         Modifier.fillMaxSize()
@@ -170,7 +183,6 @@ private fun CompactLayout(vm: PhoneViewModel, actions: PhoneActions) {
             bottom = inner.calculateBottomPadding() + FabClearance,
           ),
       ) {
-        item(key = "header") { BrandHeader(vm, actions, Modifier.padding(bottom = 8.dp)) }
         cardAccessItem(vm, actions)
         item(key = "status") { StatusChip(vm, Modifier.padding(bottom = 10.dp)) }
         item(key = "hero") { DueHeroCard(vm, Modifier.padding(bottom = 12.dp)) }
@@ -334,26 +346,32 @@ private fun LazyListScope.deckItems(vm: PhoneViewModel, actions: PhoneActions) {
   )
 }
 
-/** Branded header: dynamic-colored app mark on a primary chip, the wordmark, and overflow menu. */
+/** Dynamic-colored app mark on a primary chip. */
 @OptIn(ExperimentalMaterial3ExpressiveApi::class)
 @Composable
-private fun BrandHeader(vm: PhoneViewModel, actions: PhoneActions, modifier: Modifier = Modifier) {
-  Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.fillMaxWidth().padding(top = 8.dp)) {
-    Surface(
-      shape = MaterialShapes.Cookie9Sided.toShape(),
-      color = MaterialTheme.colorScheme.primary,
-      modifier = Modifier.size(44.dp),
-    ) {
-      Box(contentAlignment = Alignment.Center) {
-        // The monochrome launcher mark, tinted onPrimary, so the badge tracks the dynamic palette.
-        Icon(
-          painter = painterResource(id = R.drawable.ic_launcher_monochrome),
-          contentDescription = null,
-          tint = MaterialTheme.colorScheme.onPrimary,
-          modifier = Modifier.size(30.dp),
-        )
-      }
+private fun BrandMark() {
+  Surface(
+    shape = MaterialShapes.Cookie9Sided.toShape(),
+    color = MaterialTheme.colorScheme.primary,
+    modifier = Modifier.size(44.dp),
+  ) {
+    Box(contentAlignment = Alignment.Center) {
+      // The monochrome launcher mark, tinted onPrimary, so the badge tracks the dynamic palette.
+      Icon(
+        painter = painterResource(id = R.drawable.ic_launcher_monochrome),
+        contentDescription = null,
+        tint = MaterialTheme.colorScheme.onPrimary,
+        modifier = Modifier.size(30.dp),
+      )
     }
+  }
+}
+
+/** Branded header for the supporting pane: app mark, wordmark, and overflow menu. */
+@Composable
+private fun BrandHeader(vm: PhoneViewModel, actions: PhoneActions, modifier: Modifier = Modifier) {
+  Row(verticalAlignment = Alignment.CenterVertically, modifier = modifier.fillMaxWidth()) {
+    BrandMark()
     Spacer(Modifier.width(12.dp))
     Column(modifier = Modifier.weight(1f)) {
       Text(
