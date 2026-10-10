@@ -6,6 +6,28 @@ use std::fmt::Write as _;
 use crate::css::{BASE_PX, VOID_ELEMENTS};
 use crate::util::attr_value;
 
+/// Consume a tag from `chars` (which sits just past `<`) up to and including `>`: returns the raw
+/// tag inside, whether it's a closing tag, and its ASCII-lowercased name. An unterminated tag
+/// consumes the rest of the input.
+fn scan_tag(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> (String, bool, String) {
+    let mut tag = String::new();
+    while let Some(&nc) = chars.peek() {
+        chars.next();
+        if nc == '>' {
+            break;
+        }
+        tag.push(nc);
+    }
+    let closing = tag.starts_with('/');
+    let name = tag
+        .trim_start_matches('/')
+        .split(|ch: char| ch.is_whitespace())
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    (tag, closing, name)
+}
+
 #[uniffi::export]
 pub fn clean_html(raw_html: String) -> String {
     // 1. Drop <script>/<style> blocks, HTML comments (Anki templates hide fields like
@@ -33,21 +55,7 @@ pub fn clean_html(raw_html: String) -> String {
     let mut in_rp = false;
     while let Some(c) = chars.next() {
         if c == '<' {
-            let mut tag = String::new();
-            while let Some(&nc) = chars.peek() {
-                chars.next();
-                if nc == '>' {
-                    break;
-                }
-                tag.push(nc);
-            }
-            let closing = tag.starts_with('/');
-            let name = tag
-                .trim_start_matches('/')
-                .split(|ch: char| ch.is_whitespace())
-                .next()
-                .unwrap_or("")
-                .to_ascii_lowercase();
+            let (_, closing, name) = scan_tag(&mut chars);
             match name.as_str() {
                 "rt" => clean.push(if closing { ')' } else { '(' }),
                 "rp" => in_rp = !closing,
@@ -490,21 +498,7 @@ fn normalize_ruby(s: &str) -> String {
     let mut in_rp = false;
     while let Some(c) = chars.next() {
         if c == '<' {
-            let mut tag = String::new();
-            while let Some(&nc) = chars.peek() {
-                chars.next();
-                if nc == '>' {
-                    break;
-                }
-                tag.push(nc);
-            }
-            let closing = tag.starts_with('/');
-            let name = tag
-                .trim_start_matches('/')
-                .split(|ch: char| ch.is_whitespace())
-                .next()
-                .unwrap_or("")
-                .to_ascii_lowercase();
+            let (tag, closing, name) = scan_tag(&mut chars);
             match name.as_str() {
                 "rt" => out.push_str(if closing { ")" } else { "(" }),
                 "rp" => in_rp = !closing,

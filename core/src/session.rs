@@ -264,10 +264,9 @@ impl ReviewSession {
         // Buffer locally if a DB is configured (the answer still reaches AnkiDroid on sync). A grade
         // that can't be persisted must fail loudly, not vanish: put the card back at the front and
         // surface the error so the user re-grades, instead of the review silently never syncing.
-        if get_db_connection().is_ok()
-            && let Err(e) = save_answer(answer.clone())
-        {
-            self.queue.lock().unwrap().push_front(front);
+        let has_db = get_db_connection().is_ok();
+        if has_db && let Err(e) = save_answer(answer.clone()) {
+            self.restore_front(front);
             return Err(e);
         }
 
@@ -278,10 +277,10 @@ impl ReviewSession {
             Some(pool) => match self.reschedule_in_pool(card, ease, pool) {
                 Ok(outcome) => Some(outcome),
                 Err(e) => {
-                    if get_db_connection().is_ok() {
+                    if has_db {
                         let _ = remove_buffered_answers(vec![answer.id]);
                     }
-                    self.queue.lock().unwrap().push_front(front);
+                    self.restore_front(front);
                     return Err(e);
                 }
             },
@@ -308,6 +307,16 @@ impl ReviewSession {
 /// Session-internal helpers, kept out of the `#[uniffi::export]` impl so the macro never tries to
 /// lift/lower the private types (`QueuedCard`, `PoolContext`, `PoolGradeOutcome`) they traffic in.
 impl ReviewSession {
+    /// The loud-failure rollback for a failed grade: the card goes back to the queue's head.
+    fn restore_front(&self, front: QueuedCard) {
+        self.queue.lock().unwrap().push_front(front);
+    }
+
+    /// The loud-failure rollback for a failed undo: the event goes back on history.
+    fn fail_undo(&self, event: GradeEvent, e: CoreError) -> CoreError {
+        self.history.lock().unwrap().push(event);
+        e
+    }
     /// Put the graded card back in the session or let it graduate, returning whether it requeued.
     ///
     /// Again is always a relearn step and may repeat freely; other buttons requeue only while the
@@ -523,8 +532,7 @@ impl ReviewSession {
         if get_db_connection().is_ok()
             && let Err(e) = remove_buffered_answers(vec![event.answer.id.clone()])
         {
-            self.history.lock().unwrap().push(event);
-            return Err(e);
+            return Err(self.fail_undo(event, e));
         }
 
         // Pool mode also put the grade back into the pool row and grade log; restore both, or fail
@@ -538,8 +546,7 @@ impl ReviewSession {
             )
             .and_then(|()| pool_unlog_grade(undo.grade_log_id));
             if let Err(e) = restore {
-                self.history.lock().unwrap().push(event);
-                return Err(e);
+                return Err(self.fail_undo(event, e));
             }
         }
 
