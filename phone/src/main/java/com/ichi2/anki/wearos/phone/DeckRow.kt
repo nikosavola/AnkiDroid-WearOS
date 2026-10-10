@@ -1,5 +1,33 @@
 package com.ichi2.anki.wearos.phone
 
+/** A node in the deck hierarchy parsed from Anki `::`-separated deck names. */
+class DeckNode(val name: String) {
+  var deckId: DeckId? = null
+  val children = sortedMapOf<String, DeckNode>()
+}
+
+/** Build a folder tree from flat `parent::child` deck names. */
+internal fun buildDeckTree(decks: List<Pair<DeckId, String>>): DeckNode {
+  val root = DeckNode("")
+  for ((id, fullName) in decks) {
+    var node = root
+    for (segment in fullName.split("::")) {
+      node = node.children.getOrPut(segment) { DeckNode(segment) }
+    }
+    node.deckId = id
+  }
+  return root
+}
+
+/** Collect every real deck id at or below [node]. */
+internal fun collectDeckIds(node: DeckNode, out: MutableList<DeckId>) {
+  node.deckId?.let { out.add(it) }
+  for (child in node.children.values) collectDeckIds(child, out)
+}
+
+/** Every real deck id at or below this node — an idiomatic `buildList` wrapper. */
+internal fun DeckNode.deckIds(): List<DeckId> = buildList { collectDeckIds(this@deckIds, this) }
+
 /**
  * One visible row of the deck tree. [index]/[siblingCount] place it within its sibling group so the
  * segmented shapes still read as one connected card per level.
