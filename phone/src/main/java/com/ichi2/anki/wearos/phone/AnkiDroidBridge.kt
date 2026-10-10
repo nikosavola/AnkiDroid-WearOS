@@ -43,6 +43,8 @@ class AnkiDroidBridge(
 ) {
   companion object {
     private const val TAG = "AnkiDroidBridge"
+    private const val NO_FRONT_TEXT = "No Front Text"
+    private const val NO_BACK_TEXT = "No Back Text"
 
     fun stripBase64Images(html: String): String {
       val regex = Regex("data:image/[^;]+;base64,[a-zA-Z0-9+/=\\s\\r\\n]+")
@@ -122,8 +124,8 @@ class AnkiDroidBridge(
    * written inline for the watch's CSS-less text renderer.
    */
   internal fun sidesOf(card: ProviderCard): Pair<String, String> {
-    var question = card.question ?: return "No Front Text" to (card.answer ?: "No Back Text")
-    var answer = card.answer ?: "No Back Text"
+    var question = card.question ?: return NO_FRONT_TEXT to (card.answer ?: NO_BACK_TEXT)
+    var answer = card.answer ?: NO_BACK_TEXT
     val typeField = typeAnswerField(question)
     if (typeField == null && !question.contains("class") && !answer.contains("class")) {
       return question to answer
@@ -292,22 +294,16 @@ class AnkiDroidBridge(
     // clobber the cached deck and, if graded, enter the buffer as answers that never settle.
     if (!isAnkiDroidAvailable()) {
       Log.w(TAG, "AnkiDroid unavailable; returning empty batch for deck ${deckId.value}.")
-      return WearosDueBatch(deckId = deckId.value, deckName = "Deck ${deckId.value}", cards = emptyList())
+      return emptyBatch(deckId)
     }
 
     try {
       val allDecks = fetchAllDecks()
       val matchedDeck = allDecks.find { it.first == deckId }
       if (matchedDeck == null) {
-        // Requested deck no longer exists (deleted / deselected). Return an empty batch tagged with
-        // the REQUESTED id, never a substitute deck: the watch matches the arrival on the id it asked
-        // for, so a different deck just leaves it waiting out the full download timeout.
+        // Requested deck no longer exists (deleted / deselected).
         Log.w(TAG, "Requested deck ${deckId.value} not found; returning empty batch.")
-        return WearosDueBatch(
-          deckId = deckId.value,
-          deckName = "Deck ${deckId.value}",
-          cards = emptyList(),
-        )
+        return emptyBatch(deckId)
       }
       val (resolvedDeckId, resolvedDeckName) = matchedDeck
       Log.i(TAG, "Using AnkiDroid deck: ${redact(resolvedDeckName)} (ID: $resolvedDeckId)")
@@ -326,8 +322,8 @@ class AnkiDroidBridge(
                 id = 0L,
                 noteId = scheduled.noteId,
                 ord = scheduled.ord,
-                front = "No Front Text",
-                back = "No Back Text",
+                front = NO_FRONT_TEXT,
+                back = NO_BACK_TEXT,
                 due = null,
                 state = null,
               )
@@ -353,9 +349,17 @@ class AnkiDroidBridge(
       // Return an empty batch (not mocks) so a transient provider error can't overwrite the
       // real cached deck with phantom cards.
       Log.e(TAG, "Failed to query AnkiDroid ContentProvider: ${e.message}. Returning empty batch.", e)
-      return WearosDueBatch(deckId = deckId.value, deckName = "Deck ${deckId.value}", cards = emptyList())
+      return emptyBatch(deckId)
     }
   }
+
+  /**
+   * An empty batch tagged with the REQUESTED id, never a substitute deck: the watch matches the
+   * arrival on the id it asked for, so a different deck just leaves it waiting out the full download
+   * timeout.
+   */
+  private fun emptyBatch(deckId: DeckId): WearosDueBatch =
+    WearosDueBatch(deckId = deckId.value, deckName = "Deck ${deckId.value}", cards = emptyList())
 
   /**
    * Fetch a multi-day card pool for [deckId]: today's scheduler queue plus the next [horizonDays]
@@ -403,46 +407,10 @@ class AnkiDroidBridge(
     val todayCards = today.cards.map { it.copy(queuedDay = todayIndex) }
     val queueComplete = isCompleteQueue(today.cards.size, wanted, dueToday)
 
-    // The preset's new.perDay misses deck-level overrides; infer the deck's real one from what
-    // AnkiDroid queued today. Only days after today use it (today is AnkiDroid's own queue).
-    val newQueuedToday = dueToday?.getOrNull(2)
-    val introducedToday = provider.countCards(decks.scope("introduced:1"))
-    // At most the pool's worth of new cards plus one, which is all the inference needs to tell a
-    // binding limit from a deck that ran out.
-    val newCeiling = maxOf(presetConfig?.newPerDay ?: 0, (newQueuedToday ?: 0) + (introducedToday ?: 0))
-    val newPositions =
-      if (presetConfig == null || newCeiling == 0) {
-        emptyList()
-      } else {
-        // AnkiDroid's queued new cards are the first unstudied ones, so start right before them.
-        val queuedNew = today.cards.filter { it.state?.queue == 0 }.map { it.id }
-        val firstQueued =
-          if (queuedNew.isEmpty()) {
-            null
-          } else {
-            provider.searchCardPositions("cid:${queuedNew.joinToString(",")}").minOfOrNull {
-              it.position
-            }
-          }
-        provider.searchNewCardPositions(
-          decks,
-          wanted = newCardAllowance(newCeiling, horizonDays) + (newQueuedToday ?: 0) + 1,
-          after = (firstQueued ?: 0L) - 1,
-        )
-      }
-    val config =
-      presetConfig?.let { c ->
-        val inferred =
-          effectiveNewPerDay(
-            presetNewPerDay = c.newPerDay,
-            newQueuedToday = newQueuedToday,
-            introducedToday = introducedToday,
-            newAvailable = newPositions.size,
-            reviewLimitReached = dueToday?.getOrNull(1) ?: 0 >= c.reviewsPerDay,
-          )
-        if (inferred != c.newPerDay) Log.i(TAG, "Effective new/day $inferred (preset ${c.newPerDay})")
-        c.copy(newPerDay = inferred)
-      }
+    // The preset's new.perDay misses deck-level overrides; newCardPlan infers the deck's real one
+    // from what AnkiDroid queued today. Only days after today use it (today is AnkiDroid's own queue).
+    val (config, newPositions) =
+      newCardPlan(presetConfig, decks, dueToday, today.cards, wanted, horizonDays)
 
     val learningRows =
       searchRows(decks.scope("is:learn -is:suspended -is:buried"), config) ?: return today
@@ -474,6 +442,60 @@ class AnkiDroidBridge(
       scheduleConfig = config,
       queueDay = if (queueComplete) todayIndex else null,
     )
+  }
+
+  /**
+   * The pool's new-card plan: the deck config with its real daily new limit (the preset's
+   * `new.perDay` misses deck-level overrides, so the limit is inferred from what AnkiDroid queued
+   * today; see [effectiveNewPerDay]) plus the new-card positions to draw from, starting right before
+   * the first new card already queued (AnkiDroid's queued new cards are the first unstudied ones).
+   */
+  private fun newCardPlan(
+    presetConfig: DeckScheduleConfig?,
+    decks: DeckSelector,
+    dueToday: List<Int>?,
+    todayCards: List<WearosCard>,
+    wanted: Int,
+    horizonDays: Int,
+  ): Pair<DeckScheduleConfig?, List<CardPosition>> {
+    val newQueuedToday = dueToday?.getOrNull(2)
+    val introducedToday = provider.countCards(decks.scope("introduced:1"))
+    // At most the pool's worth of new cards plus one, which is all the inference needs to tell a
+    // binding limit from a deck that ran out.
+    val newCeiling = maxOf(presetConfig?.newPerDay ?: 0, (newQueuedToday ?: 0) + (introducedToday ?: 0))
+    val newPositions =
+      if (presetConfig == null || newCeiling == 0) {
+        emptyList()
+      } else {
+        val queuedNew = todayCards.filter { it.state?.queue == 0 }.map { it.id }
+        val firstQueued =
+          if (queuedNew.isEmpty()) {
+            null
+          } else {
+            provider.searchCardPositions("cid:${queuedNew.joinToString(",")}").minOfOrNull {
+              it.position
+            }
+          }
+        provider.searchNewCardPositions(
+          decks,
+          wanted = newCardAllowance(newCeiling, horizonDays) + (newQueuedToday ?: 0) + 1,
+          after = (firstQueued ?: 0L) - 1,
+        )
+      }
+    val config =
+      presetConfig?.let { c ->
+        val inferred =
+          effectiveNewPerDay(
+            presetNewPerDay = c.newPerDay,
+            newQueuedToday = newQueuedToday,
+            introducedToday = introducedToday,
+            newAvailable = newPositions.size,
+            reviewLimitReached = dueToday?.getOrNull(1) ?: 0 >= c.reviewsPerDay,
+          )
+        if (inferred != c.newPerDay) Log.i(TAG, "Effective new/day $inferred (preset ${c.newPerDay})")
+        c.copy(newPerDay = inferred)
+      }
+    return config to newPositions
   }
 
   /** Today's Anki day number for this bridge's clock and time zone, for date-scoped decisions. */
@@ -581,7 +603,7 @@ class AnkiDroidBridge(
   private fun fetchSingleNewCard(noteId: Long): WearosCard? {
     val ord = provider.cardOrds(noteId).singleOrNull() ?: return null
     val card = provider.card(noteId, ord, includeScheduling = false)
-    val (front, back) = card?.let(::sidesOf) ?: "No Front Text" to "No Back Text"
+    val (front, back) = card?.let(::sidesOf) ?: (NO_FRONT_TEXT to NO_BACK_TEXT)
     return WearosCard(
       id = card?.id ?: 0L,
       noteId = noteId,
