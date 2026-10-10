@@ -128,7 +128,7 @@ class WatchViewModel(app: Application, private val savedState: SavedStateHandle)
   }
 
   /** The picker list: every known deck plus any pooled deck, annotated with what is due now. */
-  fun deckEntries(): List<DeckEntry> {
+  internal fun deckEntries(): List<DeckEntry> {
     val pooledById = cachedDecks.associateBy { it.deckId }
     val byId = LinkedHashMap<Long, DeckEntry>()
     for ((id, name) in knownDecks) {

@@ -35,7 +35,7 @@ import kotlinx.coroutines.withContext
 import uniffi.wearos_core.*
 
 /** A deck shown in the picker; [dueNow] is null when the deck has not been pooled on the watch yet. */
-data class DeckEntry(val id: Long, val name: String, val dueNow: Int?)
+internal data class DeckEntry(val id: Long, val name: String, val dueNow: Int?)
 
 /**
  * A screen on the wear back stack. [Decks] carries the `::` folder being browsed, so descending into
@@ -570,7 +570,12 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  fun answerCardSafely(session: ReviewSession, ease: Int, duration: Long, onDone: () -> Unit = {}) {
+  internal fun answerCardSafely(
+    session: ReviewSession,
+    ease: Int,
+    duration: Long,
+    onDone: () -> Unit = {},
+  ) {
     val app = applicationContext
     // viewModelScope so a grade in flight across a recreation still moves the kept session on.
     vm.viewModelScope.launch {
@@ -600,7 +605,7 @@ class MainActivity : ComponentActivity() {
   /**
    * Undo the last grade: Rust steps the queue back and drops the buffered answer; refresh the UI.
    */
-  fun undoLastAnswer(session: ReviewSession) {
+  internal fun undoLastAnswer(session: ReviewSession) {
     vm.viewModelScope.launch {
       try {
         withContext(Dispatchers.IO) { session.undoLastAnswer() }
@@ -616,14 +621,14 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  fun speak(text: String) {
+  internal fun speak(text: String) {
     if (ttsEnabled) {
       tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "card_tts")
     }
   }
 
   @Composable
-  fun WearAppScreen() {
+  internal fun WearAppScreen() {
     AnkiWearTheme {
       Box(modifier = Modifier.fillMaxSize()) {
         AppScaffold {
