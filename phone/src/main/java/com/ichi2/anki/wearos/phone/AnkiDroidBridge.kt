@@ -409,8 +409,7 @@ class AnkiDroidBridge(
 
     // The preset's new.perDay misses deck-level overrides; newCardPlan infers the deck's real one
     // from what AnkiDroid queued today. Only days after today use it (today is AnkiDroid's own queue).
-    val (config, newPositions) =
-      newCardPlan(presetConfig, decks, dueToday, today.cards, wanted, horizonDays)
+    val (config, newPositions) = newCardPlan(presetConfig, decks, dueToday, today.cards, horizonDays)
 
     val learningRows =
       searchRows(decks.scope("is:learn -is:suspended -is:buried"), config) ?: return today
@@ -455,7 +454,6 @@ class AnkiDroidBridge(
     decks: DeckSelector,
     dueToday: List<Int>?,
     todayCards: List<WearosCard>,
-    wanted: Int,
     horizonDays: Int,
   ): Pair<DeckScheduleConfig?, List<CardPosition>> {
     val newQueuedToday = dueToday?.getOrNull(2)
@@ -603,7 +601,7 @@ class AnkiDroidBridge(
   private fun fetchSingleNewCard(noteId: Long): WearosCard? {
     val ord = provider.cardOrds(noteId).singleOrNull() ?: return null
     val card = provider.card(noteId, ord, includeScheduling = false)
-    val (front, back) = card?.let(::sidesOf) ?: (NO_FRONT_TEXT to NO_BACK_TEXT)
+    val (front, back) = card?.let(::sidesOf) ?: NO_FRONT_TEXT to NO_BACK_TEXT
     return WearosCard(
       id = card?.id ?: 0L,
       noteId = noteId,
