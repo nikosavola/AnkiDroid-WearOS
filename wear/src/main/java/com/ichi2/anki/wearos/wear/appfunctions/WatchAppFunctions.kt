@@ -10,6 +10,7 @@ import androidx.appfunctions.AppFunctionSerializable
 import androidx.appfunctions.AppFunctionService
 import androidx.appfunctions.AppFunctionServiceEntryPoint
 import com.ichi2.anki.wearos.wear.MainActivity
+import com.ichi2.anki.wearos.wear.WearPaths
 import com.ichi2.anki.wearos.wear.sendToConnectedPhones
 import com.ichi2.anki.wearos.wear.systemWatchClock
 import com.ichi2.anki.wearos.wear.utcOffsetSecs
@@ -111,7 +112,7 @@ abstract class BaseWatchAppFunctionService : AppFunctionService() {
     requireStoredDeck(deckId)
     val reached =
       withContext(Dispatchers.IO) {
-        sendToConnectedPhones(this@BaseWatchAppFunctionService, "/request_deck", "$deckId".toByteArray())
+        sendToConnectedPhones(this@BaseWatchAppFunctionService, WearPaths.REQUEST_DECK, "$deckId".toByteArray())
       }
     if (reached == 0) throw AppFunctionAppUnknownException("The phone is not connected.")
   }

@@ -27,12 +27,10 @@ import androidx.compose.foundation.layout.size
 import androidx.wear.compose.foundation.padding
 import androidx.wear.compose.material3.AppScaffold
 import androidx.wear.compose.navigation3.rememberSwipeDismissableSceneStrategy
-import com.google.android.gms.wearable.Wearable
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import uniffi.wearos_core.*
 
@@ -368,13 +366,7 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /**
-   * Reconcile a deck's cached queue with AnkiDroid's real schedule: re-request its batch WITHOUT
-   * opening a session or showing the sync arc (no pendingDeckId). The arriving batch is fetched live
-   * from AnkiDroid - reflecting the answers just written back - and refreshes the local cache, so the
-   * next open shows the true next-due instead of the in-session requeue approximation. Best-effort:
-   * on failure the deck still converges on the next manual open/refresh.
-   */
+  /** Show a short toast; [length] defaults to short like most call sites want. */
   private fun toast(message: String, length: Int = Toast.LENGTH_SHORT) {
     Toast.makeText(this, message, length).show()
   }
@@ -393,17 +385,8 @@ class MainActivity : ComponentActivity() {
   ) {
     scope.launch(Dispatchers.IO) {
       try {
-        val nodes = Wearable.getNodeClient(this@MainActivity).connectedNodes.await()
-        if (nodes.isEmpty()) {
-          launch(Dispatchers.Main) { onNotConnected() }
-          return@launch
-        }
-        val messageClient = Wearable.getMessageClient(this@MainActivity)
-        for (node in nodes) {
-          messageClient.sendMessage(node.id, path, payload).await()
-          Log.d(TAG, "Sent $path to node: ${node.displayName}")
-        }
-        launch(Dispatchers.Main) { onSent() }
+        val sent = sendToConnectedPhones(this@MainActivity, path, payload)
+        launch(Dispatchers.Main) { if (sent == 0) onNotConnected() else onSent() }
       } catch (e: Exception) {
         Log.e(TAG, "Failed to send $path to phone: ${e.message}", e)
         launch(Dispatchers.Main) { onError(e) }
@@ -411,6 +394,13 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /**
+   * Reconcile a deck's cached queue with AnkiDroid's real schedule: re-request its batch WITHOUT
+   * opening a session or showing the sync arc (no pendingDeckId). The arriving batch is fetched live
+   * from AnkiDroid - reflecting the answers just written back - and refreshes the local cache, so the
+   * next open shows the true next-due instead of the in-session requeue approximation. Best-effort:
+   * on failure the deck still converges on the next manual open/refresh.
+   */
   private fun reconcileIfStale(deckId: Long) {
     scope.launch {
       val stale =
@@ -428,21 +418,37 @@ class MainActivity : ComponentActivity() {
 
   /** Silent reconcile refresh after write-back; failures converge on the next open, so no toasts. */
   private fun silentlyRefreshDeck(deckId: Long) {
-    sendToPhone("/request_deck", deckId.toString().toByteArray())
+    sendToPhone(WearPaths.REQUEST_DECK, deckId.toString().toByteArray())
   }
 
-  internal fun requestDeckFromPhone(deckId: Long) {
+  internal fun requestDeckFromPhone(deckId: Long) =
+    requestFromPhone(deckId, WearPaths.REQUEST_DECK, deckId.toString().toByteArray(), isNew = false) {
+      "Syncing deck from phone..."
+    }
+
+  /**
+   * One on-demand request to the phone with the shared pending/timeout plumbing: the deck goes into
+   * [pendingDeckId] so the sync arc shows until its batch lands, and [startDownloadTimeout] clears
+   * it if the phone never answers. Failures clear the arc and surface as the failure dialog.
+   */
+  private fun requestFromPhone(
+    deckId: Long,
+    path: String,
+    payload: ByteArray,
+    isNew: Boolean,
+    sentToast: () -> String,
+  ) {
     pendingDeckId = deckId
-    pendingIsNew = false
+    pendingIsNew = isNew
     sendToPhone(
-      "/request_deck",
-      deckId.toString().toByteArray(),
+      path,
+      payload,
       onNotConnected = {
         pendingDeckId = null // stop the sync arc; nothing is coming
         phoneFailure = "Phone not connected"
       },
       onSent = {
-        toast("Syncing deck from phone...")
+        toast(sentToast())
         startDownloadTimeout(deckId)
       },
       onError = {
@@ -471,7 +477,7 @@ class MainActivity : ComponentActivity() {
    */
   internal fun refreshDecksSilently(deckIds: List<Long>) {
     if (deckIds.isEmpty()) return
-    deckIds.forEach { id -> sendToPhone("/request_deck", id.toString().toByteArray()) }
+    deckIds.forEach { id -> sendToPhone(WearPaths.REQUEST_DECK, id.toString().toByteArray()) }
     toast("Refreshing ${deckIds.size} decks...")
   }
 
@@ -506,30 +512,14 @@ class MainActivity : ComponentActivity() {
   }
 
   /** Ask the phone for [count] new cards of [deckId] to study ahead; auto-loads when it arrives. */
-  internal fun requestNewCardsFromPhone(deckId: Long, count: Int) {
-    pendingDeckId = deckId
-    pendingIsNew = true
-    sendToPhone(
-      "/request_new",
-      "$deckId:$count".toByteArray(),
-      onNotConnected = {
-        pendingDeckId = null
-        phoneFailure = "Phone not connected"
-      },
-      onSent = {
-        toast("Fetching $count new cards...")
-        startDownloadTimeout(deckId)
-      },
-      onError = {
-        pendingDeckId = null
-        phoneFailure = "Couldn't reach phone"
-      },
-    )
-  }
+  internal fun requestNewCardsFromPhone(deckId: Long, count: Int) =
+    requestFromPhone(deckId, WearPaths.REQUEST_NEW, "$deckId:$count".toByteArray(), isNew = true) {
+      "Fetching $count new cards..."
+    }
 
   internal fun requestDecksFromPhone() {
     sendToPhone(
-      "/request_decks",
+      WearPaths.REQUEST_DECKS,
       onNotConnected = { phoneFailure = "Phone not connected" },
       onSent = { toast("Refreshing decks list...") },
       onError = { phoneFailure = "Couldn't reach phone" },
