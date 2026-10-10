@@ -2,19 +2,16 @@ package com.ichi2.anki.wearos.phone
 
 import android.content.Context
 import android.util.Log
-import com.google.android.gms.wearable.Asset
 import com.google.android.gms.wearable.DataEvent
 import com.google.android.gms.wearable.DataEventBuffer
 import com.google.android.gms.wearable.DataMapItem
 import com.google.android.gms.wearable.MessageEvent
-import com.google.android.gms.wearable.PutDataMapRequest
 import com.google.android.gms.wearable.Wearable
 import com.google.android.gms.wearable.WearableListenerService
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.tasks.await
 import uniffi.wearos_core.WearosAnswer
 import uniffi.wearos_core.deserializeAnswers
-import uniffi.wearos_core.serializeDueBatch
 
 /**
  * Decide the outcome of a received batch. Empty batch -> [WriteBackOutcome.NONE] without calling
@@ -42,18 +39,6 @@ class WearSyncService : WearableListenerService() {
     private const val PATH_REQUEST_DECK = "/request_deck"
     private const val PATH_REQUEST_DECKS = "/request_decks"
     private const val PATH_REQUEST_NEW = "/request_new"
-    private const val PATH_DECKS = "/decks"
-    private const val PATH_DUE_BATCH = "/due_batch"
-
-    // Mirror of the phone MainActivity settings store; read-only mode skips write-back.
-    private const val SETTINGS_PREFS = "settings_prefs"
-    private const val KEY_READ_ONLY = "read_only"
-
-    // Batch is sent as an Asset (streamed over a side channel) rather than a DataMap byte array:
-    // a putByteArray counts against the ~100KB DataItem limit and dense decks overflow it
-    // (DATA_ITEM_TOO_LARGE). Assets have no such cap. The bytes are zstd-compressed inside
-    // serializeDueBatch (Rust), so no compression happens here.
-    private const val KEY_BATCH_ASSET = "batch_asset"
   }
 
   private lateinit var bridge: AnkiDroidBridge
@@ -106,122 +91,80 @@ class WearSyncService : WearableListenerService() {
   override fun onMessageReceived(messageEvent: MessageEvent) {
     Log.d(TAG, "onMessageReceived on phone: ${messageEvent.path}")
 
-    if (messageEvent.path == PATH_REQUEST_DECK) {
-      val deckIdString = String(messageEvent.data)
+    // Run each handler synchronously: this callback is already on a background thread, and blocking
+    // here keeps the service alive through the whole fetch + batch send + bitmap render. Launching
+    // on a service-scoped job let onDestroy cancel it mid-flight ("Job was cancelled") right after
+    // the fast batch send but before syncBitmapsForBatch finished, so card images never reached the
+    // watch. Mirrors the /answers handshake fix in onDataChanged.
+    when (messageEvent.path) {
+      PATH_REQUEST_DECK -> runBlocking { handleRequestDeck(messageEvent) }
+      PATH_REQUEST_DECKS -> runBlocking { handleRequestDecks() }
+      PATH_REQUEST_NEW -> runBlocking { handleRequestNew(messageEvent) }
+    }
+  }
+
+  /** A single deck's multi-day due pool, so the watch can keep reviewing offline for days. */
+  private suspend fun handleRequestDeck(messageEvent: MessageEvent) {
+    val deckId =
       try {
-        val deckId = deckIdString.toLong()
-        Log.i(TAG, "Smartwatch requested card batch sync for deck ID: $deckId")
-
-        // Run synchronously: onMessageReceived is already on a background thread, and blocking here
-        // keeps the service alive through the whole fetch + batch send + bitmap render. Launching on a
-        // service-scoped job let onDestroy cancel it mid-flight ("Job was cancelled") right after the
-        // fast batch send but before syncBitmapsForBatch finished, so card images never reached the
-        // watch. Mirrors the /answers handshake fix in onDataChanged.
-        runBlocking {
-          try {
-            // 1. Fetch a multi-day pool for this specific deck (no mock forced, respect local
-            // available), so the watch can keep reviewing offline for days.
-            val batch = bridge.fetchDuePool(deckId = DeckId(deckId), todayLimit = 20)
-            Log.d(TAG, "Fetched ${batch.cards.size} pooled cards dynamically.")
-
-            // 2. Serialize via Rust using lightweight metadata
-            val bytes = serializeDueBatch(AnkiDroidBridge.stripBase64Batch(batch))
-
-            // 3. Broadcast back to Watch
-            val dataClient = Wearable.getDataClient(this@WearSyncService)
-            val putDataMapReq =
-              PutDataMapRequest.create(PATH_DUE_BATCH).apply {
-                dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(bytes))
-                // Vary the item so an identical re-request still propagates to the watch.
-                dataMap.putLong("synced_at", System.currentTimeMillis())
-                setUrgent()
-              }
-            val putDataReq = putDataMapReq.asPutDataRequest()
-            dataClient.putDataItem(putDataReq).await()
-            Log.i(TAG, "Successfully synced requested deck $deckId back to watch!")
-
-            // Sync card bitmaps independently, path-separated, asynchronously. Only the near horizon
-            // is worth rendering: bitmaps are the expensive leg over Bluetooth, so a whole week up
-            // front would flood the Data Layer for cards the watch won't reach for days.
-            renderer.syncBitmapsForBatch(
-              bitmapHorizonBatch(batch, bridge.todayDayIndex()),
-              bridge::noteTypeCss,
-            )
-          } catch (e: Exception) {
-            Log.e(TAG, "Failed to compile and sync requested deck $deckId: ${e.message}", e)
-          }
-        }
+        String(messageEvent.data).toLong()
       } catch (e: Exception) {
         Log.e(TAG, "Malformed deck selection request payload: ${e.message}")
+        return
       }
+    Log.i(TAG, "Smartwatch requested card batch sync for deck ID: $deckId")
+    try {
+      val batch = bridge.fetchDuePool(deckId = DeckId(deckId), todayLimit = 20)
+      Log.d(TAG, "Fetched ${batch.cards.size} pooled cards dynamically.")
+      DeckSync.pushDueBatch(this, DeckSync.PATH_DUE_BATCH, batch)
+      Log.i(TAG, "Successfully synced requested deck $deckId back to watch!")
+
+      // Sync card bitmaps independently, path-separated, asynchronously. Only the near horizon is
+      // worth rendering: bitmaps are the expensive leg over Bluetooth, so a whole week up front
+      // would flood the Data Layer for cards the watch won't reach for days.
+      renderer.syncBitmapsForBatch(
+          bitmapHorizonBatch(batch, bridge.todayDayIndex()),
+          bridge::noteTypeCss,
+        )
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to compile and sync requested deck $deckId: ${e.message}", e)
     }
+  }
 
-    if (messageEvent.path == PATH_REQUEST_DECKS) {
-      Log.i(TAG, "Smartwatch requested fresh decks list refresh.")
-      // Blocking (see /request_deck) so the send isn't cancelled when the service is torn down.
-      runBlocking {
-        try {
-          val decks = bridge.fetchAllDecks()
-          val sharedPrefs = getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
-          // .value: raw long for the prefs key.
-          val filteredDecks = decks.filter { sharedPrefs.getBoolean("deck_${it.first.value}", true) }
-
-          val dataClient = Wearable.getDataClient(this@WearSyncService)
-          val putDecksReq =
-            PutDataMapRequest.create(PATH_DECKS)
-              .apply {
-                // Legacy KEY_DECKS_BYTES text is intentionally not sent: dual-writing it alongside
-                // the protobuf payload roughly doubles the size of this DataMap, and this codebase
-                // has already hit DATA_ITEM_TOO_LARGE once (see the batch Asset comment above). The
-                // watch still knows how to read the legacy key if it ever receives it from an
-                // older-built phone.
-                dataMap.putByteArray(KEY_DECKS_PROTO_BYTES, encodeDecksProto(filteredDecks))
-                setUrgent()
-              }
-              .asPutDataRequest()
-          dataClient.putDataItem(putDecksReq).await()
-          Log.i(TAG, "Successfully synced filtered decks list back to watch background!")
-        } catch (e: Exception) {
-          Log.e(TAG, "Failed to refresh and sync decks list to watch: ${e.message}", e)
-        }
-      }
+  /** The filtered deck list, for the watch's picker. */
+  private suspend fun handleRequestDecks() {
+    Log.i(TAG, "Smartwatch requested fresh decks list refresh.")
+    try {
+      val decks = bridge.fetchAllDecks().filter { DeckSync.isDeckSynced(this, it.first) }
+      DeckSync.pushDecksList(this, decks)
+      Log.i(TAG, "Successfully synced filtered decks list back to watch background!")
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to refresh and sync decks list to watch: ${e.message}")
     }
+  }
 
-    if (messageEvent.path == PATH_REQUEST_NEW) {
-      // Payload is "deckId:count" — study N new cards ahead of the daily queue limit.
-      val parts = String(messageEvent.data).split(":")
+  /** N new cards ahead of the daily queue limit; payload is "deckId:count". */
+  private suspend fun handleRequestNew(messageEvent: MessageEvent) {
+    val parts = String(messageEvent.data).split(":")
+    val deckId =
       try {
-        val deckId = parts[0].toLong()
-        val count = parts.getOrNull(1)?.toIntOrNull() ?: 10
-        Log.i(TAG, "Smartwatch requested $count new cards for deck ID: $deckId")
-
-        // Blocking (see /request_deck) so the bitmap render isn't cancelled at service teardown.
-        runBlocking {
-          try {
-            val batch = bridge.fetchNewCards(deckId = DeckId(deckId), limit = count)
-            Log.d(TAG, "Fetched ${batch.cards.size} new cards for '${redact(batch.deckName)}'.")
-            val bytes = serializeDueBatch(AnkiDroidBridge.stripBase64Batch(batch))
-
-            val dataClient = Wearable.getDataClient(this@WearSyncService)
-            val putDataMapReq =
-              PutDataMapRequest.create("$PATH_DUE_BATCH/$deckId").apply {
-                dataMap.putAsset(KEY_BATCH_ASSET, Asset.createFromBytes(bytes))
-                dataMap.putLong("synced_at", System.currentTimeMillis())
-                setUrgent()
-              }
-            val putDataReq = putDataMapReq.asPutDataRequest()
-            dataClient.putDataItem(putDataReq).await()
-            Log.i(TAG, "Synced ${batch.cards.size} new cards for deck $deckId back to watch.")
-
-            // Sync card bitmaps independently, path-separated, asynchronously
-            renderer.syncBitmapsForBatch(batch, bridge::noteTypeCss)
-          } catch (e: Exception) {
-            Log.e(TAG, "Failed to fetch/sync new cards for deck $deckId: ${e.message}", e)
-          }
-        }
+        parts[0].toLong()
       } catch (e: Exception) {
         Log.e(TAG, "Malformed request_new payload: ${e.message}")
+        return
       }
+    val count = parts.getOrNull(1)?.toIntOrNull() ?: 10
+    Log.i(TAG, "Smartwatch requested $count new cards for deck ID: $deckId")
+    try {
+      val batch = bridge.fetchNewCards(deckId = DeckId(deckId), limit = count)
+      Log.d(TAG, "Fetched ${batch.cards.size} new cards for '${redact(batch.deckName)}'.")
+      DeckSync.pushDueBatch(this, "${DeckSync.PATH_DUE_BATCH}/$deckId", batch)
+      Log.i(TAG, "Synced ${batch.cards.size} new cards for deck $deckId back to watch.")
+
+      // Sync card bitmaps independently, path-separated, asynchronously
+      renderer.syncBitmapsForBatch(batch, bridge::noteTypeCss)
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to fetch/sync new cards for deck $deckId: ${e.message}", e)
     }
   }
 
@@ -231,8 +174,10 @@ class WearSyncService : WearableListenerService() {
       val answers = deserializeAnswers(bytes)
       Log.i(TAG, "Received ${answers.size} answers from Wear OS watch.")
 
+      // Read-only mode skips write-back (PhoneSettings owns the key).
       val readOnly =
-        getSharedPreferences(SETTINGS_PREFS, Context.MODE_PRIVATE).getBoolean(KEY_READ_ONLY, false)
+        getSharedPreferences(PhoneSettings.PREFS, Context.MODE_PRIVATE)
+          .getBoolean(PhoneSettings.KEY_READ_ONLY, false)
       val outcome = writeBackOutcome(answers, readOnly) { a, r -> bridge.writeAnswersBack(a, r) }
 
       if (outcome.settled.isNotEmpty()) {

@@ -235,35 +235,35 @@ class PhoneViewModel(app: Application, private val savedState: SavedStateHandle)
     deckSelection.putAll(selection)
   }
 
-  private fun deckPrefs() =
-    getApplication<Application>().getSharedPreferences("deck_sync_prefs", Context.MODE_PRIVATE)
+  private fun deckPrefs() = DeckSync.deckPrefs(getApplication())
 
-  // Key is the raw long ("deck_<id>"), matching DeckSync - DeckId.value, not the wrapper toString.
   private fun readSelection(decks: List<Pair<DeckId, String>>): Map<DeckId, Boolean> {
     val prefs = deckPrefs()
-    return decks.associate { (id, _) -> id to prefs.getBoolean("deck_${id.value}", true) }
+    return decks.associate { (id, _) -> id to prefs.getBoolean(DeckSync.deckKey(id), true) }
+  }
+
+  /** Write every deck's checkbox per [checkedOf] and mirror it into the observable map. */
+  private fun applySelection(checkedOf: (DeckId) -> Boolean) {
+    deckPrefs()
+      .edit()
+      .apply { for ((id, _) in allDecks) putBoolean(DeckSync.deckKey(id), checkedOf(id)) }
+      .apply()
+    for ((id, _) in allDecks) deckSelection[id] = checkedOf(id)
   }
 
   /** Persist a single deck's selection and mirror it into the observable map. */
   fun setDeckSelected(id: DeckId, checked: Boolean) {
     deckSelection[id] = checked
-    deckPrefs().edit().putBoolean("deck_${id.value}", checked).apply()
+    deckPrefs().edit().putBoolean(DeckSync.deckKey(id), checked).apply()
   }
 
   /** Check or uncheck every deck at once (bulk select controls above the tree). */
-  fun setAllDecksSelected(selected: Boolean) {
-    deckPrefs().edit().apply { for ((id, _) in allDecks) putBoolean("deck_${id.value}", selected) }.apply()
-    for ((id, _) in allDecks) deckSelection[id] = selected
-  }
+  fun setAllDecksSelected(selected: Boolean) = applySelection { selected }
 
   /** Select exactly [ids] for syncing and clear every other deck. */
   fun syncOnly(ids: Collection<DeckId>) {
     val keep = ids.toSet()
-    deckPrefs()
-      .edit()
-      .apply { for ((id, _) in allDecks) putBoolean("deck_${id.value}", id in keep) }
-      .apply()
-    for ((id, _) in allDecks) deckSelection[id] = id in keep
+    applySelection { it in keep }
   }
 
   /** Refresh the "Last synced …" caption from the stored timestamp. */
