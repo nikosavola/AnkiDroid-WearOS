@@ -27,14 +27,17 @@ pub struct TypeAnswerField {
 pub fn type_answer_field(html: String) -> Option<TypeAnswerField> {
     let start = html.find(OPEN)? + OPEN.len();
     let end = start + html[start..].find(CLOSE)?;
-    let mut parts: Vec<&str> = html[start..end].split(':').collect();
+    let body = &html[start..end];
     // Field names can't contain ':', so everything before the last part is a modifier
     // (cloze, nc, nosuggest).
-    let field = parts.pop()?.to_string();
+    let (modifiers, field) = body.rsplit_once(':').unwrap_or(("", body));
     if field.is_empty() {
         return None;
     }
-    Some(TypeAnswerField { field, cloze: parts.contains(&"cloze") })
+    Some(TypeAnswerField {
+        field: field.to_string(),
+        cloze: modifiers.split(':').any(|m| m == "cloze"),
+    })
 }
 
 /// The answer for cloze `idx` in a cloze field: hints cut, one copy when every deletion matches,

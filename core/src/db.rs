@@ -55,6 +55,20 @@ fn column_exists(conn: &Connection, table: &str, column: &str) -> Result<bool, C
         .any(|name| name == column))
 }
 
+/// Add `column` (with its `definition`) to `table` unless it's already there: fresh DBs get every
+/// column from CREATE TABLE, so the ALTER only fires for a DB created before the column existed.
+fn migrate_column(
+    conn: &Connection,
+    table: &str,
+    column: &str,
+    definition: &str,
+) -> Result<(), CoreError> {
+    if !column_exists(conn, table, column)? {
+        conn.execute(&format!("ALTER TABLE {table} ADD COLUMN {column} {definition}"), [])?;
+    }
+    Ok(())
+}
+
 #[uniffi::export]
 pub fn init_database(db_path: String) -> Result<(), CoreError> {
     let conn = open_configured(&db_path)?;
@@ -80,18 +94,8 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
 
     // Migrate older buffers by adding any missing columns (defaults keep already-queued rows valid).
     // deck_id: 0 = unknown deck. send_attempts: the H4 orphan cap (see record_unplaced_answers).
-    if !column_exists(&conn, "buffered_answers", "deck_id")? {
-        conn.execute(
-            "ALTER TABLE buffered_answers ADD COLUMN deck_id INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
-    if !column_exists(&conn, "buffered_answers", "send_attempts")? {
-        conn.execute(
-            "ALTER TABLE buffered_answers ADD COLUMN send_attempts INTEGER NOT NULL DEFAULT 0",
-            [],
-        )?;
-    }
+    migrate_column(&conn, "buffered_answers", "deck_id", "INTEGER NOT NULL DEFAULT 0")?;
+    migrate_column(&conn, "buffered_answers", "send_attempts", "INTEGER NOT NULL DEFAULT 0")?;
 
     // Append-only activity log for the "N reviewed today" counter. Independent of buffered_answers
     // so it survives sync-back clearing (buffered_answers is drained once the phone applies them).
@@ -132,13 +136,9 @@ pub fn init_database(db_path: String) -> Result<(), CoreError> {
         )",
         [],
     )?;
-    // A missing column on a DB created before it existed; the CREATE above covers fresh DBs.
-    if !column_exists(&conn, "pool_cards", "graded")? {
-        conn.execute("ALTER TABLE pool_cards ADD COLUMN graded INTEGER NOT NULL DEFAULT 0", [])?;
-    }
-    if !column_exists(&conn, "pool_decks", "queue_day")? {
-        conn.execute("ALTER TABLE pool_decks ADD COLUMN queue_day INTEGER", [])?;
-    }
+    // Missing columns on a DB created before they existed; the CREATE above covers fresh DBs.
+    migrate_column(&conn, "pool_cards", "graded", "INTEGER NOT NULL DEFAULT 0")?;
+    migrate_column(&conn, "pool_decks", "queue_day", "INTEGER")?;
     conn.execute("CREATE INDEX IF NOT EXISTS idx_pool_cards_deck_id ON pool_cards(deck_id)", [])?;
     conn.execute(
         "CREATE TABLE IF NOT EXISTS grade_log (
@@ -228,21 +228,18 @@ pub fn get_buffered_answers() -> Result<Vec<WearosAnswer>, CoreError> {
          FROM buffered_answers ORDER BY created_at ASC, rowid ASC",
     )?;
 
-    let rows = stmt.query_map([], |row| {
-        Ok(WearosAnswer {
-            id: row.get(0)?,
-            note_id: row.get(1)?,
-            ord: row.get(2)?,
-            ease: row.get(3)?,
-            time_taken_ms: row.get(4)?,
-            deck_id: row.get(5)?,
-        })
-    })?;
-
-    let mut answers = Vec::new();
-    for row in rows {
-        answers.push(row?);
-    }
+    let answers = stmt
+        .query_map([], |row| {
+            Ok(WearosAnswer {
+                id: row.get(0)?,
+                note_id: row.get(1)?,
+                ord: row.get(2)?,
+                ease: row.get(3)?,
+                time_taken_ms: row.get(4)?,
+                deck_id: row.get(5)?,
+            })
+        })?
+        .collect::<Result<Vec<_>, _>>()?;
 
     Ok(answers)
 }
@@ -291,15 +288,12 @@ pub fn record_unplaced_answers(ids: Vec<String>) -> Result<u32, CoreError> {
     let tx = conn.transaction()?;
     let prune_before = unix_secs() - MIN_ORPHAN_AGE_SECS;
 
+    let mut discarded = 0usize;
     for id in &ids {
         tx.execute(
             "UPDATE buffered_answers SET send_attempts = send_attempts + 1 WHERE id = ?1",
             params![id],
         )?;
-    }
-
-    let mut discarded = 0usize;
-    for id in &ids {
         discarded += tx.execute(
             "DELETE FROM buffered_answers
              WHERE id = ?1 AND send_attempts > ?2 AND created_at <= ?3",

@@ -4,6 +4,29 @@
 use std::fmt::Write as _;
 
 use crate::css::{BASE_PX, VOID_ELEMENTS};
+use crate::util::attr_value;
+
+/// Consume a tag from `chars` (which sits just past `<`) up to and including `>`: returns the raw
+/// tag inside, whether it's a closing tag, and its ASCII-lowercased name. An unterminated tag
+/// consumes the rest of the input.
+fn scan_tag(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> (String, bool, String) {
+    let mut tag = String::new();
+    while let Some(&nc) = chars.peek() {
+        chars.next();
+        if nc == '>' {
+            break;
+        }
+        tag.push(nc);
+    }
+    let closing = tag.starts_with('/');
+    let name = tag
+        .trim_start_matches('/')
+        .split(|ch: char| ch.is_whitespace())
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    (tag, closing, name)
+}
 
 #[uniffi::export]
 pub fn clean_html(raw_html: String) -> String {
@@ -32,21 +55,7 @@ pub fn clean_html(raw_html: String) -> String {
     let mut in_rp = false;
     while let Some(c) = chars.next() {
         if c == '<' {
-            let mut tag = String::new();
-            while let Some(&nc) = chars.peek() {
-                chars.next();
-                if nc == '>' {
-                    break;
-                }
-                tag.push(nc);
-            }
-            let closing = tag.starts_with('/');
-            let name = tag
-                .trim_start_matches('/')
-                .split(|ch: char| ch.is_whitespace())
-                .next()
-                .unwrap_or("")
-                .to_ascii_lowercase();
+            let (_, closing, name) = scan_tag(&mut chars);
             match name.as_str() {
                 "rt" => clean.push(if closing { ')' } else { '(' }),
                 "rp" => in_rp = !closing,
@@ -200,11 +209,7 @@ fn annotate_font_sizes(html: &str) -> String {
         let text = &rest[..lt];
         let effective = stack.last().map_or(1.0, |(_, s)| *s);
         if effective != 1.0 && open != Some(effective) && text.chars().any(|c| !c.is_whitespace()) {
-            if open.take().is_some() {
-                out.push_str("</annotation>");
-            }
-            open = Some(effective);
-            let _ = write!(out, "<annotation fs=\"{}\">", format_scale(effective));
+            open_annotation(&mut out, &mut open, effective);
         }
         out.push_str(text);
         let Some(gt) = rest[lt..].find('>') else {
@@ -245,17 +250,23 @@ fn annotate_font_sizes(html: &str) -> String {
     }
     let effective = stack.last().map_or(1.0, |(_, s)| *s);
     if effective != 1.0 && open != Some(effective) && rest.chars().any(|c| !c.is_whitespace()) {
-        if open.take().is_some() {
-            out.push_str("</annotation>");
-        }
-        open = Some(effective);
-        let _ = write!(out, "<annotation fs=\"{}\">", format_scale(effective));
+        open_annotation(&mut out, &mut open, effective);
     }
     out.push_str(rest);
     if open.is_some() {
         out.push_str("</annotation>");
     }
     out
+}
+
+/// Close any open annotation and open a new one at [effective]. Tags never sit inside one, so no
+/// annotation can straddle a point where another would have to open.
+fn open_annotation(out: &mut String, open: &mut Option<f32>, effective: f32) {
+    if open.take().is_some() {
+        out.push_str("</annotation>");
+    }
+    *open = Some(effective);
+    let _ = write!(out, "<annotation fs=\"{}\">", format_scale(effective));
 }
 
 /// A scale factor without trailing zeros: 2.0 -> "2", 2.2222 -> "2.222".
@@ -279,28 +290,6 @@ fn tag_font_factor(inner: &str, name: &str) -> Option<f32> {
         && let Some(px) = [10.0, 13.0, 16.0, 18.0, 24.0, 32.0, 48.0].get(n.checked_sub(1)? as usize)
     {
         return Some(px / BASE_PX);
-    }
-    None
-}
-
-/// The value of [inner]'s `attr` attribute, quoted or not, or `None` when absent.
-fn attr_value<'a>(inner: &'a str, attr: &str) -> Option<&'a str> {
-    let lower = inner.to_ascii_lowercase();
-    let mut search = 0;
-    while let Some(found) = lower[search..].find(attr) {
-        let at = search + found;
-        search = at + attr.len();
-        let preceded = at > 0 && lower.as_bytes()[at - 1].is_ascii_whitespace();
-        let after = lower[at + attr.len()..].trim_start();
-        if !preceded || !after.starts_with('=') {
-            continue;
-        }
-        let value_start = inner.len() - after.len() + 1;
-        let value = inner[value_start..].trim_start();
-        return match value.chars().next()? {
-            q @ ('"' | '\'') => value[1..].split(q).next(),
-            _ => value.split(|c: char| c.is_whitespace() || c == '/').next(),
-        };
     }
     None
 }
@@ -509,21 +498,7 @@ fn normalize_ruby(s: &str) -> String {
     let mut in_rp = false;
     while let Some(c) = chars.next() {
         if c == '<' {
-            let mut tag = String::new();
-            while let Some(&nc) = chars.peek() {
-                chars.next();
-                if nc == '>' {
-                    break;
-                }
-                tag.push(nc);
-            }
-            let closing = tag.starts_with('/');
-            let name = tag
-                .trim_start_matches('/')
-                .split(|ch: char| ch.is_whitespace())
-                .next()
-                .unwrap_or("")
-                .to_ascii_lowercase();
+            let (tag, closing, name) = scan_tag(&mut chars);
             match name.as_str() {
                 "rt" => out.push_str(if closing { ")" } else { "(" }),
                 "rp" => in_rp = !closing,
