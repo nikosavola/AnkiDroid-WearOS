@@ -7,14 +7,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.wear.compose.foundation.padding
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
+import androidx.wear.compose.material3.ButtonGroup
 import androidx.wear.compose.material3.EdgeButton
 import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.SurfaceTransformation
+import androidx.wear.compose.material3.SwitchButton
+import androidx.wear.compose.material3.TextToggleButton
+import androidx.wear.compose.material3.TextToggleButtonDefaults
+import androidx.wear.compose.material3.lazy.TransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.Text
 import uniffi.wearos_core.*
@@ -121,7 +129,100 @@ internal fun MainActivity.SettingsScreen() {
         keepScreenOn = it
         WatchSettings.setKeepScreenOn(activity, it)
       }
-      appearanceToggles(transformSpec)
+      appearanceToggles(activity, transformSpec)
     }
+  }
+}
+
+/**
+ * A labelled group of mutually-exclusive [TextToggleButton]s; the selected one is checked and
+ * morphs. Groups of more than three options wrap onto extra rows so the labels stay legible at
+ * watch width.
+ */
+@Composable
+internal fun <T> settingChoiceRow(
+  label: String,
+  options: List<Pair<T, String>>,
+  selected: T,
+  modifier: Modifier = Modifier,
+  onSelect: (T) -> Unit,
+) {
+  Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+    Text(
+      text = label,
+      style = MaterialTheme.typography.labelMedium,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      modifier = Modifier.padding(bottom = 2.dp),
+    )
+    options.chunked(3).forEach { row ->
+      ButtonGroup(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
+        row.forEach { (value, text) ->
+          val interactionSource = remember { MutableInteractionSource() }
+          TextToggleButton(
+            checked = value == selected,
+            onCheckedChange = { onSelect(value) },
+            shapes = TextToggleButtonDefaults.variantAnimatedShapes(),
+            interactionSource = interactionSource,
+            modifier = Modifier.weight(1f).animateWidth(interactionSource),
+          ) {
+            Text(text, maxLines = 1, style = MaterialTheme.typography.labelSmall)
+          }
+        }
+      }
+    }
+  }
+}
+
+/** A full-width settings toggle row that morphs with the edge-hugging list like the other items. */
+internal fun TransformingLazyColumnScope.settingSwitchItem(
+  checked: Boolean,
+  label: String,
+  secondaryLabel: String,
+  transformSpec: TransformationSpec,
+  onCheckedChange: (Boolean) -> Unit,
+) {
+  item {
+    SwitchButton(
+      checked = checked,
+      onCheckedChange = onCheckedChange,
+      label = { Text(label) },
+      secondaryLabel = { Text(secondaryLabel) },
+      transformation = SurfaceTransformation(transformSpec),
+      modifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec),
+    )
+  }
+}
+
+/** The minimal-view appearance toggles (grade-button color + hide clock/progress in review). */
+internal fun TransformingLazyColumnScope.appearanceToggles(
+  activity: MainActivity,
+  transformSpec: TransformationSpec,
+) {
+  settingSwitchItem(
+    checked = activity.coloredGradeButtons,
+    label = "Grade colors",
+    secondaryLabel = "Color the buttons",
+    transformSpec = transformSpec,
+  ) {
+    activity.coloredGradeButtons = it
+    WatchSettings.setColoredGradeButtons(activity, it)
+  }
+  settingSwitchItem(
+    checked = activity.hideProgress,
+    label = "Hide progress",
+    secondaryLabel = "The N/M count",
+    transformSpec = transformSpec,
+  ) {
+    activity.hideProgress = it
+    WatchSettings.setHideProgress(activity, it)
+  }
+  settingSwitchItem(
+    checked = activity.hideClock,
+    label = "Hide clock",
+    secondaryLabel = "The time",
+    transformSpec = transformSpec,
+  ) {
+    activity.hideClock = it
+    WatchSettings.setHideClock(activity, it)
   }
 }

@@ -11,16 +11,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.padding
 import androidx.wear.compose.foundation.lazy.TransformingLazyColumn
+import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.foundation.lazy.rememberTransformingLazyColumnState
 import androidx.wear.compose.material3.Button
 import androidx.wear.compose.material3.ButtonDefaults
 import androidx.wear.compose.material3.Card
+import androidx.wear.compose.material3.CompactButton
 import androidx.wear.compose.material3.EdgeButton
 import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
+import androidx.wear.compose.material3.lazy.TransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.material3.Text
 import uniffi.wearos_core.*
@@ -86,7 +89,12 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
       }
       // Study new cards ahead of the daily queue limit. Only available when we know the deck id.
       if (activeDeckId != null) {
-        newCardControlItems(pickingNewCount, transformSpec) { pickingNewCount = it }
+        newCardControlItems(
+          picking = pickingNewCount,
+          transformSpec = transformSpec,
+          onRequestNewCards = { n -> activeDeckId?.let { requestNewCardsFromPhone(it, n) } },
+          setPicking = { pickingNewCount = it },
+        )
       }
       item {
         SwitchButton(
@@ -170,6 +178,68 @@ private fun MainActivity.DeckStatsCard(
         style = MaterialTheme.typography.labelSmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
       )
+    }
+  }
+}
+
+/**
+ * "Learn new cards" chip that expands into a 5/10/20 chooser; shared by Deck and Finished.
+ * [onRequestNewCards] receives the picked count; the caller owns the request plumbing.
+ */
+internal fun TransformingLazyColumnScope.newCardControlItems(
+  picking: Boolean,
+  transformSpec: TransformationSpec,
+  onRequestNewCards: (count: Int) -> Unit,
+  setPicking: (Boolean) -> Unit,
+) {
+  if (!picking) {
+    item {
+      Button(
+        onClick = { setPicking(true) },
+        colors = ButtonDefaults.filledVariantButtonColors(),
+        transformation = SurfaceTransformation(transformSpec),
+        modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
+      ) {
+        Text("Learn new cards")
+      }
+    }
+  } else {
+    item {
+      Text(
+        text = "How many new?",
+        style = MaterialTheme.typography.labelMedium,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.transformedHeight(this, transformSpec),
+      )
+    }
+    item {
+      Row(
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        modifier = Modifier.transformedHeight(this, transformSpec),
+      ) {
+        listOf(5, 10, 20).forEach { n ->
+          CompactButton(
+            onClick = {
+              setPicking(false)
+              onRequestNewCards(n)
+            },
+            colors = ButtonDefaults.filledVariantButtonColors(),
+            modifier = Modifier.width(56.dp),
+          ) {
+            Text("$n")
+          }
+        }
+      }
+    }
+    item {
+      CompactButton(
+        onClick = { setPicking(false) },
+        colors = ButtonDefaults.filledTonalButtonColors(),
+        transformation = SurfaceTransformation(transformSpec),
+        modifier = Modifier.transformedHeight(this, transformSpec),
+      ) {
+        Text("Cancel")
+      }
     }
   }
 }

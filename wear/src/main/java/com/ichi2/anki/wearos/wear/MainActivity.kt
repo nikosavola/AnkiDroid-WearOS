@@ -14,10 +14,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
@@ -27,20 +25,7 @@ import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
 import androidx.compose.foundation.layout.size
 import androidx.wear.compose.foundation.padding
-import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.material3.AppScaffold
-import androidx.wear.compose.material3.Button
-import androidx.wear.compose.material3.ButtonDefaults
-import androidx.wear.compose.material3.ButtonGroup
-import androidx.wear.compose.material3.CompactButton
-import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.SurfaceTransformation
-import androidx.wear.compose.material3.SwitchButton
-import androidx.wear.compose.material3.Text
-import androidx.wear.compose.material3.TextToggleButton
-import androidx.wear.compose.material3.TextToggleButtonDefaults
-import androidx.wear.compose.material3.lazy.TransformationSpec
-import androidx.wear.compose.material3.lazy.transformedHeight
 import androidx.wear.compose.navigation3.rememberSwipeDismissableSceneStrategy
 import com.google.android.gms.wearable.Wearable
 import java.util.Locale
@@ -521,7 +506,7 @@ class MainActivity : ComponentActivity() {
   }
 
   /** Ask the phone for [count] new cards of [deckId] to study ahead; auto-loads when it arrives. */
-  private fun requestNewCardsFromPhone(deckId: Long, count: Int) {
+  internal fun requestNewCardsFromPhone(deckId: Long, count: Int) {
     pendingDeckId = deckId
     pendingIsNew = true
     sendToPhone(
@@ -720,184 +705,6 @@ class MainActivity : ComponentActivity() {
       // Every presentation starts fresh (unrevealed, scrolled to the top, timer reset), even when
       // a requeued card comes straight back with the same id.
       key(session, cardCompletedTrigger) { ReviewCardScreen(session, currentCard) }
-    }
-  }
-
-  /** "Learn new cards" chip that expands into a 5/10/20 chooser; shared by Deck and Finished. */
-  internal fun TransformingLazyColumnScope.newCardControlItems(
-    picking: Boolean,
-    transformSpec: TransformationSpec,
-    setPicking: (Boolean) -> Unit,
-  ) {
-    if (!picking) {
-      item {
-        Button(
-          onClick = { setPicking(true) },
-          colors = ButtonDefaults.filledVariantButtonColors(),
-          transformation = SurfaceTransformation(transformSpec),
-          modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
-        ) {
-          Text("Learn new cards")
-        }
-      }
-    } else {
-      item {
-        Text(
-          text = "How many new?",
-          style = MaterialTheme.typography.labelMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.transformedHeight(this, transformSpec),
-        )
-      }
-      item {
-        Row(
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-          modifier = Modifier.transformedHeight(this, transformSpec),
-        ) {
-          listOf(5, 10, 20).forEach { n ->
-            CompactButton(
-              onClick = {
-                setPicking(false)
-                activeDeckId?.let { requestNewCardsFromPhone(it, n) }
-              },
-              colors = ButtonDefaults.filledVariantButtonColors(),
-              modifier = Modifier.width(56.dp),
-            ) {
-              Text("$n")
-            }
-          }
-        }
-      }
-      item {
-        CompactButton(
-          onClick = { setPicking(false) },
-          colors = ButtonDefaults.filledTonalButtonColors(),
-          transformation = SurfaceTransformation(transformSpec),
-          modifier = Modifier.transformedHeight(this, transformSpec),
-        ) {
-          Text("Cancel")
-        }
-      }
-    }
-  }
-
-  @Composable
-  fun FinishedScreen(session: ReviewSession) {
-    var pickingNewCount by remember { mutableStateOf(false) }
-    val transformSpec = rememberEdgeMorphSpec()
-    // Tally what was graded this session (recomputed if an undo/answer changed it).
-    val summary = remember(cardCompletedTrigger) { session.getSummary() }
-    // Learning cards of this deck that come due later today, so finishing the queue can say when.
-    val pooledDeck = activeDeckId?.let { id -> vm.cachedDecks.firstOrNull { it.deckId == id } }
-    val nowSecs = systemWatchClock.nowMs() / 1000
-    FinishedScreenContent(
-      summary = summary,
-      reviewedToday = reviewedToday,
-      outstandingCount = outstandingAnswersCount,
-      learningLater = pooledDeck?.learningLater ?: 0,
-      learningDueInMinutes =
-        pooledDeck?.nextLearningDueSecs?.let { ((it - nowSecs) / 60).coerceAtLeast(0) },
-      transformSpec = transformSpec,
-      onSyncAndBack = {
-        triggerAnswersSync()
-        clearSession() // pops Session/Review back to the deck selector list
-      },
-      // Learn new cards right after finishing the due queue (needs the new-card request plumbing).
-      // Present only when a deck is active; null hides the controls.
-      newCardControls =
-        activeDeckId?.let {
-          { newCardControlItems(pickingNewCount, transformSpec) { picking -> pickingNewCount = picking } }
-        },
-    )
-  }
-
-  /**
-   * A labelled group of mutually-exclusive [TextToggleButton]s; the selected one is checked and
-   * morphs. Groups of more than three options wrap onto extra rows so the labels stay legible at
-   * watch width.
-   */
-  @Composable
-  internal fun <T> settingChoiceRow(
-    label: String,
-    options: List<Pair<T, String>>,
-    selected: T,
-    modifier: Modifier = Modifier,
-    onSelect: (T) -> Unit,
-  ) {
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-      Text(
-        text = label,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(bottom = 2.dp),
-      )
-      options.chunked(3).forEach { row ->
-        ButtonGroup(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-          row.forEach { (value, text) ->
-            val interactionSource = remember { MutableInteractionSource() }
-            TextToggleButton(
-              checked = value == selected,
-              onCheckedChange = { onSelect(value) },
-              shapes = TextToggleButtonDefaults.variantAnimatedShapes(),
-              interactionSource = interactionSource,
-              modifier = Modifier.weight(1f).animateWidth(interactionSource),
-            ) {
-              Text(text, maxLines = 1, style = MaterialTheme.typography.labelSmall)
-            }
-          }
-        }
-      }
-    }
-  }
-
-  /** A full-width settings toggle row that morphs with the edge-hugging list like the other items. */
-  internal fun TransformingLazyColumnScope.settingSwitchItem(
-    checked: Boolean,
-    label: String,
-    secondaryLabel: String,
-    transformSpec: TransformationSpec,
-    onCheckedChange: (Boolean) -> Unit,
-  ) {
-    item {
-      SwitchButton(
-        checked = checked,
-        onCheckedChange = onCheckedChange,
-        label = { Text(label) },
-        secondaryLabel = { Text(secondaryLabel) },
-        transformation = SurfaceTransformation(transformSpec),
-        modifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec),
-      )
-    }
-  }
-
-  /** The minimal-view appearance toggles (grade-button color + hide clock/progress in review). */
-  internal fun TransformingLazyColumnScope.appearanceToggles(transformSpec: TransformationSpec) {
-    settingSwitchItem(
-      checked = coloredGradeButtons,
-      label = "Grade colors",
-      secondaryLabel = "Color the buttons",
-      transformSpec = transformSpec,
-    ) {
-      coloredGradeButtons = it
-      WatchSettings.setColoredGradeButtons(this@MainActivity, it)
-    }
-    settingSwitchItem(
-      checked = hideProgress,
-      label = "Hide progress",
-      secondaryLabel = "The N/M count",
-      transformSpec = transformSpec,
-    ) {
-      hideProgress = it
-      WatchSettings.setHideProgress(this@MainActivity, it)
-    }
-    settingSwitchItem(
-      checked = hideClock,
-      label = "Hide clock",
-      secondaryLabel = "The time",
-      transformSpec = transformSpec,
-    ) {
-      hideClock = it
-      WatchSettings.setHideClock(this@MainActivity, it)
     }
   }
 }

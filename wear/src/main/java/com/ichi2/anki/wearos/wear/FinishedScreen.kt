@@ -6,6 +6,10 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
@@ -25,14 +29,15 @@ import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.TransformationSpec
 import androidx.wear.compose.material3.lazy.transformedHeight
+import uniffi.wearos_core.ReviewSession
 import uniffi.wearos_core.SessionSummary
 
 /**
  * The "you finished the queue" screen: a congrats header, an optional session recap (reviews/ease
  * split/time/streak), the outstanding-answers count, optional learn-new-cards controls, and an edge
  * button that syncs + returns to the deck list. Top-level and stateless - all state and actions are
- * passed in - so it renders in tests. MainActivity keeps a thin FinishedScreen(session) wrapper that
- * computes the summary and wires the callbacks.
+ * passed in - so it renders in tests. The thin [MainActivity.FinishedScreen] wrapper at the bottom
+ * of this file computes the summary and wires the callbacks.
  *
  * [newCardControls] lets the Activity inject its learn-new-cards list items (which need the
  * new-card request plumbing) without this screen depending on them; null hides them.
@@ -147,4 +152,46 @@ fun FinishedScreenContent(
       newCardControls?.invoke(this)
     }
   }
+}
+
+/**
+ * The wrapper the session screens call: computes this session's summary and wires the Activity's
+ * callbacks (sync-and-back, the learn-new-cards request plumbing) into the stateless
+ * [FinishedScreenContent].
+ */
+@Composable
+internal fun MainActivity.FinishedScreen(session: ReviewSession) {
+  var pickingNewCount by remember { mutableStateOf(false) }
+  val transformSpec = rememberEdgeMorphSpec()
+  // Tally what was graded this session (recomputed if an undo/answer changed it).
+  val summary = remember(cardCompletedTrigger) { session.getSummary() }
+  // Learning cards of this deck that come due later today, so finishing the queue can say when.
+  val pooledDeck = activeDeckId?.let { id -> vm.cachedDecks.firstOrNull { it.deckId == id } }
+  val nowSecs = systemWatchClock.nowMs() / 1000
+  FinishedScreenContent(
+    summary = summary,
+    reviewedToday = reviewedToday,
+    outstandingCount = outstandingAnswersCount,
+    learningLater = pooledDeck?.learningLater ?: 0,
+    learningDueInMinutes =
+      pooledDeck?.nextLearningDueSecs?.let { ((it - nowSecs) / 60).coerceAtLeast(0) },
+    transformSpec = transformSpec,
+    onSyncAndBack = {
+      triggerAnswersSync()
+      clearSession() // pops Session/Review back to the deck selector list
+    },
+    // Learn new cards right after finishing the due queue (needs the new-card request plumbing).
+    // Present only when a deck is active; null hides the controls.
+    newCardControls =
+      activeDeckId?.let {
+        {
+          newCardControlItems(
+            picking = pickingNewCount,
+            transformSpec = transformSpec,
+            onRequestNewCards = { n -> activeDeckId?.let { requestNewCardsFromPhone(it, n) } },
+            setPicking = { picking -> pickingNewCount = picking },
+          )
+        }
+      },
+  )
 }
