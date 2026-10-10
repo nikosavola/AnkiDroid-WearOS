@@ -64,6 +64,16 @@ class CardBitmapRenderer(private val context: Context) {
     // Schemes the offscreen render is allowed to load; anything else is blocked as egress. `about`
     // covers WebView's own about:blank bootstrap.
     private val ALLOWED_SCHEMES = setOf("file", "data", "content", "about")
+
+    // Media extensions the provider re-routing serves, with the MIME type each gets.
+    private val MEDIA_MIME_TYPES =
+      mapOf(
+        ".png" to "image/png",
+        ".jpg" to "image/jpeg",
+        ".jpeg" to "image/jpeg",
+        ".gif" to "image/gif",
+        ".webp" to "image/webp",
+      )
   }
 
   suspend fun render(
@@ -136,27 +146,7 @@ class CardBitmapRenderer(private val context: Context) {
                 )
               }
 
-              val filename = url.lastPathSegment
-              val imgExtensions = listOf(".png", ".jpg", ".jpeg", ".gif", ".webp")
-              if (
-                filename != null && imgExtensions.any { filename.endsWith(it, ignoreCase = true) }
-              ) {
-                return try {
-                  val mediaUri = Uri.parse("content://$AUTHORITY/media/$filename")
-                  val inputStream = context.contentResolver.openInputStream(mediaUri)
-                  val mimeType =
-                    when {
-                      filename.endsWith(".png") -> "image/png"
-                      filename.endsWith(".gif") -> "image/gif"
-                      filename.endsWith(".webp") -> "image/webp"
-                      else -> "image/jpeg"
-                    }
-                  WebResourceResponse(mimeType, "UTF-8", inputStream)
-                } catch (e: Exception) {
-                  Log.e(TAG, "Failed to resolve media file via provider: ${redact(filename)}", e)
-                  null
-                }
-              }
+              serveMedia(url)?.let { return it }
               return super.shouldInterceptRequest(view, request)
             }
 
@@ -181,6 +171,25 @@ class CardBitmapRenderer(private val context: Context) {
         // leaking it. The bitmap is already drawn by the time await() returns, so it's safe.
         webViewRef?.destroy()
       }
+    }
+  }
+
+  /**
+   * An image file the card asked for, re-routed to AnkiDroid's media provider so the render doesn't
+   * depend on the app's own storage. Null lets WebView handle the request itself, which for media
+   * means a missing file - same as a provider that serves none.
+   */
+  private fun serveMedia(url: Uri): WebResourceResponse? {
+    val filename = url.lastPathSegment ?: return null
+    val mimeType =
+      MEDIA_MIME_TYPES.entries.firstOrNull { filename.endsWith(it.key, ignoreCase = true) }?.value
+        ?: return null
+    return try {
+      val mediaUri = Uri.parse("content://$AUTHORITY/media/$filename")
+      WebResourceResponse(mimeType, "UTF-8", context.contentResolver.openInputStream(mediaUri))
+    } catch (e: Exception) {
+      Log.e(TAG, "Failed to resolve media file via provider: ${redact(filename)}", e)
+      null
     }
   }
 

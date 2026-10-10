@@ -14,70 +14,28 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.semantics.Role
-import androidx.compose.ui.semantics.clearAndSetSemantics
-import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.unit.Dp
 import androidx.core.splashscreen.SplashScreen.Companion.installSplashScreen
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.viewModelScope
 import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.entryProvider
 import androidx.navigation3.ui.NavDisplay
-import androidx.wear.compose.foundation.AnchorType
-import androidx.wear.compose.foundation.CurvedDirection
 import androidx.compose.foundation.layout.size
-import androidx.wear.compose.foundation.CurvedLayout
-import androidx.wear.compose.foundation.CurvedModifier
-import androidx.wear.compose.foundation.CurvedTextStyle
 import androidx.wear.compose.foundation.padding
-import androidx.wear.compose.foundation.lazy.TransformingLazyColumnScope
 import androidx.wear.compose.material3.AppScaffold
-import androidx.wear.compose.material3.Button
-import androidx.wear.compose.material3.ButtonDefaults
-import androidx.wear.compose.material3.ButtonGroup
-import androidx.wear.compose.material3.CompactButton
-import androidx.wear.compose.material3.MaterialTheme
-import androidx.wear.compose.material3.SurfaceTransformation
-import androidx.wear.compose.material3.SwitchButton
-import androidx.wear.compose.material3.Text
-import androidx.wear.compose.material3.TextToggleButton
-import androidx.wear.compose.material3.TextToggleButtonDefaults
-import androidx.wear.compose.material3.lazy.TransformationSpec
-import androidx.wear.compose.material3.lazy.transformedHeight
-import androidx.wear.compose.material3.curvedText
 import androidx.wear.compose.navigation3.rememberSwipeDismissableSceneStrategy
-import com.google.android.gms.wearable.Wearable
 import java.util.Locale
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withContext
 import uniffi.wearos_core.*
 
-/** A card side's phone-rendered image, as far as it has loaded. */
-internal sealed interface SideImage {
-  data object Loading : SideImage
-
-  data object None : SideImage
-
-  data class Ready(val bitmap: androidx.compose.ui.graphics.ImageBitmap) : SideImage
-}
-
 /** A deck shown in the picker; [dueNow] is null when the deck has not been pooled on the watch yet. */
-data class DeckEntry(val id: Long, val name: String, val dueNow: Int?)
+internal data class DeckEntry(val id: Long, val name: String, val dueNow: Int?)
 
 /**
  * A screen on the wear back stack. [Decks] carries the `::` folder being browsed, so descending into
@@ -408,13 +366,7 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  /**
-   * Reconcile a deck's cached queue with AnkiDroid's real schedule: re-request its batch WITHOUT
-   * opening a session or showing the sync arc (no pendingDeckId). The arriving batch is fetched live
-   * from AnkiDroid - reflecting the answers just written back - and refreshes the local cache, so the
-   * next open shows the true next-due instead of the in-session requeue approximation. Best-effort:
-   * on failure the deck still converges on the next manual open/refresh.
-   */
+  /** Show a short toast; [length] defaults to short like most call sites want. */
   private fun toast(message: String, length: Int = Toast.LENGTH_SHORT) {
     Toast.makeText(this, message, length).show()
   }
@@ -433,17 +385,8 @@ class MainActivity : ComponentActivity() {
   ) {
     scope.launch(Dispatchers.IO) {
       try {
-        val nodes = Wearable.getNodeClient(this@MainActivity).connectedNodes.await()
-        if (nodes.isEmpty()) {
-          launch(Dispatchers.Main) { onNotConnected() }
-          return@launch
-        }
-        val messageClient = Wearable.getMessageClient(this@MainActivity)
-        for (node in nodes) {
-          messageClient.sendMessage(node.id, path, payload).await()
-          Log.d(TAG, "Sent $path to node: ${node.displayName}")
-        }
-        launch(Dispatchers.Main) { onSent() }
+        val sent = sendToConnectedPhones(this@MainActivity, path, payload)
+        launch(Dispatchers.Main) { if (sent == 0) onNotConnected() else onSent() }
       } catch (e: Exception) {
         Log.e(TAG, "Failed to send $path to phone: ${e.message}", e)
         launch(Dispatchers.Main) { onError(e) }
@@ -451,6 +394,13 @@ class MainActivity : ComponentActivity() {
     }
   }
 
+  /**
+   * Reconcile a deck's cached queue with AnkiDroid's real schedule: re-request its batch WITHOUT
+   * opening a session or showing the sync arc (no pendingDeckId). The arriving batch is fetched live
+   * from AnkiDroid - reflecting the answers just written back - and refreshes the local cache, so the
+   * next open shows the true next-due instead of the in-session requeue approximation. Best-effort:
+   * on failure the deck still converges on the next manual open/refresh.
+   */
   private fun reconcileIfStale(deckId: Long) {
     scope.launch {
       val stale =
@@ -468,21 +418,37 @@ class MainActivity : ComponentActivity() {
 
   /** Silent reconcile refresh after write-back; failures converge on the next open, so no toasts. */
   private fun silentlyRefreshDeck(deckId: Long) {
-    sendToPhone("/request_deck", deckId.toString().toByteArray())
+    sendToPhone(WearPaths.REQUEST_DECK, deckId.toString().toByteArray())
   }
 
-  internal fun requestDeckFromPhone(deckId: Long) {
+  internal fun requestDeckFromPhone(deckId: Long) =
+    requestFromPhone(deckId, WearPaths.REQUEST_DECK, deckId.toString().toByteArray(), isNew = false) {
+      "Syncing deck from phone..."
+    }
+
+  /**
+   * One on-demand request to the phone with the shared pending/timeout plumbing: the deck goes into
+   * [pendingDeckId] so the sync arc shows until its batch lands, and [startDownloadTimeout] clears
+   * it if the phone never answers. Failures clear the arc and surface as the failure dialog.
+   */
+  private fun requestFromPhone(
+    deckId: Long,
+    path: String,
+    payload: ByteArray,
+    isNew: Boolean,
+    sentToast: () -> String,
+  ) {
     pendingDeckId = deckId
-    pendingIsNew = false
+    pendingIsNew = isNew
     sendToPhone(
-      "/request_deck",
-      deckId.toString().toByteArray(),
+      path,
+      payload,
       onNotConnected = {
         pendingDeckId = null // stop the sync arc; nothing is coming
         phoneFailure = "Phone not connected"
       },
       onSent = {
-        toast("Syncing deck from phone...")
+        toast(sentToast())
         startDownloadTimeout(deckId)
       },
       onError = {
@@ -511,7 +477,7 @@ class MainActivity : ComponentActivity() {
    */
   internal fun refreshDecksSilently(deckIds: List<Long>) {
     if (deckIds.isEmpty()) return
-    deckIds.forEach { id -> sendToPhone("/request_deck", id.toString().toByteArray()) }
+    deckIds.forEach { id -> sendToPhone(WearPaths.REQUEST_DECK, id.toString().toByteArray()) }
     toast("Refreshing ${deckIds.size} decks...")
   }
 
@@ -524,13 +490,10 @@ class MainActivity : ComponentActivity() {
     if (deckIds.isEmpty()) return
     scope.launch {
       try {
-        val nowMs = systemWatchClock.nowMs()
         // The keep list is read fresh from the pool: a stale cached list could forget a deck the
         // user never asked to remove.
         val keep =
-          withContext(Dispatchers.IO) {
-            poolDeckSummaries(nowMs, utcOffsetSecs(nowMs)).map { it.deckId }.filterNot { it in deckIds }
-          }
+          withContext(Dispatchers.IO) { poolSummariesNow().map { it.deckId }.filterNot { it in deckIds } }
         withContext(Dispatchers.IO) { poolForgetDecks(keep) }
         val active = activeDeckId
         if (active != null && deckIds.contains(active)) clearSession()
@@ -546,30 +509,14 @@ class MainActivity : ComponentActivity() {
   }
 
   /** Ask the phone for [count] new cards of [deckId] to study ahead; auto-loads when it arrives. */
-  private fun requestNewCardsFromPhone(deckId: Long, count: Int) {
-    pendingDeckId = deckId
-    pendingIsNew = true
-    sendToPhone(
-      "/request_new",
-      "$deckId:$count".toByteArray(),
-      onNotConnected = {
-        pendingDeckId = null
-        phoneFailure = "Phone not connected"
-      },
-      onSent = {
-        toast("Fetching $count new cards...")
-        startDownloadTimeout(deckId)
-      },
-      onError = {
-        pendingDeckId = null
-        phoneFailure = "Couldn't reach phone"
-      },
-    )
-  }
+  internal fun requestNewCardsFromPhone(deckId: Long, count: Int) =
+    requestFromPhone(deckId, WearPaths.REQUEST_NEW, "$deckId:$count".toByteArray(), isNew = true) {
+      "Fetching $count new cards..."
+    }
 
   internal fun requestDecksFromPhone() {
     sendToPhone(
-      "/request_decks",
+      WearPaths.REQUEST_DECKS,
       onNotConnected = { phoneFailure = "Phone not connected" },
       onSent = { toast("Refreshing decks list...") },
       onError = { phoneFailure = "Couldn't reach phone" },
@@ -588,7 +535,7 @@ class MainActivity : ComponentActivity() {
         val stats = bufferedAnswerStats()
         outstandingAnswersCount = stats.count
         outstandingOldestSecs = stats.oldestAgeSecs
-        reviewedToday = reviewsSince(todayMidnightSecs())
+        reviewedToday = reviewsSince(localMidnightSecs())
         Log.d(TAG, "Outstanding buffered reviews: ${stats.count}, oldest ${stats.oldestAgeSecs}s")
       } catch (e: Exception) {
         Log.e(TAG, "Failed to query buffered answers: ${e.message}")
@@ -623,7 +570,12 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  fun answerCardSafely(session: ReviewSession, ease: Int, duration: Long, onDone: () -> Unit = {}) {
+  internal fun answerCardSafely(
+    session: ReviewSession,
+    ease: Int,
+    duration: Long,
+    onDone: () -> Unit = {},
+  ) {
     val app = applicationContext
     // viewModelScope so a grade in flight across a recreation still moves the kept session on.
     vm.viewModelScope.launch {
@@ -653,7 +605,7 @@ class MainActivity : ComponentActivity() {
   /**
    * Undo the last grade: Rust steps the queue back and drops the buffered answer; refresh the UI.
    */
-  fun undoLastAnswer(session: ReviewSession) {
+  internal fun undoLastAnswer(session: ReviewSession) {
     vm.viewModelScope.launch {
       try {
         withContext(Dispatchers.IO) { session.undoLastAnswer() }
@@ -669,14 +621,14 @@ class MainActivity : ComponentActivity() {
     }
   }
 
-  fun speak(text: String) {
+  internal fun speak(text: String) {
     if (ttsEnabled) {
       tts?.speak(text, TextToSpeech.QUEUE_FLUSH, null, "card_tts")
     }
   }
 
   @Composable
-  fun WearAppScreen() {
+  internal fun WearAppScreen() {
     AnkiWearTheme {
       Box(modifier = Modifier.fillMaxSize()) {
         AppScaffold {
@@ -745,433 +697,6 @@ class MainActivity : ComponentActivity() {
       // Every presentation starts fresh (unrevealed, scrolled to the top, timer reset), even when
       // a requeued card comes straight back with the same id.
       key(session, cardCompletedTrigger) { ReviewCardScreen(session, currentCard) }
-    }
-  }
-
-  /**
-   * Session progress: a determinate ring hugging the round edge, filling clockwise in proportion to
-   * cards graduated this session, with the N/M label curved along the top. Callers draw it inside
-   * their single cached overlay layer, above the card body so an opaque card image can't cover it.
-   */
-  @Composable
-  private fun ReviewProgress(session: ReviewSession, style: CurvedTextStyle) {
-    // Native calls once per grade rather than on every draw of the ring.
-    val fraction = remember(session, cardCompletedTrigger) { session.getProgressFraction() }
-    val label = remember(session, cardCompletedTrigger) { session.getProgressString() }
-    // Card text scrolled up fades out under the label rather than running through it.
-    val background = MaterialTheme.colorScheme.background
-    Box(
-      modifier =
-        Modifier.fillMaxWidth()
-          .height(44.dp)
-          .background(Brush.verticalGradient(0.5f to background, 1f to Color.Transparent))
-    )
-    androidx.wear.compose.material3.CircularProgressIndicator(
-      progress = { fraction },
-      modifier = Modifier.fillMaxSize().padding(2.dp),
-    )
-    TopCurvedProgress(label, style)
-  }
-
-  /**
-   * The N/M session progress as curved text hugging the top arc (matching the curved answer hint +
-   * grade buttons), inset radially so it clears the ScreenScaffold clock at the very top.
-   */
-  @Composable
-  private fun TopCurvedProgress(text: String, style: CurvedTextStyle) {
-    val color = MaterialTheme.colorScheme.onSurfaceVariant
-    // TalkBack otherwise reads the bare "N/M".
-    val spoken = text.replace("/", " of ") + " done"
-    CurvedLayout(
-      modifier = Modifier.fillMaxSize().clearAndSetSemantics { contentDescription = spoken },
-      anchor = 270f,
-      anchorType = AnchorType.Center,
-    ) {
-      curvedText(
-        text = text,
-        style = style,
-        color = color,
-        modifier = CurvedModifier.padding(outer = 22.dp, inner = 0.dp, before = 0.dp, after = 0.dp),
-      )
-    }
-  }
-
-  /**
-   * Side inset for card text. A full-width line only clears a round display at the vertical center;
-   * everywhere else its ends sit under the bezel curve, so text gets extra air there. Square
-   * screens have flat edges and keep the width.
-   */
-  @Composable
-  private fun cardSidePadding(): Dp =
-    if (LocalConfiguration.current.isScreenRound) 20.dp else 14.dp
-
-  /**
-   * Front of a review card: progress, an optional undo, the tappable card body, an optional
-   * type-in field, and a reveal hint.
-   */
-  @Composable
-  internal fun BoxScope.ReviewFront(
-    session: ReviewSession,
-    card: WearosCard,
-    displayFront: String,
-    spokenFront: String,
-    curvedStyle: androidx.wear.compose.foundation.CurvedTextStyle,
-    scrollState: androidx.compose.foundation.ScrollState,
-    typeExpected: String?,
-    typed: String,
-    onTyped: (String) -> Unit,
-    onTypeFocused: (Boolean) -> Unit,
-    onReveal: () -> Unit,
-  ) {
-    Column(
-      modifier =
-        Modifier.fillMaxSize()
-          .verticalScroll(scrollState)
-          .rotaryScroll(scrollState)
-          .clickable(
-            interactionSource = remember { MutableInteractionSource() },
-            indication = null,
-            onClickLabel = "Show answer",
-            role = Role.Button,
-          ) {
-            onReveal()
-          }
-          .padding(start = cardSidePadding(), end = cardSidePadding(), top = 40.dp, bottom = 34.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.Center,
-    ) {
-      CardSideContent(
-        cardId = card.id,
-        side = "front",
-        fallbackHtml = displayFront,
-        spokenText = spokenFront,
-        modifier = Modifier.fillMaxWidth(),
-      )
-      if (typeExpected != null) {
-        Spacer(modifier = Modifier.height(10.dp))
-        TypeAnswerField(value = typed, onValueChange = onTyped, onFocusedChanged = onTypeFocused)
-      }
-    }
-    val hintColor = MaterialTheme.colorScheme.onSurfaceVariant
-    Box(modifier = Modifier.fillMaxSize().cachedLayer()) {
-      if (!hideProgress) ReviewProgress(session, curvedStyle)
-      CurvedLayout(
-        modifier = Modifier.fillMaxSize(),
-        anchor = 90f,
-        anchorType = AnchorType.Center,
-        angularDirection = CurvedDirection.Angular.Reversed,
-      ) {
-        curvedText(
-          text = if (typeExpected != null) "Type, then tap to check" else "Tap to show answer",
-          style = curvedStyle,
-          color = hintColor,
-        )
-      }
-    }
-    // Undo the previous grade, tucked just left of the progress text at the top. Drawn LAST so it
-    // sits above the full-screen reveal-clickable Column, which would otherwise eat the tap. The
-    // 48dp target is centered where the 16dp glyph always sat.
-    if (session.canUndo()) {
-      UndoButton(
-        onClick = { undoLastAnswer(session) },
-        modifier = Modifier.align(Alignment.TopCenter).offset(x = (-30).dp),
-      )
-    }
-  }
-
-  /** Revealed card: front + answer scrolling under the curved grade buttons. */
-  @Composable
-  internal fun BoxScope.ReviewAnswer(
-    session: ReviewSession,
-    card: WearosCard,
-    displayFront: String,
-    displayBack: String,
-    spokenFront: String,
-    spokenBack: String,
-    scrollState: androidx.compose.foundation.ScrollState,
-    cardStartTime: Long,
-    gradeEnabled: Boolean,
-    curvedStyle: CurvedTextStyle,
-    suppressBackImage: Boolean,
-    onGrade: (ease: Int, durationMs: Long) -> Unit,
-  ) {
-    Column(
-      modifier =
-        Modifier.fillMaxSize()
-          .verticalScroll(scrollState)
-          .rotaryScroll(scrollState)
-          // Extra bottom space so the answer can scroll past the overlay buttons and every line can
-          // be brought fully into the clear above them.
-          // Top inset clears the curved N/M progress label, which ends about 36dp down.
-          .padding(start = cardSidePadding(), end = cardSidePadding(), top = 40.dp, bottom = 96.dp),
-      horizontalAlignment = Alignment.CenterHorizontally,
-      verticalArrangement = Arrangement.Center,
-    ) {
-      CardSideContent(
-        cardId = card.id,
-        side = "front",
-        fallbackHtml = displayFront,
-        spokenText = spokenFront,
-        modifier = Modifier.fillMaxWidth(),
-      )
-      Spacer(
-        modifier =
-          Modifier.padding(vertical = 6.dp)
-            .fillMaxWidth(0.5f)
-            .height(1.dp)
-            .background(Color.DarkGray)
-      )
-      CardSideContent(
-        cardId = card.id,
-        side = "back",
-        fallbackHtml = displayBack,
-        spokenText = spokenBack,
-        forceNative = suppressBackImage,
-        modifier = Modifier.fillMaxWidth(),
-      )
-    }
-    GradeEdgeButtons(
-      card = card,
-      enabled = gradeEnabled,
-      colored = coloredGradeButtons,
-      chrome = { if (!hideProgress) ReviewProgress(session, curvedStyle) },
-    ) { ease ->
-      onGrade(ease, System.currentTimeMillis() - cardStartTime)
-    }
-  }
-
-  /**
-   * Renders the phone-rendered bitmap for a card side if the watch has one, else the HTML. The
-   * bitmap is decoded off the main thread; until it is ready (only on a cache miss, prefetching
-   * usually covers it) the side draws nothing rather than flashing the HTML fallback. [spokenText]
-   * is the side's plain text, which TalkBack reads for the image.
-   */
-  @Composable
-  fun CardSideContent(
-    cardId: Long,
-    side: String,
-    fallbackHtml: String,
-    spokenText: String,
-    forceNative: Boolean = false,
-    modifier: Modifier = Modifier,
-  ) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val widthPx = decodeWidthPx()
-    // Keyed state rather than produceState, which would keep showing the previous card's image
-    // until the new decode lands. forceNative skips a stale bitmap entirely: the typed-answer diff
-    // replaces the back's nothing-typed image, and the HTML in front of it is the real content.
-    var image by
-      remember(cardId, side, forceNative) {
-        mutableStateOf<SideImage>(
-          if (forceNative) {
-            SideImage.None
-          } else {
-            CardBitmaps.cached(cardId, side)?.let { SideImage.Ready(it) } ?: SideImage.Loading
-          }
-        )
-      }
-    if (image == SideImage.Loading) {
-      LaunchedEffect(cardId, side) {
-        val bitmap = withContext(Dispatchers.IO) { CardBitmaps.load(context, cardId, side, widthPx) }
-        image = bitmap?.let { SideImage.Ready(it) } ?: SideImage.None
-      }
-    }
-    CardSide(image, fallbackHtml, spokenText, fontScale, cardFont, modifier)
-  }
-
-  /** Width to decode card images at; the window size can still read 0 before the first layout. */
-  @Composable
-  private fun decodeWidthPx(): Int =
-    androidx.compose.ui.platform.LocalWindowInfo.current.containerSize.width.takeIf { it > 0 }
-      ?: resources.displayMetrics.widthPixels
-
-  /** Decode the next cards' images in the background so moving on doesn't wait on a decode. */
-  @Composable
-  internal fun PrefetchUpcomingImages(session: ReviewSession, cardId: Long) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val widthPx = decodeWidthPx()
-    LaunchedEffect(session, cardId, cardCompletedTrigger) {
-      withContext(Dispatchers.IO) {
-        CardBitmaps.prefetch(context, listOf(cardId) + session.upcomingCardIds(2u), widthPx)
-      }
-    }
-  }
-
-  /** "Learn new cards" chip that expands into a 5/10/20 chooser; shared by Deck and Finished. */
-  internal fun TransformingLazyColumnScope.newCardControlItems(
-    picking: Boolean,
-    transformSpec: TransformationSpec,
-    setPicking: (Boolean) -> Unit,
-  ) {
-    if (!picking) {
-      item {
-        Button(
-          onClick = { setPicking(true) },
-          colors = ButtonDefaults.filledVariantButtonColors(),
-          transformation = SurfaceTransformation(transformSpec),
-          modifier = Modifier.fillMaxWidth(0.9f).transformedHeight(this, transformSpec),
-        ) {
-          Text("Learn new cards")
-        }
-      }
-    } else {
-      item {
-        Text(
-          text = "How many new?",
-          style = MaterialTheme.typography.labelMedium,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.transformedHeight(this, transformSpec),
-        )
-      }
-      item {
-        Row(
-          horizontalArrangement = Arrangement.spacedBy(6.dp),
-          modifier = Modifier.transformedHeight(this, transformSpec),
-        ) {
-          listOf(5, 10, 20).forEach { n ->
-            CompactButton(
-              onClick = {
-                setPicking(false)
-                activeDeckId?.let { requestNewCardsFromPhone(it, n) }
-              },
-              colors = ButtonDefaults.filledVariantButtonColors(),
-              modifier = Modifier.width(56.dp),
-            ) {
-              Text("$n")
-            }
-          }
-        }
-      }
-      item {
-        CompactButton(
-          onClick = { setPicking(false) },
-          colors = ButtonDefaults.filledTonalButtonColors(),
-          transformation = SurfaceTransformation(transformSpec),
-          modifier = Modifier.transformedHeight(this, transformSpec),
-        ) {
-          Text("Cancel")
-        }
-      }
-    }
-  }
-
-  @Composable
-  fun FinishedScreen(session: ReviewSession) {
-    var pickingNewCount by remember { mutableStateOf(false) }
-    val transformSpec = rememberEdgeMorphSpec()
-    // Tally what was graded this session (recomputed if an undo/answer changed it).
-    val summary = remember(cardCompletedTrigger) { session.getSummary() }
-    // Learning cards of this deck that come due later today, so finishing the queue can say when.
-    val pooledDeck = activeDeckId?.let { id -> vm.cachedDecks.firstOrNull { it.deckId == id } }
-    val nowSecs = systemWatchClock.nowMs() / 1000
-    FinishedScreenContent(
-      summary = summary,
-      reviewedToday = reviewedToday,
-      outstandingCount = outstandingAnswersCount,
-      learningLater = pooledDeck?.learningLater ?: 0,
-      learningDueInMinutes =
-        pooledDeck?.nextLearningDueSecs?.let { ((it - nowSecs) / 60).coerceAtLeast(0) },
-      transformSpec = transformSpec,
-      onSyncAndBack = {
-        triggerAnswersSync()
-        clearSession() // pops Session/Review back to the deck selector list
-      },
-      // Learn new cards right after finishing the due queue (needs the new-card request plumbing).
-      // Present only when a deck is active; null hides the controls.
-      newCardControls =
-        activeDeckId?.let {
-          { newCardControlItems(pickingNewCount, transformSpec) { picking -> pickingNewCount = picking } }
-        },
-    )
-  }
-
-  /**
-   * A labelled group of mutually-exclusive [TextToggleButton]s; the selected one is checked and
-   * morphs. Groups of more than three options wrap onto extra rows so the labels stay legible at
-   * watch width.
-   */
-  @Composable
-  internal fun <T> settingChoiceRow(
-    label: String,
-    options: List<Pair<T, String>>,
-    selected: T,
-    modifier: Modifier = Modifier,
-    onSelect: (T) -> Unit,
-  ) {
-    Column(modifier = modifier, horizontalAlignment = Alignment.CenterHorizontally) {
-      Text(
-        text = label,
-        style = MaterialTheme.typography.labelMedium,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(bottom = 2.dp),
-      )
-      options.chunked(3).forEach { row ->
-        ButtonGroup(modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)) {
-          row.forEach { (value, text) ->
-            val interactionSource = remember { MutableInteractionSource() }
-            TextToggleButton(
-              checked = value == selected,
-              onCheckedChange = { onSelect(value) },
-              shapes = TextToggleButtonDefaults.variantAnimatedShapes(),
-              interactionSource = interactionSource,
-              modifier = Modifier.weight(1f).animateWidth(interactionSource),
-            ) {
-              Text(text, maxLines = 1, style = MaterialTheme.typography.labelSmall)
-            }
-          }
-        }
-      }
-    }
-  }
-
-  /** A full-width settings toggle row that morphs with the edge-hugging list like the other items. */
-  internal fun TransformingLazyColumnScope.settingSwitchItem(
-    checked: Boolean,
-    label: String,
-    secondaryLabel: String,
-    transformSpec: TransformationSpec,
-    onCheckedChange: (Boolean) -> Unit,
-  ) {
-    item {
-      SwitchButton(
-        checked = checked,
-        onCheckedChange = onCheckedChange,
-        label = { Text(label) },
-        secondaryLabel = { Text(secondaryLabel) },
-        transformation = SurfaceTransformation(transformSpec),
-        modifier = Modifier.fillMaxWidth(0.95f).transformedHeight(this, transformSpec),
-      )
-    }
-  }
-
-  /** The minimal-view appearance toggles (grade-button color + hide clock/progress in review). */
-  internal fun TransformingLazyColumnScope.appearanceToggles(transformSpec: TransformationSpec) {
-    settingSwitchItem(
-      checked = coloredGradeButtons,
-      label = "Grade colors",
-      secondaryLabel = "Color the buttons",
-      transformSpec = transformSpec,
-    ) {
-      coloredGradeButtons = it
-      WatchSettings.setColoredGradeButtons(this@MainActivity, it)
-    }
-    settingSwitchItem(
-      checked = hideProgress,
-      label = "Hide progress",
-      secondaryLabel = "The N/M count",
-      transformSpec = transformSpec,
-    ) {
-      hideProgress = it
-      WatchSettings.setHideProgress(this@MainActivity, it)
-    }
-    settingSwitchItem(
-      checked = hideClock,
-      label = "Hide clock",
-      secondaryLabel = "The time",
-      transformSpec = transformSpec,
-    ) {
-      hideClock = it
-      WatchSettings.setHideClock(this@MainActivity, it)
     }
   }
 }

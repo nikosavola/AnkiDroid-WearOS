@@ -10,12 +10,11 @@ import androidx.appfunctions.AppFunctionSerializable
 import androidx.appfunctions.AppFunctionService
 import androidx.appfunctions.AppFunctionServiceEntryPoint
 import fi.nikosavola.ankidroid.wearos.wear.MainActivity
+import fi.nikosavola.ankidroid.wearos.wear.WearPaths
+import fi.nikosavola.ankidroid.wearos.wear.poolSummariesNow
 import fi.nikosavola.ankidroid.wearos.wear.sendToConnectedPhones
-import fi.nikosavola.ankidroid.wearos.wear.systemWatchClock
-import fi.nikosavola.ankidroid.wearos.wear.utcOffsetSecs
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import uniffi.wearos_core.poolDeckSummaries
 import uniffi.wearos_core.poolHasDeck
 
 /** A flashcard deck stored on the watch for offline review. */
@@ -53,8 +52,7 @@ abstract class BaseWatchAppFunctionService : AppFunctionService() {
   @AppFunctionDeclaration(isDescribedByKDoc = true)
   suspend fun listCachedDecks(): List<WatchDeck> =
     withContext(Dispatchers.IO) {
-      val nowMs = systemWatchClock.nowMs()
-      poolDeckSummaries(nowMs, utcOffsetSecs(nowMs)).map {
+      poolSummariesNow().map {
         WatchDeck(
           deckId = it.deckId,
           name = it.name,
@@ -111,7 +109,7 @@ abstract class BaseWatchAppFunctionService : AppFunctionService() {
     requireStoredDeck(deckId)
     val reached =
       withContext(Dispatchers.IO) {
-        sendToConnectedPhones(this@BaseWatchAppFunctionService, "/request_deck", "$deckId".toByteArray())
+        sendToConnectedPhones(this@BaseWatchAppFunctionService, WearPaths.REQUEST_DECK, "$deckId".toByteArray())
       }
     if (reached == 0) throw AppFunctionAppUnknownException("The phone is not connected.")
   }

@@ -47,7 +47,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import uniffi.wearos_core.poolDeckSummaries
 
 /** Wear OS 7 widget (small and large) with the cards due across the decks stored on the watch. */
 @AssociateWithGlanceWearWidget(DueCardsWidget::class)
@@ -65,8 +64,7 @@ class DueCardsWidget : GlanceWearWidget() {
   private suspend fun loadSnapshot(): DueWidgetSnapshot =
     withContext(Dispatchers.IO) {
       try {
-        val nowMs = systemWatchClock.nowMs()
-        dueWidgetSnapshot(poolDeckSummaries(nowMs, utcOffsetSecs(nowMs)))
+        dueWidgetSnapshot(poolSummariesNow())
       } catch (e: Exception) {
         Log.w(TAG, "Widget summary failed: ${e.message}")
         DueWidgetSnapshot.NoDecks

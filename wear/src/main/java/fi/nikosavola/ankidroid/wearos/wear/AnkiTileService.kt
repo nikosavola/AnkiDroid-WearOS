@@ -18,7 +18,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import uniffi.wearos_core.averageAnswerTimeMs
 import uniffi.wearos_core.formatQueueEta
-import uniffi.wearos_core.poolDeckSummaries
 
 // Material3TileService owns the MaterialScope, dynamic theming and resource plumbing, so the layout
 // below is written directly against the scope it hands us.
@@ -130,8 +129,7 @@ class AnkiTileService : Material3TileService() {
   private fun loadTileData(): TileData {
     val summaries =
       try {
-        val nowMs = systemWatchClock.nowMs()
-        poolDeckSummaries(nowMs, utcOffsetSecs(nowMs))
+        poolSummariesNow()
       } catch (e: Exception) {
         emptyList()
       }
