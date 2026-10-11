@@ -62,6 +62,12 @@ struct CardStatePb {
     last_review_secs: i64,
     #[prost(int64, optional, tag = "10")]
     fuzz_seed: Option<i64>,
+    // Additive: an older encoder omits both (decodes to None), so previews fall back to the
+    // default retention and the default weights' decay.
+    #[prost(double, optional, tag = "11")]
+    fsrs_retention: Option<f64>,
+    #[prost(double, optional, tag = "12")]
+    fsrs_decay: Option<f64>,
 }
 
 #[derive(Clone, PartialEq, prost::Message)]
@@ -124,6 +130,9 @@ struct DeckConfigPb {
     new_mix: i32,
     #[prost(int32, tag = "16")]
     interday_learning_mix: i32,
+    // Additive: absent decodes to None (false), matching decks whose cards carry no FSRS state.
+    #[prost(bool, optional, tag = "17")]
+    fsrs_cards_in_deck: Option<bool>,
 }
 
 impl From<WearosCard> for CardPb {
@@ -157,6 +166,8 @@ impl From<CardScheduleState> for CardStatePb {
             ease_factor: s.ease_factor,
             last_review_secs: s.last_review_secs,
             fuzz_seed: s.fuzz_seed,
+            fsrs_retention: s.fsrs_retention,
+            fsrs_decay: s.fsrs_decay,
         }
     }
 }
@@ -174,6 +185,8 @@ impl From<CardStatePb> for CardScheduleState {
             ease_factor: s.ease_factor,
             last_review_secs: s.last_review_secs,
             fuzz_seed: s.fuzz_seed,
+            fsrs_retention: s.fsrs_retention,
+            fsrs_decay: s.fsrs_decay,
         }
     }
 }
@@ -197,6 +210,7 @@ impl From<DeckScheduleConfig> for DeckConfigPb {
             reviews_per_day: Some(c.reviews_per_day),
             new_mix: c.new_mix,
             interday_learning_mix: c.interday_learning_mix,
+            fsrs_cards_in_deck: Some(c.fsrs_cards_in_deck),
         }
     }
 }
@@ -221,6 +235,9 @@ impl From<DeckConfigPb> for DeckScheduleConfig {
             reviews_per_day: c.reviews_per_day.unwrap_or(defaults.reviews_per_day),
             new_mix: c.new_mix,
             interday_learning_mix: c.interday_learning_mix,
+            fsrs_cards_in_deck: c.fsrs_cards_in_deck.unwrap_or(false),
+            // Not transferred: only the phone consults the preset id when flagging FSRS-ness.
+            config_id: 0,
         }
     }
 }

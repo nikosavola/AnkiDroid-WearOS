@@ -73,6 +73,8 @@ object AnkiDroidContract {
     const val LEFT = "left"
     const val FSRS_STABILITY = "fsrs_stability"
     const val FSRS_DIFFICULTY = "fsrs_difficulty"
+    const val FSRS_DESIRED_RETENTION = "fsrs_desired_retention"
+    const val FSRS_DECAY = "fsrs_decay"
     const val SM2_FACTOR = "sm2_factor"
     const val LAST_REVIEW_SECS = "last_review_time_secs"
     const val REPS = "reps"

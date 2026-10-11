@@ -57,6 +57,8 @@ data class ProviderCard(
   val sm2Factor: Double?,
   val fsrsStability: Double?,
   val fsrsDifficulty: Double?,
+  val fsrsDesiredRetention: Double? = null,
+  val fsrsDecay: Double? = null,
   val reps: Long?,
   val lastReviewSecs: Long?,
 )

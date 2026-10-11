@@ -110,6 +110,11 @@ grade, so a card that advanced a learning step or graduated would still show pre
 - **Session use**: `ReviewSession` advances the card's state on each grade and recomputes the
   requeued copy's labels, so a card worked through its ladder shows the numbers for the state it is
   actually in. Without a config (older phone build, mock cards) the shipped labels are left alone.
+- **FSRS without deck weights**: AnkiDroid 2.25 schedules FSRS but ships no FSRS keys in the deck
+  `OPTIONS` payload, so a no-weights deck whose card carries a stored memory state
+  (`fsrs_stability` > 0) is scheduled with the `fsrs` crate's default weights, the card's own
+  `fsrs_desired_retention`/`fsrs_decay` columns overriding the default retention and decay. A card
+  with no memory state in such a deck keeps SM-2 labels.
 
 AnkiDroid remains the authority: previews are advisory and every grade is reconciled by AnkiDroid
 on write-back. **Fuzz** is reproduced: the phone ships rslib's seed (`fuzz_seed`, card id + reps)

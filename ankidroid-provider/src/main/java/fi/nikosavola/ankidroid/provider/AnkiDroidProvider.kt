@@ -354,6 +354,8 @@ class AnkiDroidProvider(private val resolver: ContentResolver) {
         CardColumns.LEFT,
         CardColumns.FSRS_STABILITY,
         CardColumns.FSRS_DIFFICULTY,
+        CardColumns.FSRS_DESIRED_RETENTION,
+        CardColumns.FSRS_DECAY,
         CardColumns.SM2_FACTOR,
         CardColumns.LAST_REVIEW_SECS,
         CardColumns.REPS,
@@ -410,6 +412,8 @@ class AnkiDroidProvider(private val resolver: ContentResolver) {
         sm2Factor = double(CardColumns.SM2_FACTOR),
         fsrsStability = double(CardColumns.FSRS_STABILITY),
         fsrsDifficulty = double(CardColumns.FSRS_DIFFICULTY),
+        fsrsDesiredRetention = double(CardColumns.FSRS_DESIRED_RETENTION),
+        fsrsDecay = double(CardColumns.FSRS_DECAY),
         reps = long(CardColumns.REPS),
         lastReviewSecs = long(CardColumns.LAST_REVIEW_SECS),
       )
