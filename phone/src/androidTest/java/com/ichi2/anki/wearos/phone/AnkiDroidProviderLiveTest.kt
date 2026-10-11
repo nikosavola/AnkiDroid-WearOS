@@ -267,7 +267,9 @@ class AnkiDroidProviderLiveTest {
       assertTrue("both test cards graduate", outcome.unplaced.isEmpty())
 
       val today = bridge.todayDayIndex()
-      val pool = bridge.fetchDuePool(DeckId(deckId), todayLimit = 50)
+      // FSRS graduates Easy several days out and fuzz can push it past the default 7-day horizon;
+      // this test checks pool membership and state, not the horizon.
+      val pool = bridge.fetchDuePool(DeckId(deckId), todayLimit = 50, horizonDays = 14)
       assertEquals("no duplicate ids", pool.cards.size, pool.cards.map { it.id }.toSet().size)
       val card = pool.cards.firstOrNull { it.noteId == noteId }
       assertNotNull("the graduated card is in the pool", card)
@@ -418,15 +420,10 @@ class AnkiDroidProviderLiveTest {
       val recomputed = previewIntervalSecs(config, state, System.currentTimeMillis())
       card.nextReviewTimes.forEachIndexed { index, shipped ->
         if (index >= recomputed.size) return@forEachIndexed
-        val shippedSecs = parseLabelToSeconds(shipped) ?: return@forEachIndexed
-        val ours = recomputed[index]
+        if (parseLabelToSeconds(shipped) == null) return@forEachIndexed
         compared++
-        val ratio = if (shippedSecs > 0) ours / shippedSecs else 1.0
-        assertTrue(
-          "card ${card.id} button $index: AnkiDroid says '$shipped' (${shippedSecs}s) " +
-            "but we computed ${ours}s",
-          ratio in 0.5..2.0,
-        )
+        // The fuzz window, not a loose ratio, so real drift fails loudly (issue #24).
+        assertLabelMatches("due card ${card.id}", index, shipped, recomputed[index])
       }
     }
     Log.i(TAG, "shadow-compared $compared button labels against AnkiDroid")
