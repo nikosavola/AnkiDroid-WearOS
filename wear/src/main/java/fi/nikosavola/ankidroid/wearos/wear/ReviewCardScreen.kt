@@ -41,11 +41,14 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
 
   // Anki answers embed the question followed by <hr id=answer>; the Rust core returns just the
   // part after it so the answer view doesn't duplicate the front (whole back if no marker).
-  val answerBack = remember(card.back) { answerHtml(card.back) }
+  // All the HTML passes for a card parse once in the background (ParsedCards prefetches the
+  // upcoming ones), so the card-transition frame swaps already-built strings.
+  val parsed = remember(card.id, card.ord) { ParsedCards.parsed(card) }
+  val answerBack = parsed.answerBack
 
   // A {{type:Field}} card: the phone filled the back's typeans element with the expected answer,
   // which is both what the user should type against and the proof this card wants typing at all.
-  val typeExpected = remember(card.id, card.ord) { typeAnswerExpected(card.back) }
+  val typeExpected = parsed.typeExpected
   var typed by remember(card.id, card.ord) { mutableStateOf("") }
 
   // What the user typed, diffed against the expected answer by the core once revealed. Nothing
@@ -56,10 +59,10 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
     }
 
   // Rich HTML for display; plain text for TTS.
-  val displayFront = remember(card.front) { htmlForDisplay(card.front) }
-  val displayBack = remember(typedDiff) { htmlForDisplay(typedDiff ?: answerBack) }
-  val cleanFront = remember(card.front) { cleanHtml(card.front) }
-  val cleanBack = remember(answerBack) { cleanHtml(answerBack) }
+  val displayFront = parsed.displayFront
+  val displayBack = remember(typedDiff) { if (typedDiff != null) htmlForDisplay(typedDiff) else parsed.displayBack }
+  val cleanFront = parsed.cleanFront
+  val cleanBack = parsed.cleanBack
 
   // TTS voice effects triggered dynamically via state change
   LaunchedEffect(card.id, card.ord) { speak(cleanFront) }
@@ -89,6 +92,7 @@ internal fun MainActivity.ReviewCardScreen(session: ReviewSession, card: WearosC
   val emptyTimeText: @Composable () -> Unit = {}
   val reviewTimeText = if (hideClock) emptyTimeText else null
   PrefetchUpcomingImages(session, card.id, cardCompletedTrigger)
+  PrefetchUpcomingText(session, card.id, card.ord)
   ScreenScaffold(scrollState = scrollState, timeText = reviewTimeText) {
     if (!isRevealed) {
       ReviewFront(

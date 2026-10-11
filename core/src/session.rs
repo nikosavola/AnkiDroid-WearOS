@@ -211,6 +211,19 @@ impl ReviewSession {
             .collect()
     }
 
+    /// The cards queued after the current one, so the watch can pre-parse their HTML off the main
+    /// thread instead of on the frame that shows them.
+    pub fn upcoming_cards(&self, count: u32) -> Vec<WearosCard> {
+        self.queue
+            .lock()
+            .unwrap()
+            .iter()
+            .skip(1)
+            .take(count as usize)
+            .map(|qc| qc.card.clone())
+            .collect()
+    }
+
     /// The cards still to review, front first (requeued learning cards included with their refreshed
     /// previews/state). The watch persists this so a reopened deck resumes where the user left off.
     pub fn remaining_batch(&self) -> WearosDueBatch {
