@@ -231,7 +231,7 @@ pub fn parse_deck_schedule_config(options_json: String) -> Result<DeckScheduleCo
         new_mix: read_review_mix(&root, "newMix"),
         interday_learning_mix: read_review_mix(&root, "interdayLearningMix"),
         fsrs_cards_in_deck: false,
-        config_id: root.get("id").and_then(number_as_i32).unwrap_or(0) as i64,
+        config_id: root.get("id").and_then(number_as_i32).map_or(0, i64::from),
     })
 }
 
