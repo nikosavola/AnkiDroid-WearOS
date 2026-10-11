@@ -41,6 +41,8 @@ class AnkiDroidBridge(
   private val clock: () -> Long = System::currentTimeMillis,
   private val timeZone: TimeZone = TimeZone.getDefault(),
 ) {
+  /** Deck-config presets known to schedule FSRS despite a weightless OPTIONS payload. */
+  private val fsrsDeckConfigs = mutableSetOf<Long>()
   companion object {
     private const val TAG = "AnkiDroidBridge"
     private const val NO_FRONT_TEXT = "No Front Text"
@@ -230,6 +232,8 @@ class AnkiDroidBridge(
       learningStep = learningStep,
       stability = card.fsrsStability ?: 0.0,
       difficulty = card.fsrsDifficulty ?: 0.0,
+      fsrsRetention = card.fsrsDesiredRetention,
+      fsrsDecay = card.fsrsDecay,
       elapsedDays = elapsedDaysSince(lastReviewSecs),
       lastReviewSecs = lastReviewSecs,
       // rslib's fuzz seed for the card's next answer: card id + reps.
@@ -343,7 +347,7 @@ class AnkiDroidBridge(
         deckId = resolvedDeckId.value,
         deckName = resolvedDeckName,
         cards = cards,
-        scheduleConfig = scheduleConfig,
+        scheduleConfig = withFsrsCardsFlag(scheduleConfig, cards),
       )
     } catch (e: Exception) {
       // Return an empty batch (not mocks) so a transient provider error can't overwrite the
@@ -432,15 +436,38 @@ class AnkiDroidBridge(
     val allowance = if (config == null) 0 else newCardAllowance(config.newPerDay, horizonDays)
     val newCards = fetchNewForPool(newPositions, allowance, collected, config)
 
+    val poolCards = orderedPool(todayCards, learning, upcoming, newCards)
     return WearosDueBatch(
       deckId = resolvedDeckId.value,
       deckName = resolvedDeckName,
-      cards = orderedPool(todayCards, learning, upcoming, newCards),
+      cards = poolCards,
       rolloverHour = rollover,
       fetchedAtMs = now,
-      scheduleConfig = config,
+      scheduleConfig = withFsrsCardsFlag(config, poolCards),
       queueDay = if (queueComplete) todayIndex else null,
     )
+  }
+
+  /**
+   * AnkiDroid 2.25 schedules FSRS but exposes no FSRS keys in the deck's OPTIONS payload, so a card
+   * with a stored memory state is the only sign, and it applies to every deck on the same preset.
+   * Flags the config so cards without their own state (new ones, or an all-new subdeck whose batch
+   * carries no state) also preview with FSRS's default weights. A preset marked FSRS stays marked:
+   * a later batch of only new cards can't disprove it.
+   */
+  private fun withFsrsCardsFlag(config: DeckScheduleConfig?, cards: List<WearosCard>): DeckScheduleConfig? {
+    if (config == null || config.fsrsEnabled()) return config
+    if (config.configId > 0 && config.configId in fsrsDeckConfigs) {
+      return config.copy(fsrsCardsInDeck = true)
+    }
+    val hasFsrsState =
+      cards.any { card ->
+        val stability = card.state?.stability
+        stability != null && stability > 0.0
+      }
+    if (!hasFsrsState) return config
+    if (config.configId > 0) fsrsDeckConfigs.add(config.configId)
+    return config.copy(fsrsCardsInDeck = true)
   }
 
   /**

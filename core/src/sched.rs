@@ -15,6 +15,11 @@
 //! AnkiDroid still owns the real schedule: these previews only feed the watch UI and the session's
 //! requeue decision, and every grade is reconciled by AnkiDroid on write-back.
 //!
+//! AnkiDroid 2.25 schedules FSRS without putting any FSRS keys in the deck `OPTIONS` payload, so a
+//! deck whose config carries no weights falls back to FSRS's default ones for a card that has its
+//! memory state stored, using the card's own desired retention and decay. A card with no memory
+//! state in such a deck keeps SM-2 labels.
+//!
 //! What the watch cannot reproduce: Anki's load balancer (when enabled it picks a less busy day
 //! inside the fuzz window from other cards' due dates, so day+ labels can be a day or two off), the
 //! day-rollover conversion of long learning steps (`maybe_as_days`), and a memory state Anki would
@@ -81,6 +86,17 @@ pub struct DeckScheduleConfig {
     #[uniffi(default = 0)]
     #[serde(default)]
     pub interday_learning_mix: i32,
+    /// The batch carried at least one card with a stored FSRS memory state, which means the deck
+    /// schedules with FSRS even though the exposed deck config has no weights (AnkiDroid 2.25).
+    /// Set by the phone after fetching, not parsed from the deck's JSON.
+    #[uniffi(default = false)]
+    #[serde(default)]
+    pub fsrs_cards_in_deck: bool,
+    /// The deck-config preset the deck uses (the legacy dict's `id`), 0 when the payload has none.
+    /// Decks sharing a preset share FSRS-ness on AnkiDroid builds that hide the weights.
+    #[uniffi(default = 0)]
+    #[serde(default)]
+    pub config_id: i64,
 }
 
 impl Default for DeckScheduleConfig {
@@ -103,6 +119,8 @@ impl Default for DeckScheduleConfig {
             reviews_per_day: 200,
             new_mix: REVIEW_MIX_MIXED,
             interday_learning_mix: REVIEW_MIX_MIXED,
+            fsrs_cards_in_deck: false,
+            config_id: 0,
         }
     }
 }
@@ -137,6 +155,17 @@ pub struct CardScheduleState {
     /// FSRS memory state, 0.0 when the card has none (new card, or FSRS off).
     pub stability: f64,
     pub difficulty: f64,
+    /// The card's stored FSRS desired retention (`fsrs_desired_retention`), present only on cards
+    /// AnkiDroid has scheduled with FSRS. Falls back to 0.9 when the deck config carries no FSRS
+    /// section and this is missing too.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub fsrs_retention: Option<f64>,
+    /// The card's stored FSRS forgetting-curve decay (`fsrs_decay`), overriding the default
+    /// weights' decay when the deck config carries no FSRS section.
+    #[uniffi(default = None)]
+    #[serde(default)]
+    pub fsrs_decay: Option<f64>,
     /// Days since the card was last reviewed.
     pub elapsed_days: f64,
     /// Epoch seconds of the last review; 0 = unknown, in which case [`elapsed_days`] is what the
@@ -201,6 +230,8 @@ pub fn parse_deck_schedule_config(options_json: String) -> Result<DeckScheduleCo
         reviews_per_day: read_per_day(rev, defaults.reviews_per_day),
         new_mix: read_review_mix(&root, "newMix"),
         interday_learning_mix: read_review_mix(&root, "interdayLearningMix"),
+        fsrs_cards_in_deck: false,
+        config_id: root.get("id").and_then(number_as_i32).unwrap_or(0) as i64,
     })
 }
 
@@ -388,7 +419,7 @@ fn next_states(
         fuzz_factor: fuzz_factor(state),
         fsrs_next_states: fsrs_next_states(config, state),
         fsrs_short_term_with_steps_enabled: false,
-        fsrs_allow_short_term: fsrs_allow_short_term(config),
+        fsrs_allow_short_term: fsrs_allow_short_term(config, state),
     };
     anki_states::next_states(current_card_state(config, state, now_unix_ms), &scheduling)
 }
@@ -557,13 +588,14 @@ fn non_negative(value: i32) -> u32 {
 /// A card with no memory state gets FSRS's initial values. rslib would first rebuild one from the
 /// revlog for a non-new card; the watch has no revlog, so such a card is treated as fresh.
 fn fsrs_next_states(config: &DeckScheduleConfig, state: &CardScheduleState) -> Option<NextStates> {
-    if !config.fsrs_enabled() {
-        return None;
-    }
-    let weights: Vec<f32> = config.fsrs_weights.iter().map(|w| *w as f32).collect();
+    let weights = effective_fsrs_weights(config, state)?;
     let fsrs = FSRS::new(&weights).ok()?;
     // Retention outside what Anki's options screen allows would only come from a malformed dict.
-    let retention = if config.desired_retention > 0.0 { config.desired_retention } else { 0.9 };
+    let config_retention = if config.fsrs_enabled() { config.desired_retention } else { 0.0 };
+    let retention = state
+        .fsrs_retention
+        .or(if config_retention > 0.0 { Some(config_retention) } else { None })
+        .unwrap_or(0.9);
     let memory_state = (state.stability > 0.0).then_some(MemoryState {
         stability: state.stability as f32,
         difficulty: state.difficulty as f32,
@@ -572,10 +604,32 @@ fn fsrs_next_states(config: &DeckScheduleConfig, state: &CardScheduleState) -> O
     fsrs.next_states(memory_state, retention.clamp(0.7, 0.99) as f32, days_elapsed).ok()
 }
 
+/// The weights to schedule with: the deck config's when it carries them, else FSRS's defaults when
+/// FSRS is on despite a weightless config. AnkiDroid 2.25 schedules FSRS but leaves the deck
+/// `OPTIONS` payload without any FSRS keys, so the phone flags a deck whose batch carried a card
+/// with a stored memory state; a card with its own memory state also counts. The card's own decay
+/// overrides the default weights' last slot. `None` means the deck schedules with SM-2.
+fn effective_fsrs_weights(
+    config: &DeckScheduleConfig,
+    state: &CardScheduleState,
+) -> Option<Vec<f32>> {
+    if config.fsrs_enabled() {
+        return Some(config.fsrs_weights.iter().map(|w| *w as f32).collect());
+    }
+    if state.stability <= 0.0 && !config.fsrs_cards_in_deck {
+        return None;
+    }
+    let mut weights = fsrs::DEFAULT_PARAMETERS.to_vec();
+    if let Some(decay) = state.fsrs_decay.filter(|d| *d > 0.0) {
+        weights[20] = decay as f32;
+    }
+    Some(weights)
+}
+
 /// rslib's `fsrs_allow_short_term` (answering mod.rs): FSRS may schedule sub-day intervals itself
 /// only when the weights' short-term parameters are on.
-fn fsrs_allow_short_term(config: &DeckScheduleConfig) -> bool {
-    let weights = &config.fsrs_weights;
+fn fsrs_allow_short_term(config: &DeckScheduleConfig, state: &CardScheduleState) -> bool {
+    let Some(weights) = effective_fsrs_weights(config, state) else { return false };
     if weights.len() >= 19 { weights[17] > 0.0 && weights[18] > 0.0 } else { weights.is_empty() }
 }
 

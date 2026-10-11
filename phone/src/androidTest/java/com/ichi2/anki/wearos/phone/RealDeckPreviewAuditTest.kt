@@ -49,7 +49,8 @@ class RealDeckPreviewAuditTest {
               "deck '$name' card ${card.id} (queue ${state.queue}, type ${state.cardType}, " +
                 "fsrs ${config.fsrsEnabled()}, ivl ${state.intervalDays}, elapsed " +
                 "${state.elapsedDays}, S ${state.stability}, D ${state.difficulty}, step " +
-                "${state.learningStep}) button $button: AnkiDroid '$shipped', ours " +
+                "${state.learningStep}, retention ${state.fsrsRetention}, decay " +
+                "${state.fsrsDecay}) button $button: AnkiDroid '$shipped', ours " +
                 "${ours[button].toLong()}s, allowed ${allowed.start.toLong()}.." +
                 "${allowed.endInclusive.toLong()}s"
           }

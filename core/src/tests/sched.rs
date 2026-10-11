@@ -8,6 +8,7 @@ use crate::*;
 /// new/rev/lapse, snake_case for the FSRS keys (that mix is rslib's schema11, not a typo).
 pub fn fsrs_deck_options() -> String {
     serde_json::json!({
+        "id": 42,
         "new": { "delays": [1.0, 10.0], "ints": [1, 4] },
         "rev": { "ease4": 1.3, "ivlFct": 1.0, "maxIvl": 36500, "hardFactor": 1.2 },
         "lapse": { "delays": [10.0], "mult": 0.0, "minInt": 1 },
@@ -96,6 +97,8 @@ fn tiny_stability_review_state() -> CardScheduleState {
         elapsed_days: 8.0,
         last_review_secs: 0,
         fuzz_seed: None,
+        fsrs_retention: None,
+        fsrs_decay: None,
     }
 }
 
@@ -116,7 +119,15 @@ pub fn review_state() -> CardScheduleState {
         elapsed_days: 10.0,
         last_review_secs: 0,
         fuzz_seed: None,
+        fsrs_retention: None,
+        fsrs_decay: None,
     }
+}
+
+/// A review card scheduled with SM-2: the provider reports no stored FSRS memory state, so the
+/// card's stability and difficulty are both zero.
+pub fn sm2_review_state() -> CardScheduleState {
+    CardScheduleState { stability: 0.0, difficulty: 0.0, ..review_state() }
 }
 
 #[test]
@@ -133,6 +144,7 @@ fn test_parse_deck_options_reads_steps_ints_and_fsrs() {
     assert!(config.fsrs_enabled());
     assert_eq!(config.fsrs_weights.len(), 19);
     assert!((config.desired_retention - 0.9).abs() < f64::EPSILON);
+    assert_eq!(config.config_id, 42, "the legacy dict's preset id rides along");
 }
 
 #[test]
@@ -336,10 +348,85 @@ fn test_fsrs_floors_do_not_raise_a_shrinking_interval() {
         elapsed_days: 1.0,
         last_review_secs: 0,
         fuzz_seed: None,
+        fsrs_retention: None,
+        fsrs_decay: None,
     };
     let secs = preview_interval_secs(&config, &state, 0);
     let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
     assert!(days(1) < 30 && days(2) < 30 && days(3) < 30, "shrinking intervals stay shrunk");
+}
+
+#[test]
+fn test_fsrs_previews_fall_back_to_default_weights_without_deck_weights() {
+    // AnkiDroid 2.25 schedules FSRS but leaves the deck OPTIONS payload without any FSRS keys; the
+    // card's stored memory state is the only sign. Ground truth from that build (emulator, deck
+    // with FSRS on): a review card with S 2.306 / D 2.111, three days after its last review, at the
+    // default 0.9 retention got Hard 8d / Good 12d / Easy 22d. FSRS's default weights (6.x, decay
+    // 0.1542) land inside Anki's fuzz window of each of those.
+    let config = parse_deck_schedule_config(
+        serde_json::json!({ "rev": { "hardFactor": 1.2, "ivlFct": 1.0, "ease4": 1.3 } })
+            .to_string(),
+    )
+    .unwrap();
+    assert!(!config.fsrs_enabled());
+    let state = CardScheduleState {
+        queue: 2,
+        card_type: 2,
+        interval_days: 1.0,
+        learning_step: -1,
+        ease_factor: 2.5,
+        stability: 2.306,
+        difficulty: 2.111,
+        elapsed_days: 3.0,
+        last_review_secs: 0,
+        fuzz_seed: None,
+        fsrs_retention: Some(0.9),
+        fsrs_decay: None,
+    };
+    let secs = preview_interval_secs(&config, &state, 0);
+    let ours_days = |i: usize| secs[i] / 86_400.0;
+    // rslib fuzz_delta: the whole days Anki may move an interval either way.
+    let fuzz_delta = |d: f64| {
+        if d < 2.5 {
+            0.0
+        } else {
+            0.15_f64.mul_add(
+                (d.min(7.0) - 2.5).max(0.0),
+                0.10_f64.mul_add(
+                    (d.min(20.0) - 7.0).max(0.0),
+                    0.05_f64.mul_add((d - 20.0).max(0.0), 1.0),
+                ),
+            )
+        }
+    };
+    for (button, ankidroid_days) in [(1usize, 8.0f64), (2, 12.0), (3, 22.0)] {
+        let delta = fuzz_delta(ankidroid_days);
+        assert!(
+            (ours_days(button) - ankidroid_days).abs() <= delta,
+            "button {button}: ours {}d, AnkiDroid {ankidroid_days}d, window +-{}d",
+            ours_days(button),
+            delta
+        );
+    }
+}
+
+#[test]
+fn test_deck_flag_schedules_new_cards_with_fsrs_too() {
+    // The phone flags a deck whose batch carried FSRS state, which the card itself cannot show:
+    // a new card has no memory state. Its Easy preview then comes from FSRS's initial state, not
+    // the deck's SM-2 easy interval.
+    let mut config = parse_deck_schedule_config("{}".to_string()).unwrap();
+    assert!(!config.fsrs_enabled());
+    let new_card = CardScheduleState { queue: 0, card_type: 0, ..Default::default() };
+
+    let secs = preview_interval_secs(&config, &new_card, 0);
+    assert_secs(secs[3], 4.0 * 86_400.0, "no flag: Easy is the deck's easy interval");
+
+    config.fsrs_cards_in_deck = true;
+    let secs = preview_interval_secs(&config, &new_card, 0);
+    // py-fsrs 6 reference: FSRS's initial Easy stability is 8.2956 days at the default 0.9
+    // retention, and rslib rounds day-scale intervals to whole days.
+    assert_secs(secs[3], 8.0 * 86_400.0, "flagged deck: Easy is FSRS's initial interval");
 }
 
 #[test]
@@ -504,7 +591,7 @@ fn test_review_previews_follow_ankis_sm2_math() {
     )
     .unwrap();
     assert!(!config.fsrs_enabled());
-    let secs = preview_interval_secs(&config, &review_state(), 0);
+    let secs = preview_interval_secs(&config, &sm2_review_state(), 0);
     let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
 
     assert_eq!(days(1), 12, "Hard is interval * hardFactor");
@@ -520,9 +607,9 @@ fn test_sm2_late_review_grows_faster_and_stays_ordered() {
             .to_string(),
     )
     .unwrap();
-    let on_time = review_state();
+    let on_time = sm2_review_state();
     // Same card reviewed 20 days late: Anki adds half the lateness to Good, all of it to Easy.
-    let late = CardScheduleState { elapsed_days: 30.0, ..review_state() };
+    let late = CardScheduleState { elapsed_days: 30.0, ..sm2_review_state() };
     let days = |state: &CardScheduleState| {
         let secs = preview_interval_secs(&config, state, 0);
         [
@@ -549,11 +636,11 @@ fn test_early_review_in_a_normal_deck_schedules_as_on_time() {
             .to_string(),
     )
     .unwrap();
-    let early = CardScheduleState { elapsed_days: 2.0, ..review_state() };
+    let early = CardScheduleState { elapsed_days: 2.0, ..sm2_review_state() };
     let secs = preview_interval_secs(&config, &early, 0);
     let days = |i: usize| (secs[i] / 86_400.0).round() as i64;
 
-    assert_eq!(preview_interval_secs(&config, &review_state(), 0), secs);
+    assert_eq!(preview_interval_secs(&config, &sm2_review_state(), 0), secs);
     assert_eq!((days(1), days(2), days(3)), (12, 25, 33));
 }
 
