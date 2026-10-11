@@ -43,6 +43,7 @@ class AnkiDroidBridge(
 ) {
   /** Deck-config presets known to schedule FSRS despite a weightless OPTIONS payload. */
   private val fsrsDeckConfigs = mutableSetOf<Long>()
+
   companion object {
     private const val TAG = "AnkiDroidBridge"
     private const val NO_FRONT_TEXT = "No Front Text"
