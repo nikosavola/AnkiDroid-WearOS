@@ -172,6 +172,10 @@ main-thread work and redrawing the same chrome every frame. The rules the review
 - **No IO or decoding in composition.** `CardBitmaps` decodes card PNGs on `Dispatchers.IO`,
   scaled to the screen width, straight into `Bitmap.Config.HARDWARE` (uploaded to a GPU texture on
   the decoding thread), and prefetches the next cards via `ReviewSession.upcomingCardIds`.
+- **Per-card text parsed off the transition frame.** The Rust HTML passes (answer split, display
+  HTML, plain text) for upcoming cards run on a background dispatcher via `ReviewSession.upcomingCards`
+  (`ParsedCards`), so the frame that shows a card only swaps already-built strings; a cache miss
+  parses inline, which is the first card of a session.
 - **Static chrome in one cached layer.** The progress ring, curved labels and grade segments sit in
   a single `Modifier.cachedLayer()` (an offscreen `graphicsLayer`) per side, so scrolling the card
   composites a texture instead of re-rasterizing arcs and rotated glyphs. Keep it to one layer per

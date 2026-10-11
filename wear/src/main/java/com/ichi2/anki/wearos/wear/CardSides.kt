@@ -314,3 +314,14 @@ internal fun PrefetchUpcomingImages(session: ReviewSession, cardId: Long, prefet
     }
   }
 }
+
+/**
+ * Parse the next cards' HTML in the background so the frame that shows them doesn't pay the Rust
+ * passes; the current card is parsed inline on a cache miss (first card of a session).
+ */
+@Composable
+internal fun PrefetchUpcomingText(session: ReviewSession, cardId: Long, cardOrd: Int) {
+  LaunchedEffect(session, cardId, cardOrd) {
+    withContext(Dispatchers.Default) { ParsedCards.prefetch(session.upcomingCards(2u)) }
+  }
+}
