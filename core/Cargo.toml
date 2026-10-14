@@ -35,7 +35,7 @@ prost = "0.14"
 # The FSRS crate rslib uses (Anki 26.05 pins 5.2.0, same NextStates API); burn-free since 6.x.
 fsrs = { version = "6.6.2", default-features = false }
 # rslib draws its interval fuzz from rand's StdRng; same crate and version line, same numbers.
-rand = { version = "0.9.4", default-features = false, features = ["std_rng"] }
+rand = { version = "0.10.3", default-features = false, features = ["std_rng"] }
 # Anki's rslib scheduler states, vendored verbatim (vendor/anki) behind a type-check-only shim.
 anki-states = { path = "anki-states" }
 # rslib's typed-answer diff runs on difflib's SequenceMatcher; same crate, same token output.
