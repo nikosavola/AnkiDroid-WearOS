@@ -1,0 +1,64 @@
+name: Bug report
+description: Something in the phone companion or the watch app is broken.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The device and version fields below are what usually make a report
+        reproducible, so please fill them in.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: What did you do, what did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open the watch app
+        2. Pick deck X
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: app-version
+    attributes:
+      label: App version
+      description: The version in the app, or the commit you built from.
+      placeholder: 1.1.0
+    validations:
+      required: true
+  - type: input
+    id: phone
+    attributes:
+      label: Phone and Android version
+      placeholder: Pixel 8, Android 16
+    validations:
+      required: true
+  - type: input
+    id: watch
+    attributes:
+      label: Watch and Wear OS version
+      placeholder: Galaxy Watch8, Wear OS 6
+    validations:
+      required: true
+  - type: input
+    id: ankidroid
+    attributes:
+      label: AnkiDroid version
+      placeholder: 2.25.1
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Paste relevant logcat output, filtered to the app if you can.
+      render: shell
+    validations:
+      required: false

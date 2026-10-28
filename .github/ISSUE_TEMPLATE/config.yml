@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/nikosavola/AnkiDroid-WearOS/security/advisories/new
+    about: report security problems privately, not as a public issue
+  - name: AnkiDroid itself
+    url: https://github.com/ankidroid/Anki-Android/issues
+    about: bugs in the AnkiDroid app or its ContentProvider belong upstream

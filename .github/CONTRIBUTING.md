@@ -1,7 +1,7 @@
 # Contributing
 
-Build, format, and test instructions are summarized here; see `README.md` for the architecture
-overview and `AGENTS.md` for the deeper conventions.
+Build, format, and test instructions are summarized here; see `../README.md` for the architecture
+overview and `../AGENTS.md` for the deeper conventions.
 
 ## Build & test
 
@@ -26,9 +26,9 @@ uv run prek run --all-files
 
 CI runs the Rust tests, the JVM unit tests, Android lint, an unsigned release build, a 16 KB
 page-size check, and the workflow/config security hooks on every push. The same commands, plus
-device and emulator helpers, are in the `Justfile`: run `just` to list them. The **instrumented** tests
-(`./gradlew :phone:connectedDebugAndroidTest`) are not in CI — they need a real AnkiDroid install —
-and every test in them skips unless one is present, so they are safe to run anywhere.
+device and emulator helpers, are in the `Justfile`: run `just` to list them. The **instrumented**
+tests (`./gradlew :phone:connectedDebugAndroidTest`) are not in CI, they need a real AnkiDroid
+install, and every test in them skips unless one is present, so they are safe to run anywhere.
 `AnkiDroidProviderLiveTest` documents the two emulator setup traps (the runtime permission is
 dropped by each reinstall; AnkiDroid answers every provider query with a null cursor until it can
 create its collection directory). What CI cannot cover is the GMS Data Layer hop, rotary input,
@@ -51,7 +51,7 @@ brew install openjdk@21
 # into ~/Library/Android/sdk/cmdline-tools/latest, then:
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21
 ~/Library/Android/sdk/cmdline-tools/latest/bin/sdkmanager --install \
-  "platform-tools" "platforms;android-36" "build-tools;36.0.0" \
+  "platform-tools" "platforms;android-37.2" "build-tools;37.0.0" \
   "ndk;27.0.12077973" "emulator" \
   "system-images;android-36-ext19;google_apis;arm64-v8a" \
   "system-images;android-36;android-wear-signed;arm64-v8a"
@@ -91,7 +91,7 @@ adb -s emulator-5554 exec-out screencap -p > watch.png  # visual check
 
 Both apps share the `fi.nikosavola.ankidroid.wearos` application id; the launcher activities are
 `.wear.MainActivity` and `.phone.MainActivity` respectively. Without AnkiDroid installed on
-the phone emulator, debug builds fall back to mock cards (see README §2), so the full
+the phone emulator, debug builds fall back to mock cards (see the README), so the full
 review flow is testable with just the two AVDs; release builds need the Force Mock Mode
 settings toggle enabled explicitly. The phone<->watch GMS Data Layer hop needs
 both AVDs' Play Services to settle after first boot; if syncing does not start, let the
@@ -161,3 +161,25 @@ adb -s localhost:5555 exec-out screencap -p > shot.png   # visual check
 - To exercise write-back, also install an **x86_64** AnkiDroid build, open it once to create a
   collection, then grant the companion the `com.ichi2.anki.permission.READ_WRITE_DATABASE`
   permission.
+
+## Before opening a pull request
+
+- `uv run prek run --all-files` passes, or the equivalent Gradle and Cargo tasks if `prek` is not
+  available in your environment.
+- `cargo test --manifest-path core/Cargo.toml` passes when the Rust core changed.
+- `./gradlew :phone:testDebugUnitTest :wear:testDebugUnitTest` passes when Kotlin changed.
+- Keep commits atomic, one logical change per commit.
+- New behavior gets a test. A bug fix gets a regression test.
+
+## AI usage policy
+
+Using AI tools to speed up design, tests or documentation is encouraged, and much of this project
+was built with them. You remain fully responsible for what you submit:
+
+1. **No unreviewed output.** Do not submit low-quality or redundant generated code, tests or docs.
+2. **Verify and test.** Every generated change must be reviewed and must actually work.
+3. **Keep it maintainable.** The result has to be clear and idiomatic for a human to own.
+
+## Reporting security issues
+
+Do not open a public issue for a security problem. See [SECURITY.md](SECURITY.md).

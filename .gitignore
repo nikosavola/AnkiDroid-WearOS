@@ -21,6 +21,11 @@ captures/
 # Generated bindings
 /bindings/
 
+# Release signing material (never commit a keystore or its passwords)
+*.jks
+*.keystore
+keystore.properties
+
 # Local-only scratch notes
 /TODO.md
 
