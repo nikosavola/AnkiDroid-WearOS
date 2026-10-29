@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/branding/icon.svg" width="120" alt="Wear for AnkiDroid">
+</p>
+
 # Wear for AnkiDroid
 
 An offline-first Wear OS smartwatch companion for [AnkiDroid](https://github.com/ankidroid/Anki-Android), designed to let you study and grade flashcards directly from your wrist.
