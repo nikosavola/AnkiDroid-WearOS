@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 640" width="1280" height="640">
+  <title>Wear for AnkiDroid</title>
+  <defs>
+    <radialGradient id="glow" cx="0.22" cy="0.5" r="0.7">
+      <stop offset="0" stop-color="#3B1D5E"/>
+      <stop offset="1" stop-color="#160A26"/>
+    </radialGradient>
+  </defs>
+  <rect width="1280" height="640" fill="url(#glow)"/>
+  <g transform="translate(80 160) scale(1.25)">
+  
+  
+  <!-- Case ring, a plain circle: the watch. -->
+  <path fill="#C084FC" fill-rule="evenodd"
+        d="M30,128 a98,98 0 1 0 196,0 a98,98 0 1 0 -196,0 Z
+           M44,128 a84,84 0 1 0 168,0 a84,84 0 1 0 -168,0 Z"/>
+  <!-- Three cards, a step apart, the newest at the front bottom right. -->
+  <path fill="#6D28D9"
+        d="M100,73 h30 a11,11 0 0 1 11,11 v62 a11,11 0 0 1 -11,11 h-30 a11,11 0 0 1 -11,-11 v-62 a11,11 0 0 1 11,-11 Z"/>
+  <path fill="#A855F7"
+        d="M113,86 h30 a11,11 0 0 1 11,11 v62 a11,11 0 0 1 -11,11 h-30 a11,11 0 0 1 -11,-11 v-62 a11,11 0 0 1 11,-11 Z"/>
+  <path fill="#F5D0FE"
+        d="M126,99 h30 a11,11 0 0 1 11,11 v62 a11,11 0 0 1 -11,11 h-30 a11,11 0 0 1 -11,-11 v-62 a11,11 0 0 1 11,-11 Z"/>
+</g>
+  <g font-family="Helvetica Neue, Helvetica, Arial, sans-serif" fill="#FFFFFF">
+    <text x="470" y="300" font-size="76" font-weight="700" letter-spacing="-1">Wear for AnkiDroid</text>
+    <text x="470" y="368" font-size="34" fill="#D8C7F0">Review your AnkiDroid cards from your wrist</text>
+    <text x="470" y="430" font-size="24" fill="#9B8AB8">Offline reviewing, buffered grades, write-back to the real collection</text>
+    <text x="470" y="530" font-size="22" fill="#7A6B96">Unofficial third-party companion. Anki is a trademark of Ankitects Pty Ltd.</text>
+  </g>
+</svg>

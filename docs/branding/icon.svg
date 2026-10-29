@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <title>Wear for AnkiDroid</title>
+  <rect width="256" height="256" rx="56" fill="#1B0B2E"/>
+  <!-- Case ring, a plain circle: the watch. -->
+  <path fill="#C084FC" fill-rule="evenodd"
+        d="M30,128 a98,98 0 1 0 196,0 a98,98 0 1 0 -196,0 Z
+           M44,128 a84,84 0 1 0 168,0 a84,84 0 1 0 -168,0 Z"/>
+  <!-- Three cards, a step apart, the newest at the front bottom right. -->
+  <path fill="#6D28D9"
+        d="M100,73 h30 a11,11 0 0 1 11,11 v62 a11,11 0 0 1 -11,11 h-30 a11,11 0 0 1 -11,-11 v-62 a11,11 0 0 1 11,-11 Z"/>
+  <path fill="#A855F7"
+        d="M113,86 h30 a11,11 0 0 1 11,11 v62 a11,11 0 0 1 -11,11 h-30 a11,11 0 0 1 -11,-11 v-62 a11,11 0 0 1 11,-11 Z"/>
+  <path fill="#F5D0FE"
+        d="M126,99 h30 a11,11 0 0 1 11,11 v62 a11,11 0 0 1 -11,11 h-30 a11,11 0 0 1 -11,-11 v-62 a11,11 0 0 1 11,-11 Z"/>
+</svg>
