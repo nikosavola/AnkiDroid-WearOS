@@ -1,6 +1,8 @@
-# AnkiDroid WearOS Companion
+# Wear for AnkiDroid
 
 An offline-first Wear OS smartwatch companion for [AnkiDroid](https://github.com/ankidroid/Anki-Android), designed to let you study and grade flashcards directly from your wrist.
+
+Anki® is a registered trademark of Ankitects Pty Ltd. AnkiDroid is a trademark of the AnkiDroid Open Source Team. This app is an unofficial third-party companion and is not affiliated with or endorsed by Ankitects or the AnkiDroid team.
 
 | Decks | Settings | Question | Answer and grades | Session end |
 | --- | --- | --- | --- | --- |

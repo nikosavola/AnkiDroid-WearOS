@@ -1,5 +1,8 @@
 package fi.nikosavola.ankidroid.wearos.phone
 
+import android.content.Intent
+import android.net.Uri
+
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -22,6 +25,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -38,8 +42,55 @@ fun PhoneDialogs(vm: PhoneViewModel, actions: PhoneActions) {
     PhoneDialog.SYNC_HELP -> SyncHelpDialog(vm::closeDialog)
     PhoneDialog.SETTINGS -> SettingsDialog(vm)
     PhoneDialog.CONNECTION_INFO -> ConnectionInfoDialog(vm, actions)
+    PhoneDialog.ABOUT -> AboutDialog(vm::closeDialog)
     PhoneDialog.NONE -> {}
   }
+}
+
+/**
+ * Trademark and licence notice. Both names are descriptive of what the app interoperates with, so
+ * this states plainly that the app is not theirs, and points at the source the AGPL asks us to
+ * offer alongside the APK.
+ */
+@Composable
+private fun AboutDialog(onDismiss: () -> Unit) {
+  val context = LocalContext.current
+  AlertDialog(
+    onDismissRequest = onDismiss,
+    title = { Text("Wear for AnkiDroid") },
+    text = {
+      Column(
+        modifier = Modifier.verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+      ) {
+        Text("Version ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.labelMedium)
+        Text(
+          "Anki® is a registered trademark of Ankitects Pty Ltd. AnkiDroid is a trademark of " +
+            "the AnkiDroid Open Source Team. This app is an unofficial third-party companion " +
+            "and is not affiliated with or endorsed by either."
+        )
+        Text(
+          "Licensed under the AGPL-3.0-or-later. Bundles Anki's rslib scheduler code " +
+            "(AGPL-3.0, Copyright Ankitects Pty Ltd and contributors) and MathJax " +
+            "(Apache-2.0). The ankidroid-provider library is LGPL-3.0-or-later."
+        )
+      }
+    },
+    confirmButton = {
+      TextButton(
+        onClick = {
+          runCatching {
+            context.startActivity(
+              Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/nikosavola/AnkiDroid-WearOS"))
+            )
+          }
+        }
+      ) {
+        Text("Source code")
+      }
+    },
+    dismissButton = { TextButton(onClick = onDismiss) { Text("Close") } },
+  )
 }
 
 /**

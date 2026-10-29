@@ -53,7 +53,7 @@ abstract class BasePhoneAppFunctionService : AppFunctionService() {
    *
    * @return Every AnkiDroid deck, in AnkiDroid's deck list order.
    * @throws AppFunctionAppUnknownException If AnkiDroid isn't installed, set up, or hasn't granted
-   *   access; ask the user to open AnkiDroid and then the AnkiDroid WearOS phone app once.
+   *   access; ask the user to open AnkiDroid and then the Wear for AnkiDroid phone app once.
    */
   @AppFunctionDeclaration(isDescribedByKDoc = true)
   suspend fun listDecks(): List<PhoneDeck> =
@@ -75,7 +75,7 @@ abstract class BasePhoneAppFunctionService : AppFunctionService() {
    * @throws AppFunctionElementNotFoundException If no AnkiDroid deck has that ID; call "listDecks"
    *   again for current IDs.
    * @throws AppFunctionAppUnknownException If AnkiDroid isn't installed, set up, or hasn't granted
-   *   access; ask the user to open AnkiDroid and then the AnkiDroid WearOS phone app once.
+   *   access; ask the user to open AnkiDroid and then the Wear for AnkiDroid phone app once.
    */
   @AppFunctionDeclaration(isDescribedByKDoc = true)
   suspend fun setDeckSyncedToWatch(deckId: Long, synced: Boolean): PhoneDeck =

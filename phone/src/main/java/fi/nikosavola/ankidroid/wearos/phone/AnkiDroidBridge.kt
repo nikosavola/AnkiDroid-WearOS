@@ -699,7 +699,7 @@ class AnkiDroidBridge(
           id = 103,
           noteId = 1003,
           ord = 0,
-          front = "Is AnkiDroid WearOS affiliated with the abandoned 'wlky/AnkiDroid-Wear'?",
+          front = "Is Wear for AnkiDroid affiliated with the abandoned 'wlky/AnkiDroid-Wear'?",
           back =
             "No, it is a clean, blank-slate re-architecture designed against modern WearOS 6 APIs.",
           buttonCount = 3,

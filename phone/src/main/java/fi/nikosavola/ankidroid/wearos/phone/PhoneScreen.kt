@@ -427,6 +427,10 @@ private fun OverflowMenu(vm: PhoneViewModel, actions: PhoneActions) {
         text = { Text("Grant permissions") },
         onClick = { pick(actions.onRequestCardAccess) },
       )
+      DropdownMenuItem(
+        text = { Text("About") },
+        onClick = { pick { vm.openDialog(PhoneDialog.ABOUT) } },
+      )
     }
   }
 }

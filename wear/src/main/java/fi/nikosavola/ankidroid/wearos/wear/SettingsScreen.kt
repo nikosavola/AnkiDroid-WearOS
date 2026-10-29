@@ -5,6 +5,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -130,9 +131,60 @@ internal fun MainActivity.SettingsScreen() {
         WatchSettings.setKeepScreenOn(activity, it)
       }
       appearanceToggles(activity, transformSpec)
+      aboutSection(activity, transformSpec)
     }
   }
 }
+
+/**
+ * Trademark and licence notice. Both names describe what the app talks to, so this states plainly
+ * that the app is not theirs, and names the source the AGPL asks us to offer with the APK.
+ */
+internal fun TransformingLazyColumnScope.aboutSection(
+  activity: MainActivity,
+  transformSpec: TransformationSpec,
+) {
+  item {
+    Text(
+      text = "About",
+      style = MaterialTheme.typography.titleMedium,
+      modifier = Modifier.padding(vertical = 6.dp).transformedHeight(this, transformSpec),
+    )
+  }
+  item {
+    Text(
+      text = "Wear for AnkiDroid ${activity.appVersionName()}",
+      style = MaterialTheme.typography.bodyMedium,
+      modifier = Modifier.transformedHeight(this, transformSpec),
+    )
+  }
+  item {
+    Text(
+      text =
+        "Anki® is a registered trademark of Ankitects Pty Ltd, AnkiDroid a trademark of the " +
+          "AnkiDroid Open Source Team. Unofficial third-party companion, not affiliated with " +
+          "or endorsed by either.",
+      style = MaterialTheme.typography.labelSmall,
+      textAlign = TextAlign.Center,
+      modifier = Modifier.padding(horizontal = 8.dp).transformedHeight(this, transformSpec),
+    )
+  }
+  item {
+    Text(
+      text =
+        "AGPL-3.0-or-later. Bundles Anki's rslib scheduler code (AGPL-3.0, Copyright Ankitects " +
+          "Pty Ltd and contributors). Source and licence texts: " +
+          "github.com/nikosavola/AnkiDroid-WearOS",
+      style = MaterialTheme.typography.labelSmall,
+      textAlign = TextAlign.Center,
+      modifier = Modifier.padding(horizontal = 8.dp).transformedHeight(this, transformSpec),
+    )
+  }
+}
+
+/** Version shown in the about block; the watch app has no BuildConfig, so ask the package manager. */
+private fun MainActivity.appVersionName(): String =
+  runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrNull().orEmpty()
 
 /**
  * A labelled group of mutually-exclusive [TextToggleButton]s; the selected one is checked and

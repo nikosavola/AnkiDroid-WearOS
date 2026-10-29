@@ -49,7 +49,7 @@ class AnkiTileService : Material3TileService() {
               .addContent(text("Not synced yet".layoutString, typography = Typography.TITLE_MEDIUM))
               .addContent(
                 text(
-                  "Open AnkiDroid WearOS on your phone and sync".layoutString,
+                  "Open Wear for AnkiDroid on your phone and sync".layoutString,
                   typography = Typography.BODY_SMALL,
                   color = colorScheme.onSurfaceVariant,
                   maxLines = 3,

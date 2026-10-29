@@ -35,6 +35,7 @@ enum class PhoneDialog {
   SYNC_HELP,
   SETTINGS,
   CONNECTION_INFO,
+  ABOUT,
 }
 
 /** Where the AnkiDroid card-access permission stands, driving the in-app explainer card. */

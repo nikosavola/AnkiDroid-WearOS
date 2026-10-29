@@ -1,6 +1,6 @@
-# AnkiDroid WearOS Companion — Developer & Architecture Guide
+# Wear for AnkiDroid - Developer & Architecture Guide
 
-This file outlines the shared architecture conventions, tech stack standards, and compilation workflows for the AnkiDroid WearOS project.
+This file outlines the shared architecture conventions, tech stack standards, and compilation workflows for the Wear for AnkiDroid project.
 
 ---
 

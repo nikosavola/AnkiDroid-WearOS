@@ -117,7 +117,7 @@ internal fun MainActivity.WelcomeScreen(folderPath: String) {
   var rowMenu by remember { mutableStateOf<RowMenuTarget?>(null) }
 
   val title =
-    if (folderPath.isEmpty()) "AnkiDroid WearOS" else folderPath.substringAfterLast("::")
+    if (folderPath.isEmpty()) "Wear for AnkiDroid" else folderPath.substringAfterLast("::")
 
   ScreenScaffold(
     scrollState = listState,

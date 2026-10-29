@@ -71,7 +71,7 @@ abstract class BaseWatchAppFunctionService : AppFunctionService() {
    * @param deckId AnkiDroid deck ID from "listCachedDecks".
    * @return An intent that opens the deck's overview screen on the watch.
    * @throws AppFunctionElementNotFoundException If the deck is not stored on the watch; the user
-   *   needs to sync it from the AnkiDroid WearOS phone app first.
+   *   needs to sync it from the Wear for AnkiDroid phone app first.
    */
   @AppFunctionDeclaration(isDescribedByKDoc = true)
   suspend fun startReview(deckId: Long): PendingIntent {
@@ -100,7 +100,7 @@ abstract class BaseWatchAppFunctionService : AppFunctionService() {
    *
    * @param deckId AnkiDroid deck ID from "listCachedDecks".
    * @throws AppFunctionElementNotFoundException If the deck is not stored on the watch; the user
-   *   needs to sync it from the AnkiDroid WearOS phone app first.
+   *   needs to sync it from the Wear for AnkiDroid phone app first.
    * @throws AppFunctionAppUnknownException If the phone is not connected; ask the user to bring the
    *   phone near the watch and try again.
    */
