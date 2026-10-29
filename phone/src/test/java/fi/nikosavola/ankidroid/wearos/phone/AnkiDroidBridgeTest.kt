@@ -121,9 +121,9 @@ class AnkiDroidBridgeTest {
 
   // --- write-back (watch grades -> AnkiDroid) contract ---------------------------------------
   // These pin AnkiDroidBridge.writeAnswersBack's behavior toward the ContentProvider. They do NOT
-  // (and cannot) prove AnkiDroid actually persists the review - see WRITEBACK_DEBUGGING.md - they
-  // guard our side of the contract: the right ContentValues, read-only skipping, and which answers
-  // are reported "settled" (safe to clear from the watch buffer) vs kept for retry.
+  // (and cannot) prove AnkiDroid actually persists the review, which only a real collection shows,
+  // they guard our side of the contract: the right ContentValues, read-only skipping, and which
+  // answers are reported "settled" (safe to clear from the watch buffer) vs kept for retry.
 
   private fun answer(id: String, ease: Int, noteId: Long = 111L, ord: Int = 0) =
     WearosAnswer(id = id, noteId = noteId, ord = ord, ease = ease, timeTakenMs = 4200L, deckId = 0L)

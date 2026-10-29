@@ -1,6 +1,8 @@
 # Rust / Cargo. Cargo.lock is tracked on purpose (reproducible .so builds); do not re-ignore it.
 **/target/
 **/*.rs.bk
+# Per-machine cargo settings (build parallelism); nothing here changes what gets built.
+/.cargo/
 
 # Android / Gradle
 .gradle/

@@ -25,14 +25,14 @@ uv run prek run --all-files
 ```
 
 CI runs the Rust tests, the JVM unit tests, Android lint, an unsigned release build, a 16 KB
-page-size check, and the workflow/config security hooks on every push. The **instrumented** tests
+page-size check, and the workflow/config security hooks on every push. The same commands, plus
+device and emulator helpers, are in the `Justfile`: run `just` to list them. The **instrumented** tests
 (`./gradlew :phone:connectedDebugAndroidTest`) are not in CI — they need a real AnkiDroid install —
 and every test in them skips unless one is present, so they are safe to run anywhere.
 `AnkiDroidProviderLiveTest` documents the two emulator setup traps (the runtime permission is
 dropped by each reinstall; AnkiDroid answers every provider query with a null cursor until it can
-create its collection directory). What CI cannot cover —
-the GMS Data Layer hop, rotary input, tiles, TTS, battery behavior — is listed as a manual
-pre-release checklist in `MANUAL_TESTING.md`.
+create its collection directory). What CI cannot cover is the GMS Data Layer hop, rotary input,
+tiles, TTS and battery behavior, which need a real paired phone and watch.
 
 ## Local Android emulator (native AVDs, macOS)
 
