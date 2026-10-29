@@ -2,6 +2,12 @@
 
 An offline-first Wear OS smartwatch companion for [AnkiDroid](https://github.com/ankidroid/Anki-Android), designed to let you study and grade flashcards directly from your wrist.
 
+| Decks | Settings | Question | Answer and grades | Session end |
+| --- | --- | --- | --- | --- |
+| ![](docs/screenshots/decks.webp) | ![](docs/screenshots/settings.webp) | ![](docs/screenshots/question.webp) | ![](docs/screenshots/answer.webp) | ![](docs/screenshots/finished.webp) |
+
+Screenshots are real captures from a Wear OS emulator, regenerated with `just screenshots`.
+
 ---
 
 ## 1. Architecture Overview
@@ -57,17 +63,21 @@ flowchart LR
 
 ### Prerequisites
 1. **Java JDK 21:** Set as your active Gradle compiler JVM (`JAVA_HOME`). macOS: `brew install openjdk@21` then `JAVA_HOME=/opt/homebrew/opt/openjdk@21`; Linux: `/usr/lib/jvm/java-21-openjdk-amd64`. Any JDK 17-26 also works. See `CONTRIBUTING.md` for the full macOS emulator setup.
-2. **Android NDK (r28+) & SDK:** Correctly installed on your local machine.
-3. **Rust Android Targets:** Ensure your Rust toolchain can cross-compile to Android architectures:
+2. **Android SDK & NDK:** SDK platform 37.2 with its build-tools, and the pinned NDK `27.0.12077973` that `ndkVersion` in both app modules expects (`sdkmanager "ndk;27.0.12077973"`).
+3. **Rust Android Targets:** Ensure your Rust toolchain can cross-compile to the three ABIs both apps ship (`cargo-ndk` picks them up):
    ```bash
-   rustup target add aarch64-linux-android x86_64-linux-android
+   rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
+   cargo install cargo-ndk
    ```
 
 ### Compile Rust & Generate Bindings
-To cross-compile all Android native `.so` binaries (`arm64-v8a` and `x86_64`) and generate the Kotlin UniFFI bindings, run:
+To cross-compile all Android native `.so` binaries (`arm64-v8a`, `armeabi-v7a` and `x86_64`) and generate the Kotlin UniFFI bindings, run:
 ```bash
 JAVA_HOME=<jdk21> ./gradlew generateBindings
 ```
+
+The common recipes are in the `Justfile`, so `just assemble`, `just test` and `just lint` do the
+same thing with the right `ANDROID_HOME` and worker cap already set.
 
 ### Full Kotlin Compilation
 To compile both the phone companion and smartwatch projects, run:
