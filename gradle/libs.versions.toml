@@ -3,7 +3,7 @@
 appfunctions = "1.0.0-alpha13"
 # KSP2 versions are no longer tied to the Kotlin version.
 ksp = "2.3.12"
-agp = "9.5.0-alpha08"
+agp = "9.6.0-alpha02"
 kotlin = "2.4.20"
 compose-compiler = "2.4.20"
 wear-compose = "1.7.0"
