@@ -88,6 +88,17 @@ class DemoDeckSeeder {
           DemoCard("木", "tree, wood<br>ボク, モク / き"),
           DemoCard("<ruby>山<rt>やま</rt></ruby>", "mountain"),
           DemoCard("火", "fire<!-- pitch accent hidden here --> [sound:hi.mp3]<br>カ / ひ"),
+          // Display glyphs sized for a phone card, as the Remembering the Kanji template does.
+          DemoCard(
+            "Bright",
+            "Bright\n\n<hr id=answer>\n\n" +
+              "<span style=\"font-family:YUMIN;font-size:125px;\">明</span>\n" +
+              "<span style=\"font-family:YUGOTHB;font-size:125px;\">明</span><BR>\n" +
+              "<span style=\"font-family:HGRKK;font-size:125px;\">明</span>\n" +
+              "<span style=\"font-family:StrokeOrder;font-size:125px;\">明</span>\n\n<br>\n\n" +
+              "<span style=\"font-family: arial; font-size:30px; \">画数: 8, Nr: 20</span>\n\n<br>\n" +
+              "<span style=\"font-family: arial; font-size:24px;\">Kanshudo | WaniKani</span>",
+          ),
         ),
       ),
       DemoDeck(
