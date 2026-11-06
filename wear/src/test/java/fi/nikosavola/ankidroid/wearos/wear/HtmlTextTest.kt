@@ -6,7 +6,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
 import androidx.compose.ui.unit.em
 import androidx.wear.compose.material3.MaterialTheme
 import org.junit.Assert.assertEquals
@@ -75,13 +78,42 @@ class HtmlTextTest {
   @Test
   fun fontSizeAnnotationsBecomeSpans() {
     // The core's font-size pass wraps sized runs in <annotation fs="scale">; the importer turns
-    // them into string annotations and this is where they become font-size spans.
+    // them into string annotations and this is where they become font-size spans, 2.222 becoming
+    // 1 + 1.222 / 2 after the emphasis slope.
     val text = cardTextFromHtml("""<annotation fs="2.222">漢</annotation> plain""")
     assertEquals("漢 plain", text.text)
     assertEquals(1, text.spanStyles.size)
-    assertEquals(2.222f.em, text.spanStyles[0].item.fontSize)
+    assertEquals(1.611f.em, text.spanStyles[0].item.fontSize)
     assertEquals(0, text.spanStyles[0].start)
     assertEquals(1, text.spanStyles[0].end)
+  }
+
+  @Test
+  fun sizedRunsAreCappedButSmallOnesKeepTheirScale() {
+    val text =
+      cardTextFromHtml(
+        """<annotation fs="6.944">明</annotation><annotation fs="1.667">x</annotation>""",
+        maxScale = 3.5f,
+      )
+    // 1.667 keeps half its step above 1: 1 + 0.667 / 2.
+    assertEquals(listOf(3.5f.em, 1.3335f.em), text.spanStyles.map { it.item.fontSize })
+  }
+
+  @Test
+  fun stackedSizedLinesDoNotOverprintEachOther() {
+    // 6x the base is 3.5x after the emphasis slope, 56sp at 16sp. With the theme's fixed ~20sp line
+    // height the two lines sit 20sp apart and the glyphs print over each other.
+    composeRule.setContent {
+      MaterialTheme {
+        HtmlText(
+          """<annotation fs="6">明</annotation><br><annotation fs="6">明</annotation>""",
+          1.0f,
+          WatchSettings.CardFont.DEFAULT,
+        )
+      }
+    }
+    val height = composeRule.onNodeWithText("明", substring = true).getUnclippedBoundsInRoot().height
+    assertTrue("two lines are $height tall", height >= 112.dp)
   }
 
   @Test
