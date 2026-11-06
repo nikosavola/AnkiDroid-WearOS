@@ -149,6 +149,12 @@ frequently ship **no WebView provider** (e.g. Galaxy Watch), so constructing a `
   bridge fills the placeholder from the note's field the way AnkiDroid does when nothing was typed
   (`core/src/typeanswer.rs`), and writes the note type's simple class rules inline, night-mode
   rules first (`core/src/css.rs`), so the CSS-less watch renderer still shows cloze styling.
+- **Sized runs on the native path (`HtmlText`):** card CSS sizes display text for a phone (a 125px
+  kanji is about 30% of AnkiDroid's width), but the watch's body text is boosted, so the core's
+  px/18 scale would make that glyph over half the screen. `cardTextFromHtml` keeps half of a size's
+  step above the body text (`EMPHASIS_SLOPE`), caps a run at 30% of the
+  screen width (`MAX_RUN_WIDTH_FRACTION`), and any text with sized runs drops the theme's fixed
+  line height, which otherwise stacks larger lines on each other. Bitmap sides are not capped.
 - **Rich fidelity via phone-rendered bitmaps:** images, inline SVG, CSS overlines and borders can't
   render natively, so cards that need them (`CardBitmapRenderer.needsRichRendering`) are rendered on
   the phone (which has a WebView) into a PNG, streamed to the watch as a per-card Data Layer asset,
