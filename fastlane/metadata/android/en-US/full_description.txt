@@ -1,0 +1,28 @@
+Wear for AnkiDroid puts your AnkiDroid reviews on your wrist. See what is due, read the card, reveal the answer and grade it, then get back to your day.
+
+It is the free, unofficial Wear OS companion for AnkiDroid. It needs the free phone companion app on the paired phone, and AnkiDroid 2.24 or newer with your collection set up. The watch app is not standalone.
+
+WHAT IT DOES
+
+- Due counts for each deck, with folder navigation for nested decks.
+- Review from the watch: tap to reveal, scroll with the bezel, and grade with the curved buttons along the bottom edge.
+- Every grade is written back into your real AnkiDroid collection, so AnkiDroid keeps owning the schedule.
+- Works offline for days: the watch keeps a local pool of cards and buffers grades until the phone is back in range.
+- A tile, a watch-face complication and, on Wear OS 7, a home-screen widget show what is due.
+- Text to speech, type-in answers, undo, adjustable text size, and phone-rendered card images for cards with images and styling.
+
+WHAT IT DOES NOT DO
+
+- No account, no sign-in and no ads.
+- No analytics, no tracking and no developer servers. Your cards move only between your phone and your watch, through Google Play services.
+- It is not Anki or AnkiDroid, and it is not an official client.
+
+REQUIREMENTS
+
+- A Wear OS 3 or newer watch paired with an Android phone.
+- The free Wear for AnkiDroid phone companion on that phone.
+- AnkiDroid 2.24 or newer on the phone, with database access allowed.
+
+Privacy policy: https://nikosavola.github.io/Wear-for-AnkiDroid/privacy.html
+
+Anki and the Anki logo are trademarks of Anki Software, LLC. AnkiDroid is a trademark of the AnkiDroid Open Source Team. Wear for AnkiDroid is an unofficial third-party companion and is not affiliated with or endorsed by either.

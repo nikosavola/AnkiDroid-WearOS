@@ -26,6 +26,6 @@
     <text x="470" y="300" font-size="76" font-weight="700" letter-spacing="-1">Wear for AnkiDroid</text>
     <text x="470" y="368" font-size="34" fill="#D8C7F0">Review your AnkiDroid cards from your wrist</text>
     <text x="470" y="430" font-size="24" fill="#9B8AB8">Offline reviewing, buffered grades, write-back to the real collection</text>
-    <text x="470" y="530" font-size="22" fill="#7A6B96">Unofficial third-party companion. Anki is a trademark of Ankitects Pty Ltd.</text>
+    <text x="470" y="530" font-size="22" fill="#7A6B96">Unofficial third-party companion. Anki is a trademark of Anki Software, LLC.</text>
   </g>
 </svg>
