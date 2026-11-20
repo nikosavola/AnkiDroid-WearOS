@@ -109,6 +109,8 @@ class MainActivity : ComponentActivity() {
   internal var pendingIsNew = false
   // Phone-communication failure to surface as a transient M3 dialog; null means no failure showing.
   internal var phoneFailure by mutableStateOf<String?>(null)
+  // Whether a connected phone has the companion app; null while no phone is connected or unknown.
+  internal var phoneCompanionPresent by mutableStateOf<Boolean?>(null)
 
   internal var tts: TextToSpeech? = null
   internal val scope
@@ -197,6 +199,7 @@ class MainActivity : ComponentActivity() {
     // 3. Load the list of decks (pooled locally + known from the phone). Start on the picker.
     vm.loadDecks()
     updateOutstandingCount()
+    refreshPhoneCompanion()
 
     // Catch-up flush: grades from a previous session that never got an explicit sync (backed out of
     // a review, or the send failed with the phone out of range) would otherwise sit buffered until
@@ -515,12 +518,30 @@ class MainActivity : ComponentActivity() {
     }
 
   internal fun requestDecksFromPhone() {
+    refreshPhoneCompanion()
     sendToPhone(
       WearPaths.REQUEST_DECKS,
       onNotConnected = { phoneFailure = "Phone not connected" },
       onSent = { toast("Refreshing decks list...") },
       onError = { phoneFailure = "Couldn't reach phone" },
     )
+  }
+
+  /** Re-check the connected phone for the companion app, so the deck list can prompt to install it. */
+  internal fun refreshPhoneCompanion() {
+    scope.launch(Dispatchers.IO) {
+      val installed = phoneCompanionInstalled(this@MainActivity)
+      launch(Dispatchers.Main) { phoneCompanionPresent = installed }
+    }
+  }
+
+  /** Open this app's Play Store page on the phone; the watch cannot install it itself. */
+  internal fun installPhoneCompanion() {
+    if (openOnPhone(this)) {
+      toast("Opening Play Store on your phone...")
+    } else {
+      toast("Open the Play Store on your phone to install it")
+    }
   }
 
   /**

@@ -92,6 +92,8 @@ dependencies {
   implementation(libs.navigation3.runtime)
   implementation(libs.navigation3.ui)
   implementation(libs.wear.ongoing)
+  implementation(libs.wear.remote.interactions)
+  implementation(libs.wear.phone.interactions)
   implementation(libs.androidx.core.splashscreen)
   implementation(libs.wear.tiles)
   implementation(libs.wear.protolayout)

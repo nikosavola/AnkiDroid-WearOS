@@ -5,6 +5,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.wear.compose.foundation.padding
@@ -97,6 +98,37 @@ private fun TransformingLazyColumnScope.deckLevelRows(
   }
 }
 
+/** Empty deck list: how to sync, or the install prompt when the phone companion is known missing. */
+private fun TransformingLazyColumnScope.emptyDeckPrompt(
+  companionPresent: Boolean?,
+  onInstall: () -> Unit,
+) {
+  item {
+    Text(
+      text =
+        if (companionPresent == false) {
+          stringResource(R.string.no_phone_companion)
+        } else {
+          "Tap Refresh to load your decks, or open the phone app and press Sync."
+        },
+      style = MaterialTheme.typography.bodyMedium,
+      modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
+      textAlign = TextAlign.Center,
+    )
+  }
+  if (companionPresent == false) {
+    item {
+      CompactButton(
+        onClick = onInstall,
+        colors = ButtonDefaults.filledTonalButtonColors(),
+        modifier = Modifier.fillMaxWidth(0.7f),
+      ) {
+        Text(stringResource(R.string.no_phone_companion_action))
+      }
+    }
+  }
+}
+
 /** The deck picker for one level of the `::` hierarchy; [folderPath] is "" at the root. */
 @Composable
 internal fun MainActivity.WelcomeScreen(folderPath: String) {
@@ -159,14 +191,7 @@ internal fun MainActivity.WelcomeScreen(folderPath: String) {
       }
 
       if (entries.isEmpty()) {
-        item {
-          Text(
-            text = "Tap Refresh to load your decks, or open the phone app and press Sync.",
-            style = MaterialTheme.typography.bodyMedium,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 4.dp),
-            textAlign = TextAlign.Center,
-          )
-        }
+        emptyDeckPrompt(phoneCompanionPresent, ::installPhoneCompanion)
       } else {
         // Up one folder. Only shown when we've descended below the root.
         if (folderPath.isNotEmpty()) {
