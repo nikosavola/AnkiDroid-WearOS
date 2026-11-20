@@ -16,7 +16,7 @@ AnkiDroid collection, so AnkiDroid keeps owning the schedule.
 The project is pre-release: the review loop works end to end, but there is no published app release
 yet.
 
-Anki® is a registered trademark of Ankitects Pty Ltd. AnkiDroid is a trademark of the AnkiDroid Open Source Team. This app is an unofficial third-party companion and is not affiliated with or endorsed by Ankitects or the AnkiDroid team.
+Anki and the Anki logo are trademarks of Anki Software, LLC. AnkiDroid is a trademark of the AnkiDroid Open Source Team. Wear for AnkiDroid is an unofficial third-party companion and is not affiliated with or endorsed by Anki Software, LLC or the AnkiDroid Open Source Team.
 
 | Decks | Settings | Question | Answer and grades | Session end |
 | --- | --- | --- | --- | --- |
