@@ -25,6 +25,7 @@ import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.Text
 import androidx.wear.compose.material3.lazy.TransformationSpec
@@ -151,6 +152,7 @@ fun FinishedScreenContent(
       }
       newCardControls?.invoke(this)
     }
+    ScrollIndicator(listState, Modifier.fillMaxSize())
   }
 }
 

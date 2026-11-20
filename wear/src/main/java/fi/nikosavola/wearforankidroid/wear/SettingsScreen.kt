@@ -19,6 +19,7 @@ import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.Icon
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
 import androidx.wear.compose.material3.TextToggleButton
@@ -133,6 +134,7 @@ internal fun MainActivity.SettingsScreen() {
       appearanceToggles(activity, transformSpec)
       aboutSection(activity, transformSpec)
     }
+    ScrollIndicator(listState, Modifier.fillMaxSize())
   }
 }
 

@@ -41,6 +41,7 @@ import androidx.wear.compose.foundation.CurvedTextStyle
 import androidx.wear.compose.foundation.padding
 import androidx.wear.compose.material3.CircularProgressIndicator
 import androidx.wear.compose.material3.MaterialTheme
+import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.curvedText
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -175,6 +176,7 @@ internal fun BoxScope.ReviewFront(
       )
     }
   }
+  ScrollIndicator(scrollState, Modifier.fillMaxSize())
   // Undo the previous grade, tucked just left of the progress text at the top. Drawn LAST so it
   // sits above the full-screen reveal-clickable Column, which would otherwise eat the tap. The
   // 48dp target is centered where the 16dp glyph always sat.
@@ -246,6 +248,7 @@ internal fun BoxScope.ReviewAnswer(
       modifier = Modifier.fillMaxWidth(),
     )
   }
+  ScrollIndicator(scrollState, Modifier.fillMaxSize())
   GradeEdgeButtons(
     card = card,
     enabled = gradeEnabled,

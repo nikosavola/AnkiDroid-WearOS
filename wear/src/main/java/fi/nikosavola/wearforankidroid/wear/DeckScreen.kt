@@ -21,6 +21,7 @@ import androidx.wear.compose.material3.EdgeButton
 import androidx.wear.compose.material3.EdgeButtonSize
 import androidx.wear.compose.material3.MaterialTheme
 import androidx.wear.compose.material3.ScreenScaffold
+import androidx.wear.compose.material3.ScrollIndicator
 import androidx.wear.compose.material3.SurfaceTransformation
 import androidx.wear.compose.material3.SwitchButton
 import androidx.wear.compose.material3.lazy.TransformationSpec
@@ -133,6 +134,7 @@ internal fun MainActivity.DeckScreen(session: ReviewSession) {
         }
       }
     }
+    ScrollIndicator(listState, Modifier.fillMaxSize())
   }
 }
 
