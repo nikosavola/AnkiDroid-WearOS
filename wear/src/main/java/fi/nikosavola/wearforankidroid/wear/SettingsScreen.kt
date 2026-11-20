@@ -174,7 +174,7 @@ internal fun TransformingLazyColumnScope.aboutSection(
       text =
         "AGPL-3.0-or-later. Bundles Anki's rslib scheduler code (AGPL-3.0, Copyright Ankitects " +
           "Pty Ltd and contributors). Source and licence texts: " +
-          "github.com/nikosavola/AnkiDroid-WearOS",
+          "github.com/nikosavola/Wear-for-AnkiDroid",
       style = MaterialTheme.typography.labelSmall,
       textAlign = TextAlign.Center,
       modifier = Modifier.padding(horizontal = 8.dp).transformedHeight(this, transformSpec),

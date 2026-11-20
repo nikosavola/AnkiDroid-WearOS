@@ -5,7 +5,7 @@
 Please do not report security vulnerabilities through public GitHub issues.
 
 Use GitHub Private Vulnerability Reporting through
-[Security Advisories](https://github.com/nikosavola/AnkiDroid-WearOS/security/advisories), or
+[Security Advisories](https://github.com/nikosavola/Wear-for-AnkiDroid/security/advisories), or
 contact @nikosavola directly.
 
 ### Scope

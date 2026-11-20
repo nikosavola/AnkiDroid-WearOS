@@ -25,7 +25,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "AnkiDroid-WearOS"
+rootProject.name = "Wear-for-AnkiDroid"
 include(":phone")
 include(":wear")
 include(":ankidroid-provider")

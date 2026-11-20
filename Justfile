@@ -1,4 +1,4 @@
-# justfile for AnkiDroid-WearOS. Run `just` or `just --list` to see all recipes.
+# justfile for Wear-for-AnkiDroid. Run `just` or `just --list` to see all recipes.
 #
 # Every gradle recipe caps parallelism via max_workers (default 2, override with JUST_MAX_WORKERS):
 # a workstation preference, not a project requirement, so it lives here rather than in

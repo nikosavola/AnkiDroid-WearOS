@@ -4,9 +4,9 @@
 
 # Wear for AnkiDroid
 
-[![CI](https://github.com/nikosavola/AnkiDroid-WearOS/actions/workflows/ci.yml/badge.svg)](https://github.com/nikosavola/AnkiDroid-WearOS/actions/workflows/ci.yml)
-[![CodeQL](https://github.com/nikosavola/AnkiDroid-WearOS/actions/workflows/codeql.yml/badge.svg)](https://github.com/nikosavola/AnkiDroid-WearOS/actions/workflows/codeql.yml)
-[![License](https://img.shields.io/github/license/nikosavola/AnkiDroid-WearOS)](LICENSE)
+[![CI](https://github.com/nikosavola/Wear-for-AnkiDroid/actions/workflows/ci.yml/badge.svg)](https://github.com/nikosavola/Wear-for-AnkiDroid/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/nikosavola/Wear-for-AnkiDroid/actions/workflows/codeql.yml/badge.svg)](https://github.com/nikosavola/Wear-for-AnkiDroid/actions/workflows/codeql.yml)
+[![License](https://img.shields.io/github/license/nikosavola/Wear-for-AnkiDroid)](LICENSE)
 
 An offline-first Wear OS smartwatch companion for
 [AnkiDroid](https://github.com/ankidroid/Anki-Android). See what is due, read the card, reveal the
@@ -189,7 +189,7 @@ packages:
 dependencyResolutionManagement {
   repositories {
     maven {
-      url = uri("https://maven.pkg.github.com/nikosavola/AnkiDroid-WearOS")
+      url = uri("https://maven.pkg.github.com/nikosavola/Wear-for-AnkiDroid")
       credentials {
         username = System.getenv("GITHUB_ACTOR")
         password = System.getenv("GITHUB_TOKEN")
@@ -204,7 +204,7 @@ dependencies { implementation("fi.nikosavola:ankidroid-provider:0.1.0") }
 
 The same tags also build on [JitPack](https://jitpack.io) without a token, once the repository is
 public: add `maven("https://jitpack.io")` and depend on
-`com.github.nikosavola.AnkiDroid-WearOS:ankidroid-provider:v0.1.0`.
+`com.github.nikosavola.Wear-for-AnkiDroid:ankidroid-provider:v0.1.0`.
 
 The library is LGPL-3.0-or-later (see `ankidroid-provider/COPYING.LESSER`), the same license as
 AnkiDroid's own API library, so apps of any license can use it.

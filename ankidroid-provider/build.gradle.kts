@@ -37,7 +37,7 @@ publishing {
       pom {
         name = "ankidroid-provider"
         description = "Blocking Kotlin client for AnkiDroid's flashcard ContentProvider."
-        url = "https://github.com/nikosavola/AnkiDroid-WearOS"
+        url = "https://github.com/nikosavola/Wear-for-AnkiDroid"
         licenses {
           license {
             name = "LGPL-3.0-or-later"
@@ -45,9 +45,9 @@ publishing {
           }
         }
         scm {
-          url = "https://github.com/nikosavola/AnkiDroid-WearOS"
-          connection = "scm:git:https://github.com/nikosavola/AnkiDroid-WearOS.git"
-          developerConnection = "scm:git:ssh://git@github.com/nikosavola/AnkiDroid-WearOS.git"
+          url = "https://github.com/nikosavola/Wear-for-AnkiDroid"
+          connection = "scm:git:https://github.com/nikosavola/Wear-for-AnkiDroid.git"
+          developerConnection = "scm:git:ssh://git@github.com/nikosavola/Wear-for-AnkiDroid.git"
         }
       }
     }
@@ -55,7 +55,7 @@ publishing {
   repositories {
     maven {
       name = "GitHubPackages"
-      url = uri("https://maven.pkg.github.com/nikosavola/AnkiDroid-WearOS")
+      url = uri("https://maven.pkg.github.com/nikosavola/Wear-for-AnkiDroid")
       credentials {
         username = System.getenv("GITHUB_ACTOR")
         password = System.getenv("GITHUB_TOKEN")

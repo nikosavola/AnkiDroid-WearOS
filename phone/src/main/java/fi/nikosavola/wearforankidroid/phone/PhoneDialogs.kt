@@ -81,7 +81,7 @@ private fun AboutDialog(onDismiss: () -> Unit) {
         onClick = {
           runCatching {
             context.startActivity(
-              Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/nikosavola/AnkiDroid-WearOS"))
+              Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/nikosavola/Wear-for-AnkiDroid"))
             )
           }
         }
