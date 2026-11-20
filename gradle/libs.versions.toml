@@ -18,7 +18,7 @@ robolectric = "4.16.1"
 mockk = "1.13.13"
 androidx-test-core = "1.6.1"
 androidx-test-ext-junit = "1.2.1"
-compose = "1.13.0-alpha03"
+compose = "1.13.0-beta02"
 # Stable line; only needs Compose 1.9+, so it sits fine under the 1.13 alpha.
 material3-adaptive = "1.3.0"
 # Alpha: Wear OS 7 widgets (Glance Wear + Remote Compose); glance-wear pins remote-* to this.
