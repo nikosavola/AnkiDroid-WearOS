@@ -16,7 +16,7 @@ AnkiDroid collection, so AnkiDroid keeps owning the schedule.
 The project is pre-release: the review loop works end to end, but there is no published app release
 yet.
 
-Anki and the Anki logo are trademarks of Anki Software, LLC. AnkiDroid is a trademark of the AnkiDroid Open Source Team. Wear for AnkiDroid is an unofficial third-party companion and is not affiliated with or endorsed by Anki Software, LLC or the AnkiDroid Open Source Team.
+Anki and the Anki logo are trademarks of Anki Software, LLC. AnkiDroid is a trademark of the AnkiDroid Open Source Team. Wear for AnkiDroid is an unofficial third-party companion and is not affiliated with or endorsed by Anki Software, LLC or the AnkiDroid Open Source Team. The privacy policy is at <https://nikosavola.github.io/Wear-for-AnkiDroid/privacy.html>.
 
 | Decks | Settings | Question | Answer and grades | Session end |
 | --- | --- | --- | --- | --- |
