@@ -84,12 +84,12 @@ Drop `-no-window` to get the normal emulator windows — recommended for watch-U
 ./gradlew :phone:assembleDebug :wear:assembleDebug
 adb -s emulator-5554 install -r wear/build/outputs/apk/debug/wear-debug.apk   # watch
 adb -s emulator-5556 install -r phone/build/outputs/apk/debug/phone-debug.apk # phone
-adb -s emulator-5554 shell am start -n fi.nikosavola.ankidroid.wearos/.wear.MainActivity
-adb -s emulator-5556 shell am start -n fi.nikosavola.ankidroid.wearos/.phone.MainActivity
+adb -s emulator-5554 shell am start -n fi.nikosavola.wearforankidroid/.wear.MainActivity
+adb -s emulator-5556 shell am start -n fi.nikosavola.wearforankidroid/.phone.MainActivity
 adb -s emulator-5554 exec-out screencap -p > watch.png  # visual check
 ```
 
-Both apps share the `fi.nikosavola.ankidroid.wearos` application id; the launcher activities are
+Both apps share the `fi.nikosavola.wearforankidroid` application id; the launcher activities are
 `.wear.MainActivity` and `.phone.MainActivity` respectively. Without AnkiDroid installed on
 the phone emulator, debug builds fall back to mock cards (see the README), so the full
 review flow is testable with just the two AVDs; release builds need the Force Mock Mode
@@ -146,7 +146,7 @@ adb -s localhost:5555 shell getprop sys.boot_completed
 ```bash
 ./gradlew :phone:assembleDebug
 adb -s localhost:5555 install -r phone/build/outputs/apk/debug/phone-debug.apk
-adb -s localhost:5555 shell am start -n fi.nikosavola.ankidroid.wearos/.phone.MainActivity
+adb -s localhost:5555 shell am start -n fi.nikosavola.wearforankidroid/.phone.MainActivity
 adb -s localhost:5555 exec-out screencap -p > shot.png   # visual check
 ```
 

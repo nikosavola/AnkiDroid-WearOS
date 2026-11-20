@@ -10,7 +10,7 @@ set -euo pipefail
 serial="${1:-emulator-5554}"
 sdk="${ANDROID_HOME:-$HOME/Library/Android/sdk}"
 adb="$sdk/platform-tools/adb"
-pkg=fi.nikosavola.ankidroid.wearos
+pkg=fi.nikosavola.wearforankidroid
 activity="$pkg/$pkg.wear.MainActivity"
 root="$(cd "$(dirname "$0")/.." && pwd)"
 out="$root/docs/screenshots"

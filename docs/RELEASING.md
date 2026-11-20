@@ -37,13 +37,13 @@ those cannot be installed. To publish installable APKs:
 3. Add a release workflow on `v*` tags that decodes the keystore from repository secrets, builds
    `:phone:assembleRelease` and `:wear:assembleRelease`, verifies both APKs carry the same
    certificate, and attaches them plus the R8 `mapping.txt` files to a GitHub Release.
-4. Register `fi.nikosavola.ankidroid.wearos` and the release key's SHA-256 fingerprint in Play
+4. Register `fi.nikosavola.wearforankidroid` and the release key's SHA-256 fingerprint in Play
    Console's Android developer verification. This is required for installation on certified
    devices even when the APK is sideloaded, and it does not require a Play Store listing.
 
 ## Version numbers
 
-- Application id: `fi.nikosavola.ankidroid.wearos`, shared by both apps.
+- Application id: `fi.nikosavola.wearforankidroid`, shared by both apps.
 - `versionCode` is `release * 10 + form factor`, where the phone is 0 and the watch is 1. Bump the
   release number in both build files at the same time.
 - `versionName` is an independent literal in each app module. Bump both by hand.

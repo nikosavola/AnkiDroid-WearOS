@@ -7,14 +7,14 @@ plugins {
 }
 
 android {
-  namespace = "fi.nikosavola.ankidroid.wearos.wear"
+  namespace = "fi.nikosavola.wearforankidroid.wear"
   // Compose 1.13 needs the 37.1+ minor SDK.
   compileSdk { version = release(37) { minorApiLevel = 2 } }
   // Match the NDK that cargo-ndk uses (ndk.dir) so AGP can strip the bundled .so and doesn't warn.
   ndkVersion = "27.0.12077973"
 
   defaultConfig {
-    applicationId = "fi.nikosavola.ankidroid.wearos"
+    applicationId = "fi.nikosavola.wearforankidroid"
     minSdk = 30
     targetSdk = 37
     // Play requires distinct versionCodes per form factor within one listing (same applicationId

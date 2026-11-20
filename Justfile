@@ -11,7 +11,7 @@ adb := sdk + '/platform-tools/adb'
 # The phone and wear apps share one applicationId on purpose: the Wearable Data Layer only reaches
 # an app with the same package name on the other device. They never share a device, so it never
 # collides; the two activities differ.
-package := 'fi.nikosavola.ankidroid.wearos'
+package := 'fi.nikosavola.wearforankidroid'
 wear_activity := package + '/' + package + '.wear.MainActivity'
 phone_activity := package + '/' + package + '.phone.MainActivity'
 

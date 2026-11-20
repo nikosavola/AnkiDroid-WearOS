@@ -1,0 +1,132 @@
+package fi.nikosavola.wearforankidroid.wear
+
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.height
+import androidx.compose.ui.unit.em
+import androidx.wear.compose.material3.MaterialTheme
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.GraphicsMode
+
+/**
+ * [HtmlText] renders sanitized-but-still-arbitrary card HTML as Compose text. It must never throw on
+ * the shapes real cards produce (empty, the base(reading) furigana output of clean_html, malformed
+ * tags, every font option), and the markup must not leak into the visible text.
+ * createComposeRule.setContent may only be called once per test, so each test stacks its variants
+ * in a single Column.
+ */
+@RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
+class HtmlTextTest {
+  @get:Rule val composeRule = createComposeRule()
+
+  private fun renderAll(vararg cards: Pair<String, WatchSettings.CardFont>) {
+    composeRule.setContent {
+      MaterialTheme {
+        Column {
+          for ((html, font) in cards) HtmlText(html, fontScale = 1.0f, cardFont = font)
+        }
+      }
+    }
+    composeRule.waitForIdle()
+  }
+
+  private fun html(vararg s: String) =
+    s.map { it to WatchSettings.CardFont.DEFAULT }.toTypedArray()
+
+  @Test
+  fun rendersTypicalCardHtmlWithoutCrashing() {
+    renderAll(*html("<b>答え</b><br>to answer", "日(に)本(ほん)語(ご)", "これは[...]です"))
+    composeRule.onNodeWithText("答え", substring = true).assertExists()
+    composeRule.onNodeWithText("<b>", substring = true).assertDoesNotExist()
+  }
+
+  @Test
+  fun handlesEmptyAndMalformedHtml() {
+    renderAll(*html("", "<b>unclosed and <i>nested", "&amp; &lt;3 &#39;quote&#39;"))
+    composeRule.onNodeWithText("& <3 'quote'").assertExists()
+  }
+
+  @Test
+  fun rendersUnderEveryCardFont() {
+    renderAll(
+      "漢字テスト" to WatchSettings.CardFont.SERIF,
+      "漢字テスト" to WatchSettings.CardFont.MONOSPACE,
+      "漢字テスト" to WatchSettings.CardFont.DEFAULT,
+    )
+  }
+
+  @Test
+  fun linksAreInertAndImagesLeaveNoPlaceholder() {
+    val text = cardTextFromHtml("""see <a href="https://jisho.org">jisho</a> <img src="x.png"> here""")
+    assertEquals("see jisho here", text.text)
+    assertTrue(text.getLinkAnnotations(0, text.length).isEmpty())
+  }
+
+  @Test
+  fun fontSizeAnnotationsBecomeSpans() {
+    // The core's font-size pass wraps sized runs in <annotation fs="scale">; the importer turns
+    // them into string annotations and this is where they become font-size spans, 2.222 becoming
+    // 1 + 1.222 / 2 after the emphasis slope.
+    val text = cardTextFromHtml("""<annotation fs="2.222">漢</annotation> plain""")
+    assertEquals("漢 plain", text.text)
+    assertEquals(1, text.spanStyles.size)
+    assertEquals(1.611f.em, text.spanStyles[0].item.fontSize)
+    assertEquals(0, text.spanStyles[0].start)
+    assertEquals(1, text.spanStyles[0].end)
+  }
+
+  @Test
+  fun sizedRunsAreCappedButSmallOnesKeepTheirScale() {
+    val text =
+      cardTextFromHtml(
+        """<annotation fs="6.944">明</annotation><annotation fs="1.667">x</annotation>""",
+        maxScale = 3.5f,
+      )
+    // 1.667 keeps half its step above 1: 1 + 0.667 / 2.
+    assertEquals(listOf(3.5f.em, 1.3335f.em), text.spanStyles.map { it.item.fontSize })
+  }
+
+  @Test
+  fun stackedSizedLinesDoNotOverprintEachOther() {
+    // 6x the base is 3.5x after the emphasis slope, 56sp at 16sp. With the theme's fixed ~20sp line
+    // height the two lines sit 20sp apart and the glyphs print over each other.
+    composeRule.setContent {
+      MaterialTheme {
+        HtmlText(
+          """<annotation fs="6">明</annotation><br><annotation fs="6">明</annotation>""",
+          1.0f,
+          WatchSettings.CardFont.DEFAULT,
+        )
+      }
+    }
+    val height = composeRule.onNodeWithText("明", substring = true).getUnclippedBoundsInRoot().height
+    assertTrue("two lines are $height tall", height >= 112.dp)
+  }
+
+  @Test
+  fun tapOnALinkReachesTheCardInsteadOfOpeningIt() {
+    var clicks = 0
+    composeRule.setContent {
+      MaterialTheme {
+        Box(Modifier.clickable { clicks++ }) {
+          HtmlText("""<a href="https://jisho.org">jisho</a>""", 1.0f, WatchSettings.CardFont.DEFAULT)
+        }
+      }
+    }
+    composeRule.onNodeWithText("jisho").performClick()
+    assertEquals(1, clicks)
+  }
+}
